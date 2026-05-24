@@ -134,14 +134,16 @@
 </head>
 <body>
 
-    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vw; background: var(--spotify-black); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
-        <h2 style="font-size: 28px; margin-bottom: 5px; color: white; border: none;">DJ Control Panel Locked</h2>
-        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
-        <div style="display: flex; gap: 10px;">
-            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: var(--panel-bg); color: white; font-size: 16px; outline: none; width: 200px;">
-            <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: var(--spotify-green); color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
+    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: var(--spotify-black); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
+        <div style="text-align: center;">
+            <h2 style="font-size: 28px; margin-bottom: 5px; color: white; border: none;">DJ Control Panel Locked</h2>
+            <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: var(--panel-bg); color: white; font-size: 16px; outline: none; width: 200px;">
+                <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: var(--spotify-green); color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
+            </div>
+            <p id="gate-error" style="color: var(--red-action); margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
         </div>
-        <p id="gate-error" style="color: var(--red-action); margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
     </div>
 
     <div class="header">
@@ -154,11 +156,6 @@
             <label>Max Credit Bank</label>
             <input type="number" id="input-max-credits" min="1">
         </div>
-        <div class="config-dashboard-split" style="display:none;">
-            <input type="number" id="max-credits-input" value="3">
-            <input type="number" id="regen-time-input" value="60">
-            <input type="checkbox" id="allow-requests-toggle" checked>
-        </div>
         <div class="input-group">
             <label>Regen Timer (Secs)</label>
             <input type="number" id="input-countdown" min="5">
@@ -168,19 +165,16 @@
 
     <div class="control-bar">
         <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
     <div class="lists-container">
         <div class="panel">
             <h2>Current Queue</h2>
             <div id="queue-list"></div>
-            <ul id="admin-queue-list" style="display:none;"></ul>
         </div>
         <div class="panel">
             <h2>Song History (Played)</h2>
             <div id="history-list"></div>
-            <ul id="admin-history-list" style="display:none;"></ul>
         </div>
     </div>
 
@@ -210,9 +204,9 @@
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
                     <div class="song-row">
                         <div class="song-details">
-                            <img src="${song.albumArt || song.artwork || ''}" alt="Cover">
+                            <img src="${song.albumArt || ''}" alt="Cover">
                             <div>
-                                <p class="song-title">${song.name || song.title}</p>
+                                <p class="song-title">${song.name}</p>
                                 <p class="song-artist">${song.artist} <span style="color:var(--spotify-green); margin-left:10px;">🔥 ${song.votes || 1}</span></p>
                             </div>
                         </div>
@@ -228,9 +222,9 @@
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
                     <div class="song-row history-row">
                         <div class="song-details">
-                            <img src="${song.albumArt || song.artwork || ''}" alt="Cover">
+                            <img src="${song.albumArt || ''}" alt="Cover">
                             <div>
-                                <p class="song-title">${song.name || song.title}</p>
+                                <p class="song-title">${song.name}</p>
                                 <p class="song-artist">${song.artist}</p>
                             </div>
                         </div>
@@ -255,8 +249,8 @@
             const downVal = document.getElementById('input-countdown').value;
 
             const configs = {
-                maxCredits: maxVal,
-                countdownLength: downVal,
+                maxCredits: Number(maxVal),
+                countdownLength: Number(downVal),
                 requestsAllowed: requestsAllowed
             };
 
@@ -286,8 +280,7 @@
 
         async function clearSystem(actionType, message) {
             if (confirm(message)) {
-                const endpoint = actionType === 'clearQueue' ? '/api/admin/clear-queue' : '/api/admin/clear-queue'; // Handled via clean clear endpoint
-                await fetch(endpoint, {
+                await fetch('/api/admin/clear-queue', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ password })
