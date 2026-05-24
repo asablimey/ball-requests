@@ -22,6 +22,70 @@
             margin: 0; 
         }
 
+        /* 🔒 NATIVE ON-PAGE LOGIN SCREEN STYLES */
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+        }
+
+        .login-card {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-top: 4px solid var(--spotify-green);
+            padding: 40px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 360px;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+
+        .login-card h2 {
+            margin-top: 0;
+            margin-bottom: 24px;
+            color: white;
+            font-size: 1.6rem;
+            font-weight: 800;
+        }
+
+        .login-field {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 14px;
+            color: white;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            outline: none;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .login-field:focus { border-color: var(--spotify-green); }
+
+        .login-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 1rem;
+            width: 100%;
+            transition: all 0.2s ease;
+        }
+        .login-btn:hover { filter: brightness(1.1); transform: scale(1.02); }
+
+        /* 🎛️ DASHBOARD MAIN CONTAINER (Hidden until authorized) */
+        #admin-dashboard {
+            display: none;
+        }
+
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -33,7 +97,6 @@
 
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
 
-        /* Configuration Controls Widget */
         .config-dashboard {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -112,55 +175,108 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>DJ Master Control</h1>
-        <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+
+    <div id="login-screen">
+        <div class="login-card">
+            <h2>DJ Portal Security</h2>
+            <input type="password" id="password-field" class="login-field" placeholder="Enter Access Password" onkeydown="if(event.key === 'Enter') submitLogin()">
+            <button class="login-btn" onclick="submitLogin()">Authorize</button>
+        </div>
     </div>
 
-    <div class="config-dashboard">
-        <div class="input-group">
-            <label>Max Credit Bank</label>
-            <input type="number" id="input-max-credits" min="1">
+    <div id="admin-dashboard">
+        <div class="header">
+            <h1>DJ Master Control</h1>
+            <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
         </div>
-        <div class="input-group">
-            <label>Regen Timer (Secs)</label>
-            <input type="number" id="input-countdown" min="5">
-        </div>
-        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-    </div>
 
-    <div class="control-bar">
-        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
-    </div>
-
-    <div class="lists-container">
-        <div class="panel">
-            <h2>Current Queue</h2>
-            <div id="queue-list"></div>
+        <div class="config-dashboard">
+            <div class="input-group">
+                <label>Max Credit Bank</label>
+                <input type="number" id="input-max-credits" min="1">
+            </div>
+            <div class="input-group">
+                <label>Regen Timer (Secs)</label>
+                <input type="number" id="input-countdown" min="5">
+            </div>
+            <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
         </div>
-        <div class="panel">
-            <h2>Song History (Played)</h2>
-            <div id="history-list"></div>
+
+        <div class="control-bar">
+            <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+            <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+        </div>
+
+        <div class="lists-container">
+            <div class="panel">
+                <h2>Current Queue</h2>
+                <div id="queue-list"></div>
+            </div>
+            <div class="panel">
+                <h2>Song History (Played)</h2>
+                <div id="history-list"></div>
+            </div>
         </div>
     </div>
 
     <script>
         let requestsAllowed = true;
-        // 🔒 Read or prompt for admin password entry on load
-        let adminPassword = localStorage.getItem('dj_admin_password');
-        if (!adminPassword) {
-            adminPassword = prompt("Enter Administrative Access Password:");
+        let adminPassword = localStorage.getItem('dj_admin_password') || "";
+
+        // Check if a saved password can automatically bypass login
+        if (adminPassword) {
+            verifySavedCredentials();
+        }
+
+        function submitLogin() {
+            const entry = document.getElementById('password-field').value;
+            if (!entry) return;
+            adminPassword = entry;
             localStorage.setItem('dj_admin_password', adminPassword);
+            verifySavedCredentials();
+        }
+
+        async function verifySavedCredentials() {
+            try {
+                const res = await fetch('/api/admin/data', {
+                    headers: { 'Authorization': adminPassword }
+                });
+                
+                if (res.status === 401) {
+                    localStorage.removeItem('dj_admin_password');
+                    adminPassword = "";
+                    alert("Invalid administrative password code.");
+                    document.getElementById('password-field').value = "";
+                    showLoginUI();
+                    return;
+                }
+                
+                if (res.ok) {
+                    showDashboardUI();
+                    updateDashboard();
+                }
+            } catch (e) {
+                console.log("Connection initialization error.");
+            }
+        }
+
+        function showLoginUI() {
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('admin-dashboard').style.display = 'none';
+        }
+
+        function showDashboardUI() {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('admin-dashboard').style.display = 'block';
         }
 
         async function updateDashboard() {
+            if (!adminPassword) return;
             try {
                 const res = await fetch('/api/admin/data', {
                     headers: { 'Authorization': adminPassword }
                 });
                 if (res.status === 401) {
-                    alert("Unauthorized password credential. Resetting entry prompt.");
                     localStorage.removeItem('dj_admin_password');
                     window.location.reload();
                     return;
@@ -261,8 +377,9 @@
             updateDashboard();
         }
 
-        setInterval(updateDashboard, 3000);
-        updateDashboard();
+        setInterval(() => {
+            if (adminPassword) updateDashboard();
+        }, 3000);
     </script>
 </body>
 </html>
