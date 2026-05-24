@@ -29,7 +29,6 @@
             max-width: 480px;
         }
 
-        /* 🟢 Subtle Green Left Accent Border for Title */
         h2 {
             font-weight: 800; 
             letter-spacing: -0.5px; 
@@ -38,7 +37,6 @@
             padding-left: 10px;
         }
 
-        /* 🟢 Top Border Accent Line Added to Status Card */
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -52,8 +50,6 @@
         }
 
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
-        
-        /* 🟢 Turned numbers green to draw the eye */
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
         .search-box {
@@ -97,6 +93,50 @@
             font-size: 0.85rem;
         }
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
+
+        /* Styles for Playlist Buttons and UI elements */
+        .connect-btn {
+            width: 100%;
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+        }
+        .view-toggle-area {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        .playlist-item {
+            background: var(--panel-bg);
+            border: 1px solid #222;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .playlist-item img { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; }
+        .back-btn {
+            background: #333;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -115,6 +155,14 @@
             </div>
         </div>
 
+        <div id="auth-section">
+            <a href="/api/login" id="login-button" class="connect-btn">Connect Spotify Account</a>
+            <div id="view-controls" class="view-toggle-area" style="display: none;">
+                <span id="current-mode-label" style="font-weight: bold; color: var(--text-muted);">Global Search</span>
+                <button id="toggle-view-btn" class="back-btn" onclick="switchViewMode()">Switch to Playlists</button>
+            </div>
+        </div>
+
         <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
         <div id="results-list"></div>
     </div>
@@ -125,6 +173,18 @@
         let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
+
+        // Manage Spotify User Access tokens securely inside local storage
+        let currentMode = "search"; // "search" or "playlists"
+        const urlParams = new URLSearchParams(window.location.search);
+        let userAccessToken = urlParams.get('access_token');
+        
+        if (userAccessToken) {
+            localStorage.setItem('user_spotify_token', userAccessToken);
+            window.history.replaceState({}, document.title, "/");
+        } else {
+            userAccessToken = localStorage.getItem('user_spotify_token');
+        }
 
         if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
@@ -189,33 +249,108 @@
                 inputs.placeholder = "Submissions are currently CLOSED by the DJ";
                 inputs.disabled = true;
             } else {
-                inputs.placeholder = "Search tracks, artists...";
-                inputs.disabled = false;
+                inputs.placeholder = currentMode === "search" ? "Search tracks, artists..." : "Search locked in playlist view";
+                inputs.disabled = currentMode !== "search";
+            }
+
+            if (userAccessToken) {
+                document.getElementById('login-button').style.display = 'none';
+                document.getElementById('view-controls').style.display = 'flex';
+            }
+        }
+
+        function switchViewMode() {
+            const btn = document.getElementById('toggle-view-btn');
+            const label = document.getElementById('current-mode-label');
+            if (currentMode === "search") {
+                currentMode = "playlists";
+                label.innerText = "Your Playlists";
+                btn.innerText = "Back to Search";
+                loadUserPlaylists();
+            } else {
+                currentMode = "search";
+                label.innerText = "Global Search";
+                btn.innerText = "Switch to Playlists";
+                document.getElementById('results-list').innerHTML = '';
+                document.getElementById('search-input').value = '';
+                updateUI();
+            }
+        }
+
+        async function loadUserPlaylists() {
+            const target = document.getElementById('results-list');
+            target.innerHTML = '<p style="color:#666; text-align:center;">Loading playlists...</p>';
+            try {
+                const res = await fetch('/api/playlists', {
+                    headers: { 'user-token': userAccessToken }
+                });
+                if (!res.ok) throw new Error();
+                const playlists = await res.json();
+                
+                target.innerHTML = playlists.map(p => `
+                    <div class="playlist-item" onclick="loadPlaylistTracks('${p.id}', '${p.name.replace(/'/g, "\\'")}')">
+                        <img src="${p.images?.[0]?.url || 'https://picsum.photos/44'}">
+                        <div>
+                            <p style="margin:0; font-weight:bold;">${p.name}</p>
+                            <p style="margin:4px 0 0 0; font-size:0.8rem; color:#a7a7a7;">${p.tracks?.total || 0} Songs</p>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) {
+                target.innerHTML = '<p style="color:red; text-align:center;">Failed parsing playlists.</p>';
+            }
+        }
+
+        async function loadPlaylistTracks(playlistId, name) {
+            const target = document.getElementById('results-list');
+            document.getElementById('current-mode-label').innerText = name;
+            document.getElementById('toggle-view-btn').innerText = "◀ Playlists";
+            target.innerHTML = '<p style="color:#666; text-align:center;">Loading tracks...</p>';
+            
+            try {
+                const res = await fetch('/api/playlists/' + playlistId + '/tracks', {
+                    headers: { 'user-token': userAccessToken }
+                });
+                const tracks = await res.json();
+                renderTrackRows(tracks);
+            } catch(e) {
+                target.innerHTML = '<p style="color:red; text-align:center;">Failed loading tracks.</p>';
             }
         }
 
         let searchTimeout;
         function searchSongs() {
+            if (currentMode !== "search") return;
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
             if (!query) { document.getElementById('results-list').innerHTML = ''; return; }
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+                        headers: { 'user-token': userAccessToken || "" }
+                    });
                     const data = await res.json();
-                    
-                    document.getElementById('results-list').innerHTML = data.tracks.map(track => `
-                        <div class="track-row">
-                            <div class="track-details">
-                                <img src="${track.artwork}">
-                                <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
-                            </div>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
-                        </div>
-                    `).join('');
+                    renderTrackRows(data.tracks || []);
                 } catch (e) { console.log("Search error."); }
             }, 300);
+        }
+
+        function renderTrackRows(tracks) {
+            const target = document.getElementById('results-list');
+            if (tracks.length === 0) {
+                target.innerHTML = '<p style="color:#666; text-align:center;">No tracks found.</p>';
+                return;
+            }
+            target.innerHTML = tracks.map(track => `
+                <div class="track-row">
+                    <div class="track-details">
+                        <img src="${track.artwork}">
+                        <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+                    </div>
+                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '"')})">Request</button>
+                </div>
+            `).join('');
         }
 
         async function submitRequest(track) {
@@ -235,8 +370,10 @@
                 }
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" submitted successfully!`);
-                document.getElementById('search-input').value = '';
-                document.getElementById('results-list').innerHTML = '';
+                if (currentMode === "search") {
+                    document.getElementById('search-input').value = '';
+                    document.getElementById('results-list').innerHTML = '';
+                }
                 updateUI();
             } else {
                 const errData = await res.json();
