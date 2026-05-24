@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 FIXED SPOTIFY API TOKEN FLOW FOR PROXY ENVIROMENTS
+// 🌐 LIVE AUTHENTICATION FOR PUBLIC SEARCH (Client Credentials Flow)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -28,8 +28,7 @@ async function getSpotifyToken() {
     }
 
     try {
-        // Updated endpoint query configuration to prevent 400 Bearer error formats
-        const response = await fetch('https://accounts.spotify.com/api/token', {
+        const response = await fetch('https://api.spotify.com/v1/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
@@ -100,7 +99,7 @@ app.get('/api/playlists', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -132,8 +131,12 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     if (!userToken || userToken === "null" || userToken === "undefined") {
         return res.status(401).json({ error: "No user token provided." });
     }
+    
+    // DIFFERENT APPROACH: Explicitly concatenated string to avoid template backtick bugs completely
+    const targetUrl = 'https://api.spotify.com/v1/playlists/' + req.params.id + '/tracks?limit=50';
+    
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${req.params.id}/tracks?limit=50`, {
+        const response = await fetch(targetUrl, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -183,8 +186,11 @@ app.get('/api/search', async (req, res) => {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
+    // DIFFERENT APPROACH: Concatenated string layout for safety
+    const searchUrl = 'https://api.spotify.com/v1/search?q=' + encodeURIComponent(query) + '&type=track&limit=10';
+
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(searchUrl, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
@@ -276,6 +282,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    console.log('[SERVER] Request dashboard streaming live on port ' + PORT);
     await getSpotifyToken();
 });
