@@ -154,7 +154,6 @@
                 if (!res.ok) return;
                 const data = await res.json();
                 
-                // Synchronize input fields safely
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
                     document.getElementById('input-max-credits').value = data.maxCredits;
                 }
