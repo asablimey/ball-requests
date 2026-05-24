@@ -10,7 +10,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const ADMIN_PASSWORD = "ballDJ2026";
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI || `http://localhost:${PORT}/callback`;
+const REDIRECT_URI = process.env.REDIRECT_URI || `https://song-requests-gnzd.onrender.com/callback`;
 
 let systemConfigs = {
     maxCredits: 3,
@@ -76,6 +76,7 @@ app.get('/callback', async (req, res) => {
     }
 });
 
+// Fetch user playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken || userToken === "null" || userToken === "undefined") {
@@ -94,6 +95,7 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
+// Fetch tracks from a specific playlist
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -102,11 +104,14 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 
     try {
+        // Checking Route 1: Try endpoint 52 matching track values
         const response = await fetch('https://api.spotify.com/v1/playlists/$$/' + playlistId + '/tracks?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
-        const rawItems = Array.isArray(data) ? data : (data.items || []);
+        
+        // Checking Route 2: Fallback checks to find nested arrays or direct lists
+        const rawItems = Array.isArray(data) ? data : (data.items || data.tracks || []);
         
         const tracks = rawItems.map(item => {
             const track = item.track || item;
@@ -124,6 +129,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 });
 
+// Global anonymous search feature
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -142,7 +148,9 @@ app.get('/api/search', async (req, res) => {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
-        const items = Array.isArray(data) ? data : (data.tracks?.items || data.items || []);
+        
+        // Checking Route 3: Extract direct track items arrays safely
+        const items = Array.isArray(data) ? data : (data.tracks?.items || data.items || data.tracks || []);
         
         const tracks = items.map(track => ({
             id: track.id || Math.random().toString(),
