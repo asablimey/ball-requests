@@ -29,19 +29,45 @@
             max-width: 480px;
         }
 
+        /* Enhanced Green Highlight Header */
+        .page-title {
+            font-weight: 800; 
+            letter-spacing: -0.5px; 
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+            border-left: 4px solid var(--spotify-green);
+            padding-left: 12px;
+        }
+
+        /* Status Card with Green Borders and Typography */
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
+            border-top: 3px solid var(--spotify-green); /* Top accent line */
             border-radius: 12px;
             padding: 16px;
             margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            box-shadow: 0 4px 15px rgba(29, 185, 84, 0.05);
         }
 
-        .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
-        .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; }
+        .status-info h3 { 
+            margin: 0; 
+            font-size: 0.85rem; 
+            color: var(--text-muted); 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px;
+        }
+        
+        /* Vibrant green stats indicators */
+        .status-info p { 
+            margin: 6px 0 0 0; 
+            font-size: 1.6rem; 
+            font-weight: 800; 
+            color: var(--spotify-green); 
+        }
 
         .search-box {
             width: 100%;
@@ -53,9 +79,14 @@
             font-size: 1rem;
             box-sizing: border-box;
             outline: none;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
-        .search-box:focus { border-color: var(--spotify-green); }
+        
+        .search-box:focus { 
+            border-color: var(--spotify-green); 
+            box-shadow: 0 0 8px rgba(29, 185, 84, 0.2);
+        }
 
         .track-row {
             display: flex;
@@ -66,10 +97,14 @@
             margin-bottom: 8px;
             border-radius: 8px;
             border: 1px solid #222;
+            transition: background-color 0.2s ease;
+        }
+        .track-row:hover {
+            background-color: #202020;
         }
 
         .track-details { display: flex; align-items: center; gap: 12px; }
-        .track-details img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
+        .track-details img { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; }
         .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
         .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
 
@@ -77,164 +112,4 @@
             background-color: var(--spotify-green);
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.85rem;
-        }
-        .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <h2 style="font-weight: 800; letter-spacing: -0.5px; margin-bottom: 15px;">Request a Song</h2>
-        
-        <div class="status-card">
-            <div class="status-info">
-                <h3>Your Credits</h3>
-                <p id="credits-display">3 / 3</p>
-            </div>
-            <div class="status-info" style="text-align: right;">
-                <h3>Next Credit In</h3>
-                <p id="timer-display">MAX</p>
-            </div>
-        </div>
-
-        <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
-        <div id="results-list"></div>
-    </div>
-
-    <script>
-        let maxCredits = 3;
-        let localCredits = parseInt(localStorage.getItem('dj_user_credits'));
-        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
-        let regenIntervalLength = 60; 
-        let systemRequestsOpen = true;
-
-        // 🛠️ SAFELY ESCAPE AND CORRUPT RESET THE "NaN" ERROR VALUES
-        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
-            localCredits = maxCredits;
-            lastRegenTime = Date.now();
-            localStorage.setItem('dj_user_credits', localCredits);
-            localStorage.setItem('dj_last_regen', lastRegenTime);
-        }
-
-        async function syncWithServer() {
-            try {
-                const res = await fetch('/data');
-                if (!res.ok) return;
-                const data = await res.json();
-
-                maxCredits = data.maxCredits;
-                regenIntervalLength = data.countdownLength;
-                systemRequestsOpen = data.requestsAllowed;
-
-                if (localCredits > maxCredits) {
-                    localCredits = maxCredits;
-                    localStorage.setItem('dj_user_credits', localCredits);
-                }
-                
-                updateUI();
-            } catch (e) {
-                console.log("Sync error.");
-            }
-        }
-
-        function handleCreditCalculations() {
-            if (localCredits >= maxCredits) {
-                document.getElementById('timer-display').innerText = "MAX";
-                lastRegenTime = Date.now();
-                localStorage.setItem('dj_last_regen', lastRegenTime);
-                return;
-            }
-
-            const now = Date.now();
-            const elapsedSeconds = Math.floor((now - lastRegenTime) / 1000);
-            
-            if (elapsedSeconds >= regenIntervalLength) {
-                const creditsToGain = Math.floor(elapsedSeconds / regenIntervalLength);
-                localCredits = Math.min(maxCredits, localCredits + creditsToGain);
-                lastRegenTime = lastRegenTime + (creditsToGain * regenIntervalLength * 1000);
-                
-                localStorage.setItem('dj_user_credits', localCredits);
-                localStorage.setItem('dj_last_regen', lastRegenTime);
-            }
-
-            const remainingSeconds = regenIntervalLength - (Math.floor((Date.now() - lastRegenTime) / 1000) % regenIntervalLength);
-            const mins = Math.floor(remainingSeconds / 60);
-            const secs = remainingSeconds % 60;
-            
-            document.getElementById('timer-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-            updateUI();
-        }
-
-        function updateUI() {
-            document.getElementById('credits-display').innerText = `${localCredits} / ${maxCredits}`;
-            const inputs = document.getElementById('search-input');
-            if (!systemRequestsOpen) {
-                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
-                inputs.disabled = true;
-            } else {
-                inputs.placeholder = "Search tracks, artists...";
-                inputs.disabled = false;
-            }
-        }
-
-        let searchTimeout;
-        function searchSongs() {
-            clearTimeout(searchTimeout);
-            const query = document.getElementById('search-input').value.trim();
-            if (!query) { document.getElementById('results-list').innerHTML = ''; return; }
-
-            searchTimeout = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-                    const data = await res.json();
-                    
-                    document.getElementById('results-list').innerHTML = data.tracks.map(track => `
-                        <div class="track-row">
-                            <div class="track-details">
-                                <img src="${track.artwork}">
-                                <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
-                            </div>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
-                        </div>
-                    `).join('');
-                } catch (e) { console.log("Search error."); }
-            }, 300);
-        }
-
-        async function submitRequest(track) {
-            if (localCredits <= 0 || !systemRequestsOpen) return;
-
-            const res = await fetch('/api/request', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ track })
-            });
-
-            if (res.ok) {
-                localCredits--;
-                if (localCredits === maxCredits - 1) {
-                    lastRegenTime = Date.now();
-                    localStorage.setItem('dj_last_regen', lastRegenTime);
-                }
-                localStorage.setItem('dj_user_credits', localCredits);
-                alert(`"${track.name}" submitted successfully!`);
-                document.getElementById('search-input').value = '';
-                document.getElementById('results-list').innerHTML = '';
-                updateUI();
-            } else {
-                const errData = await res.json();
-                alert(errData.error || "Submission failed.");
-            }
-        }
-
-        setInterval(handleCreditCalculations, 1000);
-        setInterval(syncWithServer, 5000);
-        syncWithServer();
-    </script>
-</body>
-</html>
+            padding:
