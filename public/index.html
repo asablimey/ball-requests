@@ -73,7 +73,6 @@
         .action-block-btn:hover { filter: brightness(1.05); }
         .action-block-btn:active { transform: scale(0.99); }
         
-        /* 🟢 FIXED: Maintained beautiful pure Spotify Green branding layout */
         .playlists-toggle-btn {
             background-color: var(--spotify-green);
             border: none;
@@ -346,13 +345,13 @@
                 const targetList = document.getElementById('content-target-list');
                 targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:40px 0; text-align:center;">Loading playlist items...</p>`;
                 
-                const res = await fetch(`/api/playlists/${id}/tracks`, {
+                const res = await fetch('/api/playlists/' + id + '/tracks', {
                     headers: { 'user-token': userAccessToken }
                 });
                 const tracks = await res.json();
                 
                 currentView = "playlist_tracks";
-                document.getElementById('content-view-title').innerText = `${playlistName}`;
+                document.getElementById('content-view-title').innerText = playlistName;
                 document.getElementById('view-action-slot').innerHTML = `<button class="back-btn" onclick="togglePlaylistsView()">◀ Back</button>`;
                 
                 if(tracks.length === 0) {
@@ -386,7 +385,7 @@
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+                    const res = await fetch('/api/search?q=' + encodeURIComponent(query), {
                         headers: { 'user-token': userAccessToken || "" }
                     });
                     const data = await res.json();
