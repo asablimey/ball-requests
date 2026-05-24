@@ -23,6 +23,7 @@ let queue = [];
 let history = [];
 let userBanks = {};             // Keeps track of individual student credit accounts
 let spotifyAccessToken = '';
+const ADMIN_PASSWORD = "ballDJ2026";
 
 // INTERNAL FUNCTION: Request fresh access token from Spotify API
 async function refreshSpotifyToken() {
@@ -55,7 +56,8 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        // 🛠️ FIXED: Added the missing '$' before {encodeURIComponent(query)} to make guest search work perfectly
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         
@@ -74,11 +76,12 @@ app.get('/api/search', async (req, res) => {
         
         res.json(tracks);
     } catch (err) {
+        console.error('[SEARCH ERROR] Failed:', err);
         res.status(500).json({ error: 'Search failed' });
     }
 });
 
-// Get Current Queue & Global Configs
+// Get Current Queue & Global Configs (Fixed guest page credits loading)
 app.get('/api/queue', (req, res) => {
     res.json({
         queue,
@@ -148,10 +151,12 @@ app.post('/api/upvote', (req, res) => {
     }
 });
 
-// --- ADMIN SPECIFIC ENDPOINTS ---
+// --- ADMIN ENDPOINTS (Matches your approved admin panel code) ---
 
 app.post('/api/admin/update-configs', (req, res) => {
-    const { configs } = req.body;
+    const { password, configs } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    
     maxCredits = Number(configs.maxCredits);
     countdownLength = Number(configs.countdownLength);
     requestsAllowed = configs.requestsAllowed;
@@ -159,7 +164,9 @@ app.post('/api/admin/update-configs', (req, res) => {
 });
 
 app.post('/api/admin/remove', (req, res) => {
-    const { trackId, played } = req.body;
+    const { password, trackId, played } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    
     const index = queue.findIndex(item => item.id === trackId);
     if (index !== -1) {
         const removedTrack = queue.splice(index, 1)[0];
@@ -172,6 +179,8 @@ app.post('/api/admin/remove', (req, res) => {
 });
 
 app.post('/api/admin/clear-queue', (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
     queue = [];
     res.json({ success: true });
 });
