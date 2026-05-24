@@ -9,7 +9,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
-// 🟢 Set explicitly to match your Spotify Developer settings
+
+// Unified Redirect URI pointing to your /api/callback endpoint
 const REDIRECT_URI = process.env.REDIRECT_URI || `https://song-requests-gnzd.onrender.com/api/callback`;
 
 let systemConfigs = {
@@ -22,7 +23,6 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// Helper to format track duration milliseconds into MM:SS
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
     const seconds = ((ms % 60000) / 1000).toFixed(0);
@@ -49,7 +49,7 @@ async function getSpotifyToken() {
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// SPOTIFY USER AUTH CODE FLOW
+// SPOTIFY AUTHENTICATION
 // -------------------------------------------------------------
 app.get('/api/login', (req, res) => {
     const scope = 'playlist-read-private playlist-read-collaborative';
@@ -80,7 +80,6 @@ app.get('/api/callback', async (req, res) => {
         const data = await response.json();
         
         if (data.access_token) {
-            // Securely pass user token back to client app using URL fragment routing
             res.redirect(`/#access_token=${data.access_token}`);
         } else {
             res.redirect('/?error=auth_failed');
@@ -91,7 +90,7 @@ app.get('/api/callback', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// USER CORE CONTENT API ENDPOINTS
+// CORE DATA API
 // -------------------------------------------------------------
 app.get('/data', (req, res) => {
     res.json({
@@ -150,7 +149,7 @@ app.post('/api/request', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// ADMIN MANAGEMENT BACKEND LAYER
+// CONTROL LAYER (ADMIN)
 // -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
@@ -201,6 +200,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`[SERVER] System up on port ${PORT}`);
+    console.log(`[SERVER] Running on port ${PORT}`);
     await getSpotifyToken();
 });
