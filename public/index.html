@@ -35,22 +35,6 @@
             padding-left: 10px;
         }
 
-        .section-title-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 25px;
-            margin-bottom: 15px;
-        }
-
-        .section-title {
-            font-size: 1.2rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin: 0;
-        }
-
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -66,27 +50,6 @@
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
-        .spotify-sync-btn {
-            width: 100%;
-            background-color: var(--spotify-green);
-            color: white;
-            border: none;
-            padding: 14px;
-            border-radius: 30px;
-            font-weight: 800;
-            font-size: 1rem;
-            cursor: pointer;
-            margin-bottom: 20px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            display: block;
-            text-align: center;
-            box-sizing: border-box;
-            text-decoration: none;
-        }
-        .spotify-sync-btn:hover { filter: brightness(1.08); }
-
         .search-box {
             width: 100%;
             background-color: var(--panel-bg);
@@ -97,12 +60,20 @@
             font-size: 1rem;
             box-sizing: border-box;
             outline: none;
-            margin-bottom: 5px;
+            margin-bottom: 20px;
         }
         .search-box:focus { border-color: var(--spotify-green); }
         .search-box:disabled { background-color: #1a1a1a; color: #555; cursor: not-allowed; }
 
-        .track-row, .playlist-row {
+        .section-title {
+            font-size: 1.2rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 15px;
+        }
+
+        .track-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -112,13 +83,11 @@
             border-radius: 8px;
             border: 1px solid #222;
         }
-        .playlist-row { cursor: pointer; transition: background 0.2s; }
-        .playlist-row:hover { background-color: var(--card-bg); }
 
-        .track-details, .playlist-details { display: flex; align-items: center; gap: 12px; }
-        .track-details img, .playlist-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; }
-        .track-title, .playlist-title { font-weight: 700; margin: 0; font-size: 1rem; }
-        .track-artist, .playlist-trackcount { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
+        .track-details { display: flex; align-items: center; gap: 12px; }
+        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; }
+        .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
+        .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
 
         .explicit-badge {
             background-color: var(--red-action);
@@ -130,7 +99,6 @@
             margin-left: 6px;
             display: inline-block;
             vertical-align: middle;
-            line-height: 1;
         }
 
         .action-container { display: flex; align-items: center; gap: 12px; }
@@ -147,21 +115,6 @@
             font-size: 0.85rem;
         }
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
-
-        .back-inline-btn {
-            background: #242424;
-            color: white;
-            border: 1px solid #333;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .back-inline-btn:hover { background: #333; }
         
         .placeholder-text { color: var(--text-muted); font-style: italic; font-size: 0.95rem; }
     </style>
@@ -182,17 +135,11 @@
             </div>
         </div>
 
-        <a href="/api/login" id="spotify-connect-action" class="spotify-sync-btn">Connect Spotify</a>
-
         <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
         
-        <div class="section-title-container">
-            <h3 class="section-title" id="workspace-title">Search Results</h3>
-            <div id="back-button-container"></div>
-        </div>
-        
+        <h3 class="section-title">Search Results</h3>
         <div id="results-list">
-            <p class="placeholder-text">Type in the box above or view your playlists to populate selections.</p>
+            <p class="placeholder-text">Type in the box above to discover tracks.</p>
         </div>
     </div>
 
@@ -202,17 +149,6 @@
         let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
-        let userAccessToken = "";
-        let currentViewMode = "search"; 
-
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-        if(hashParams.has('access_token')) {
-            userAccessToken = hashParams.get('access_token');
-            localStorage.setItem('spotify_user_token', userAccessToken);
-            window.location.hash = ""; 
-        } else {
-            userAccessToken = localStorage.getItem('spotify_user_token') || "";
-        }
 
         if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
@@ -221,151 +157,18 @@
             localStorage.setItem('dj_last_regen', lastRegenTime);
         }
 
-        function setupAuthButton() {
-            const btn = document.getElementById('spotify-connect-action');
-            if(userAccessToken) {
-                btn.innerText = "My Playlists";
-                btn.removeAttribute('href');
-                btn.onclick = (e) => {
-                    e.preventDefault();
-                    document.getElementById('search-input').value = "";
-                    openPlaylistsView();
-                };
-            }
-        }
-
-        function openPlaylistsView() {
-            currentViewMode = "playlists";
-            document.getElementById('search-input').disabled = true;
-            document.getElementById('search-input').placeholder = "Search locked in playlist view";
-            document.getElementById('workspace-title').innerText = "My Playlists";
-            
-            document.getElementById('back-button-container').innerHTML = `
-                <button class="back-inline-btn" onclick="resetToSearchView()">◀ Back</button>
-            `;
-            
-            const container = document.getElementById('results-list');
-            container.innerHTML = "<p class='placeholder-text'>Loading your playlists...</p>";
-
-            fetch('https://api.spotify.com/v1/me/playlists', {
-                headers: { 'Authorization': `Bearer ${userAccessToken}` }
-            })
-            .then(res => {
-                if(!res.ok) throw new Error("Expired session credentials");
-                return res.json();
-            })
-            .then(data => {
-                if(!data.items || data.items.length === 0) {
-                    container.innerHTML = "<p class='placeholder-text'>No playlists found on your account.</p>";
-                    return;
-                }
-                container.innerHTML = data.items.map(pl => `
-                    <div class="playlist-row" onclick="viewPlaylistTracks('${pl.id}', '${escapeHtml(pl.name)}')">
-                        <div class="playlist-details">
-                            <img src="${pl.images?.[0]?.url || 'https://picsum.photos/42'}">
-                            <div>
-                                <p class="playlist-title">${escapeHtml(pl.name)}</p>
-                                <p class="playlist-trackcount">${pl.tracks.total} Tracks</p>
-                            </div>
-                        </div>
-                        <span style="color:var(--spotify-green); font-weight:bold;">➔</span>
-                    </div>
-                `).join('');
-            })
-            .catch(() => {
-                container.innerHTML = "<p class='placeholder-text'>Session expired. Reconnecting...</p>";
-                localStorage.removeItem('spotify_user_token');
-                userAccessToken = "";
-                setTimeout(() => { location.reload(); }, 1000);
-            });
-        }
-
-        function viewPlaylistTracks(id, name) {
-            currentViewMode = "tracks";
-            document.getElementById('workspace-title').innerText = name;
-            
-            document.getElementById('back-button-container').innerHTML = `
-                <button class="back-inline-btn" onclick="openPlaylistsView()">◀ Back</button>
-            `;
-            
-            const container = document.getElementById('results-list');
-            container.innerHTML = "<p class='placeholder-text'>Loading tracks...</p>";
-
-            fetch(`https://api.spotify.com/v1/playlists/${id}/tracks?limit=50`, {
-                headers: { 'Authorization': `Bearer ${userAccessToken}` }
-            })
-            .then(res => res.json())
-            .then(data => {
-                container.innerHTML = "";
-                const validItems = (data.items || []).filter(item => item.track);
-                
-                if(validItems.length === 0) {
-                    container.innerHTML = "<p class='placeholder-text'>No playable tracks found inside this playlist.</p>";
-                    return;
-                }
-
-                validItems.forEach(item => {
-                    const t = item.track;
-                    const minutes = Math.floor(t.duration_ms / 60000);
-                    const seconds = ((t.duration_ms % 60000) / 1000).toFixed(0);
-                    const formattedTime = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-
-                    const trackObj = {
-                        id: t.id,
-                        name: t.name,
-                        artist: t.artists.map(a => a.name).join(', '),
-                        artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/42',
-                        explicit: t.explicit || false,
-                        duration: formattedTime
-                    };
-
-                    const row = document.createElement('div');
-                    row.className = 'track-row';
-                    row.innerHTML = `
-                        <div class="track-details">
-                            <img src="${trackObj.artwork}">
-                            <div>
-                                <p class="track-title">
-                                    ${escapeHtml(trackObj.name)}
-                                    ${trackObj.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </p>
-                                <p class="track-artist">${escapeHtml(trackObj.artist)}</p>
-                            </div>
-                        </div>
-                        <div class="action-container">
-                            <span class="duration-label">${trackObj.duration}</span>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''}>Request</button>
-                        </div>
-                    `;
-                    row.querySelector('.req-btn').addEventListener('click', () => submitRequest(trackObj));
-                    container.appendChild(row);
-                });
-            })
-            .catch(() => { container.innerHTML = "<p class='placeholder-text'>Failed to load tracks.</p>"; });
-        }
-
-        function resetToSearchView() {
-            currentViewMode = "search";
-            document.getElementById('search-input').disabled = false;
-            document.getElementById('search-input').placeholder = "Search tracks, artists...";
-            document.getElementById('workspace-title').innerText = "Search Results";
-            document.getElementById('back-button-container').innerHTML = "";
-            document.getElementById('results-list').innerHTML = `
-                <p class="placeholder-text">Type in the box above or view your playlists to populate selections.</p>
-            `;
-        }
-
         function searchSongs() {
-            if (currentViewMode !== "search") return;
             const query = document.getElementById('search-input').value.trim();
-            if (!query) { resetToSearchView(); return; }
+            const container = document.getElementById('results-list');
+            
+            if (!query) { 
+                container.innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`; 
+                return; 
+            }
 
-            fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-                headers: { 'user-token': userAccessToken }
-            })
+            fetch(`/api/search?q=${encodeURIComponent(query)}`)
             .then(res => res.json())
             .then(data => {
-                const container = document.getElementById('results-list');
                 container.innerHTML = ''; 
 
                 if(!data.tracks || data.tracks.length === 0) {
@@ -414,7 +217,8 @@
                 }
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" submitted successfully!`);
-                resetToSearchView();
+                document.getElementById('search-input').value = "";
+                searchSongs();
             } else {
                 const errData = await res.json();
                 alert(errData.error || "Submission failed.");
@@ -460,19 +264,18 @@
             const inputs = document.getElementById('search-input');
             const btns = document.querySelectorAll('.req-btn');
             if (!systemRequestsOpen) {
-                if(currentViewMode === "search") inputs.placeholder = "Submissions are currently CLOSED by the DJ";
+                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
                 btns.forEach(b => b.disabled = true);
             } else if (localCredits <= 0) {
                 btns.forEach(b => b.disabled = true);
             } else {
-                if(currentViewMode === "search") inputs.placeholder = "Search tracks, artists...";
+                inputs.placeholder = "Search tracks, artists...";
                 btns.forEach(b => b.disabled = false);
             }
         }
 
         setInterval(handleCreditCalculations, 1000);
         setInterval(syncWithServer, 4000);
-        setupAuthButton();
         syncWithServer();
     </script>
 </body>
