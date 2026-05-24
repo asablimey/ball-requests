@@ -1,13 +1,12 @@
 const express = require('express');
 const path = require('path');
-const fetch = require('node-fetch'); // Ensure "node-fetch": "^2.6.7" is in package.json
+const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Live System Configurations
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
@@ -18,13 +17,13 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// Spotify API Access Token Handshake
+// 🌐 USE OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-        console.log("[WARNING] Spotify API environmental variables are missing.");
+        console.log("[WARNING] Spotify API credentials are missing in Render environment settings.");
         return;
     }
 
@@ -41,23 +40,21 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Authentication successful.");
+            console.log("[SPOTIFY] Successfully fetched live access token.");
         } else {
-            console.log("[SPOTIFY ERROR] Authentication rejected:", data);
+            console.log("[SPOTIFY ERROR] Authentication failed:", data);
         }
     } catch (err) {
-        console.error("[SPOTIFY CRITICAL SYSTEM ERROR]:", err.message);
+        console.error("[SPOTIFY CRITICAL ERROR]:", err.message);
     }
 }
 
-// Refresh credentials token loop every 50 minutes
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// 🌐 PUBLIC APIS (CLIENT / GUEST VISUAL SCREEN MAPS)
+// GET & POST ENDPOINTS
 // -------------------------------------------------------------
 
-// Live Client Synchronization Poll Link
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
@@ -68,13 +65,12 @@ app.get('/data', (req, res) => {
     });
 });
 
-// Spotify Catalogue Query Proxy Bridge
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
     if (!spotifyAccessToken) {
-        return res.status(500).json({ error: "Spotify credentials loading. Retrying..." });
+        return res.status(500).json({ error: "Token uninitialized." });
     }
 
     try {
@@ -92,17 +88,16 @@ app.get('/api/search', async (req, res) => {
         
         res.json({ tracks });
     } catch (err) {
-        res.status(500).json({ error: "Search query error." });
+        res.status(500).json({ error: "Search failed" });
     }
 });
 
-// Push Request Link
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) {
-        return res.status(403).json({ error: "Song submissions are currently locked." });
+        return res.status(403).json({ error: "Submissions closed." });
     }
     const { track } = req.body;
-    if (!track || !track.name) return res.status(400).json({ error: "Invalid song request context." });
+    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
@@ -119,11 +114,6 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
-// -------------------------------------------------------------
-// 🎛 OPEN ADMINISTRATIVE DATA ROUTERS (NO PASSCODES REQUIRED)
-// -------------------------------------------------------------
-
-// Open Admin Content Data Feed
 app.get('/api/admin/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
@@ -134,7 +124,6 @@ app.get('/api/admin/data', (req, res) => {
     });
 });
 
-// Set Operating Variable Limits
 app.post('/api/admin/config', (req, res) => {
     const { maxCredits, countdownLength } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
@@ -142,55 +131,38 @@ app.post('/api/admin/config', (req, res) => {
     res.json({ success: true });
 });
 
-// Change Room Submissions Toggles
 app.post('/api/admin/toggle', (req, res) => {
     const { allow } = req.body;
-    if (typeof allow === 'boolean') {
-        systemConfigs.requestsAllowed = allow;
-    }
+    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
     res.json({ success: true });
 });
 
-// Modification Stack Actions & Master Deletions
 app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
+    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
+    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
 
-    // Direct Group Clearing Routines
-    if (action === 'clearQueue') {
-        activeQueue = [];
-        return res.json({ success: true });
-    }
-    if (action === 'clearHistory') {
-        playedHistory = [];
-        return res.json({ success: true });
-    }
-
-    // Individual Item Evaluation Routing
     const trackIndex = activeQueue.findIndex(t => t.id === id);
     if (trackIndex !== -1) {
         if (action === 'top') {
             const track = activeQueue[trackIndex];
             const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
             track.votes = highestVotes + 1;
-        } 
-        else if (action === 'played') {
+        } else if (action === 'played') {
             const [track] = activeQueue.splice(trackIndex, 1);
             playedHistory.unshift(track);
-        } 
-        else if (action === 'remove') {
+        } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
         }
     }
     res.json({ success: true });
 });
 
-// Main Route Fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// App Startup Instantiation Loop
 app.listen(PORT, async () => {
-    console.log(`[SERVER] System up on port ${PORT}`);
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
     await getSpotifyToken();
 });
