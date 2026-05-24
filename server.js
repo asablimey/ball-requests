@@ -9,23 +9,19 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🔐 SPOTIFY API CREDENTIALS (Pulled securely from Render environment variables)
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Global DJ Settings (Editable from Admin Panel)
-let maxCredits = 3;             // Default max credits a user can hold
-let countdownLength = 60;       // Default countdown time in seconds to earn 1 credit back
+let maxCredits = 3;             
+let countdownLength = 60;       
 let requestsAllowed = true;
 
-// Core Memory Arrays
 let queue = [];
 let history = [];
-let userBanks = {};             // Keeps track of individual student credit accounts
+let userBanks = {};             
 let spotifyAccessToken = '';
 const ADMIN_PASSWORD = "ballDJ2026";
 
-// INTERNAL FUNCTION: Request fresh access token from Spotify API
 async function refreshSpotifyToken() {
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -39,14 +35,12 @@ async function refreshSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log('[SPOTIFY] Connected to live database successfully.');
+            console.log('[SPOTIFY] Token initialized successfully.');
         }
     } catch (err) {
-        console.error('[SPOTIFY ERROR] Failed to fetch access token:', err);
+        console.error('[SPOTIFY ERROR] Token failed:', err);
     }
 }
-
-// --- API ENDPOINTS FOR THE APP ---
 
 // Search Tracks via Spotify API
 app.get('/api/search', async (req, res) => {
@@ -56,12 +50,11 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        // 🛠️ FIXED: Added the missing '$' before {encodeURIComponent(query)} to make guest search work perfectly
         const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         
-        if (response.status === 401) { // Token expired
+        if (response.status === 401) {
             await refreshSpotifyToken();
             return res.redirect(req.originalUrl);
         }
@@ -76,12 +69,11 @@ app.get('/api/search', async (req, res) => {
         
         res.json(tracks);
     } catch (err) {
-        console.error('[SEARCH ERROR] Failed:', err);
         res.status(500).json({ error: 'Search failed' });
     }
 });
 
-// Get Current Queue & Global Configs (Fixed guest page credits loading)
+// Sync data structures cleanly with the guest page
 app.get('/api/queue', (req, res) => {
     res.json({
         queue,
@@ -90,7 +82,7 @@ app.get('/api/queue', (req, res) => {
     });
 });
 
-// Track and Manage Credits per User IP
+// Live Credits Controller
 app.get('/api/user-status', (req, res) => {
     const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     if (!userBanks[userIp]) {
@@ -115,44 +107,40 @@ app.get('/api/user-status', (req, res) => {
     res.json({ credits: user.credits, timeRemaining, maxCredits, countdownLength, requestsAllowed });
 });
 
-// Submit a Request
 app.post('/api/request', (req, res) => {
-    if (!requestsAllowed) return res.status(400).json({ error: 'Song requests are currently locked by the DJ.' });
+    if (!requestsAllowed) return res.status(400).json({ error: 'Song requests are locked.' });
 
     const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const { track } = req.body;
     
     if (!userBanks[userIp] || userBanks[userIp].credits <= 0) {
-        return res.status(400).json({ error: 'Out of credits! Wait for the timer to reset.' });
+        return res.status(400).json({ error: 'Out of credits!' });
     }
     
-    const isDuplicate = queue.some(item => item.id === track.id);
-    if (isDuplicate) return res.status(400).json({ error: 'This song is already in the queue!' });
+    if (queue.some(item => item.id === track.id)) {
+        return res.status(400).json({ error: 'Song already queued!' });
+    }
 
     userBanks[userIp].credits -= 1;
-    if (userBanks[userIp].credits === maxCredits - 1) {
-        userBanks[userIp].lastRegen = Date.now();
-    }
+    userBanks[userIp].lastRegen = Date.now();
     
-    queue.push({ ...track, votes: 1, id: track.id, timestamp: Date.now() });
+    queue.push({ ...track, votes: 1, timestamp: Date.now() });
     res.json({ success: true });
 });
 
-// Upvote an Existing Request
 app.post('/api/upvote', (req, res) => {
     const { trackId } = req.body;
     const song = queue.find(item => item.id === trackId);
     if (song) {
-        song.votes += 1;
+        song.votes = (song.votes || 1) + 1;
         queue.sort((a, b) => b.votes - a.votes || a.timestamp - b.timestamp);
         res.json({ success: true });
     } else {
-        res.status(404).json({ error: 'Song not found in active queue.' });
+        res.status(404).json({ error: 'Not found' });
     }
 });
 
-// --- ADMIN ENDPOINTS (Matches your approved admin panel code) ---
-
+// Admin processing logic
 app.post('/api/admin/update-configs', (req, res) => {
     const { password, configs } = req.body;
     if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
@@ -185,8 +173,7 @@ app.post('/api/admin/clear-queue', (req, res) => {
     res.json({ success: true });
 });
 
-// Start the live server hook
 app.listen(PORT, () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    console.log(`Server streaming on port ${PORT}`);
     refreshSpotifyToken();
 });
