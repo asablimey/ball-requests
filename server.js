@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW (For Search Backup)
+// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW (For Global Search)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -28,7 +28,7 @@ async function getSpotifyToken() {
     }
 
     try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
+        const response = await fetch('https://api.spotify.com/v1/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
@@ -40,7 +40,7 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Global access token generated successfully.");
+            console.log("[SPOTIFY] Successfully fetched live access token.");
         } else {
             console.log("[SPOTIFY ERROR] Authentication failed:", data);
         }
@@ -105,15 +105,10 @@ app.get('/api/playlists', async (req, res) => {
         const data = await response.json();
         
         const items = (data.items || []).map(p => {
-            let count = 0;
-            if (p.tracks) {
-                if (typeof p.tracks === 'number') count = p.tracks;
-                else if (p.tracks.total !== undefined) count = p.tracks.total;
-            }
             return {
                 id: p.id,
                 name: p.name || 'Untitled Playlist',
-                trackCount: count,
+                trackCount: p.tracks?.total || 0,
                 artwork: p.images && p.images.length > 0 ? p.images[0].url : 'https://picsum.photos/48'
             };
         });
@@ -130,33 +125,24 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     if (!userToken || userToken === "null" || userToken === "undefined") {
         return res.status(401).json({ error: "No user token provided." });
     }
-    
-    // ✅ FIXED: Correct proxy syntax path mapping for playlist track layers
-    const targetUrl = 'https://api.spotify.com/v1/playlists//' + req.params.id + '/tracks?limit=50';
-    
     try {
-        const response = await fetch(targetUrl, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$/?q=${req.params.id}/tracks?limit=50`, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
-        
         const data = await response.json();
         const items = data.items || [];
         
-        const tracks = items
-            .filter(item => item && item.track)
-            .map(item => {
-                const t = item.track;
-                return {
-                    id: t.id || Math.random().toString(36).substr(2, 9),
-                    name: t.name || 'Unknown Track',
-                    artist: t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist',
-                    artwork: t.album && t.album.images && t.album.images.length > 0 ? t.album.images[0].url : 'https://picsum.photos/48'
-                };
-            });
-
+        const tracks = items.map(item => {
+            return {
+                id: item.track?.id || Math.random().toString(36).substr(2, 9),
+                name: item.track?.name || 'Unknown Track',
+                artist: item.track?.artists ? item.track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+                artwork: item.track?.album?.images && item.track.album.images.length > 0 ? item.track.album.images[0].url : 'https://picsum.photos/48'
+            };
+        });
         res.json(tracks);
     } catch (err) {
-        console.error("Tracks extraction error:", err);
+        console.error("Tracks fetch error:", err);
         res.status(500).json({ error: "Failed fetching tracks." });
     }
 });
@@ -187,11 +173,8 @@ app.get('/api/search', async (req, res) => {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
-    // ✅ FIXED: Restored complete search parameters so global search displays results again
-    const searchUrl = 'https://api.spotify.com/v1/search?q=?q=' + encodeURIComponent(query) + '&type=track&limit=10';
-
     try {
-        const response = await fetch(searchUrl, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
@@ -199,13 +182,12 @@ app.get('/api/search', async (req, res) => {
         const tracks = (data.tracks?.items || []).map(track => ({
             id: track.id,
             name: track.name,
-            artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+            artist: track.artists.map(a => a.name).join(', '),
             artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
         }));
         
         res.json({ tracks });
     } catch (err) {
-        console.error("Search API error:", err);
         res.status(500).json({ error: "Search failed" });
     }
 });
@@ -284,6 +266,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log('[SERVER] Request dashboard streaming live on port ' + PORT);
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
     await getSpotifyToken();
 });
