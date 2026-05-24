@@ -94,11 +94,11 @@
         <div class="status-card">
             <div class="status-info">
                 <h3>Your Credits</h3>
-                <p id="credits-display">- / -</p>
+                <p id="credits-display">3 / 3</p>
             </div>
             <div class="status-info" style="text-align: right;">
                 <h3>Next Credit In</h3>
-                <p id="timer-display">--:--</p>
+                <p id="timer-display">MAX</p>
             </div>
         </div>
 
@@ -108,14 +108,15 @@
 
     <script>
         let maxCredits = 3;
-        let localCredits = parseInt(localStorage.getItem('dj_user_credits')) ?? null;
-        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen')) ?? Date.now();
+        let localCredits = parseInt(localStorage.getItem('dj_user_credits'));
+        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
 
-        // Initialize user data if missing
-        if (localCredits === null) {
+        // 🛠️ SAFELY ESCAPE AND CORRUPT RESET THE "NaN" ERROR VALUES
+        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
+            lastRegenTime = Date.now();
             localStorage.setItem('dj_user_credits', localCredits);
             localStorage.setItem('dj_last_regen', lastRegenTime);
         }
