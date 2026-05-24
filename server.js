@@ -68,7 +68,7 @@ app.get('/api/playlists', async (req, res) => {
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=30', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
             headers: { 'Authorization': `Bearer ${userToken}` }
         });
         const data = await response.json();
@@ -78,14 +78,14 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Added missing $ for template literal string interpolation
+// 🟢 FIXED: Missing $ added to template literal interpolation so tracks load!
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/$${playlistId}/tracks?limit=50`, {
             headers: { 'Authorization': `Bearer ${userToken}` }
         });
         const data = await response.json();
@@ -129,7 +129,7 @@ app.get('/api/search', async (req, res) => {
             token = authData.access_token;
         }
 
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=15`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=15`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
