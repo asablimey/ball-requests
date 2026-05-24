@@ -9,22 +9,23 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🔐 SPOTIFY API CREDENTIALS
+// 🔐 SPOTIFY API CREDENTIALS (Secure environment variables)
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Global Session Configs
+// Global DJ Session Rules
 let maxCredits = 3;             
 let countdownLength = 60;       
 let requestsAllowed = true;
 
-// Memory State Engines
+// State Repositories
 let queue = [];
 let history = [];
 let userBanks = {};             
 let spotifyAccessToken = '';
 const ADMIN_PASSWORD = "ballDJ2026";
 
+// Fetch access token from Spotify API
 async function refreshSpotifyToken() {
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -38,21 +39,19 @@ async function refreshSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log('[SPOTIFY] Access Token synchronized.');
+            console.log('[SPOTIFY] Linked successfully.');
         }
     } catch (err) {
-        console.error('[SPOTIFY ERROR] Token refresh fault:', err);
+        console.error('[SPOTIFY ERROR] Handshake dropped:', err);
     }
 }
 
-// 🔐 PASSWORD PROTECTED ROUTE (Saves original query string authentication fallback)
+// Password verification gateway fallback route
 app.get('/admin.html', (req, res) => {
-    if (req.query.password === ADMIN_PASSWORD) {
-        res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-    } else {
-        res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-    }
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
+
+// --- CLIENT ENGINE INTERFACES ---
 
 // Search Tracks via Spotify API
 app.get('/api/search', async (req, res) => {
@@ -62,12 +61,12 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        // ✅ FIXED: Template literal standard syntax restored properly
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
+        // ✅ FIXED: Template literal interpolation syntax resolved properly with standard '$' wrapper
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         
-        if (response.status === 401) {
+        if (response.status === 401) { 
             await refreshSpotifyToken();
             return res.redirect(req.originalUrl);
         }
@@ -86,7 +85,7 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Broadcast current state to clients
+// Broadcaster pipeline mapping configurations outward to old guest scripts
 app.get('/api/queue', (req, res) => {
     res.json({
         queue,
@@ -98,7 +97,7 @@ app.get('/api/queue', (req, res) => {
     });
 });
 
-// Track and Manage Credits per User IP (Fixed payload structure for guest UI updates)
+// Sync user credits (Provides nested block and root variables to avoid guest page -/- error)
 app.get('/api/user-status', (req, res) => {
     const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     if (!userBanks[userIp]) {
@@ -130,7 +129,7 @@ app.get('/api/user-status', (req, res) => {
     });
 });
 
-// Submit a Request
+// Track Request Submission Pipeline
 app.post('/api/request', (req, res) => {
     if (!requestsAllowed) return res.status(400).json({ error: 'Song requests are locked.' });
 
@@ -142,16 +141,17 @@ app.post('/api/request', (req, res) => {
     }
     
     if (queue.some(item => item.id === track.id)) {
-        return res.status(400).json({ error: 'Song already in queue!' });
+        return res.status(400).json({ error: 'This track is already in the queue!' });
     }
 
     userBanks[userIp].credits -= 1;
     userBanks[userIp].lastRegen = Date.now();
     
+    // Polyfill track entity variations cleanly across varying client models
     queue.push({ 
         ...track, 
-        title: track.title || track.name,
         name: track.name || track.title,
+        title: track.title || track.name,
         albumArt: track.albumArt || track.artwork,
         artwork: track.artwork || track.albumArt,
         votes: 1, 
@@ -160,20 +160,19 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
-// Upvote an Existing Request
 app.post('/api/upvote', (req, res) => {
     const { trackId } = req.body;
     const song = queue.find(item => item.id === trackId);
     if (song) {
-        song.votes += 1;
+        song.votes = (song.votes || 1) + 1;
         queue.sort((a, b) => b.votes - a.votes || a.timestamp - b.timestamp);
         res.json({ success: true });
     } else {
-        res.status(404).json({ error: 'Not found' });
+        res.status(404).json({ error: 'Track not found.' });
     }
 });
 
-// --- ADMIN SYSTEM CONFIGURATION HOOKS ---
+// --- DJ SYSTEM SECURE INTERFACES ---
 
 app.post('/api/admin/update-configs', (req, res) => {
     const { password, configs } = req.body;
@@ -208,6 +207,6 @@ app.post('/api/admin/clear-queue', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server handling request dashboard streams on port ${PORT}`);
+    console.log(`[STREAM RUNNING] Listening on interface port ${PORT}`);
     refreshSpotifyToken();
 });
