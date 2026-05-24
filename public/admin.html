@@ -115,7 +115,6 @@
         function checkAdminPassword() {
             const input = document.getElementById('admin-pass-input').value;
             const errorMsg = document.getElementById('gate-error');
-            
             if (input === "ballDJ2026") {
                 document.getElementById('password-gate').style.display = 'none';
             } else {
@@ -123,7 +122,6 @@
                 document.getElementById('admin-pass-input').value = '';
             }
         }
-        
         document.addEventListener("DOMContentLoaded", () => {
             document.getElementById('admin-pass-input').focus();
             document.getElementById('admin-pass-input').addEventListener("keypress", (e) => {
@@ -133,3 +131,9 @@
     </script>
 </head>
 <body>
+
+    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #121212; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
+        <h2 style="font-size: 28px; margin-bottom: 5px;">DJ Control Panel Locked</h2>
+        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
+        <div style="display: flex; gap: 10px;">
+            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: #242424;
