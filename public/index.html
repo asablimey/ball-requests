@@ -53,7 +53,7 @@
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
-        /* 🟢 GIANT SCREEN-WIDTH ACTION BUTTONS */
+        /* SCREEN-WIDTH GREEN ACTION BUTTONS */
         .action-block-btn {
             width: 100%;
             background-color: var(--spotify-green);
@@ -74,7 +74,6 @@
         .action-block-btn:hover { filter: brightness(1.05); }
         .action-block-btn:active { transform: scale(0.99); }
         
-        /* Secondary look for the Playlists toggle hook */
         .playlists-toggle-btn {
             background-color: #242424;
             border: 1px solid #333;
@@ -110,7 +109,7 @@
         }
         .search-box:focus { border-color: var(--spotify-green); }
 
-        /* Content Grid Structures */
+        /* Unified CSS Content Grid Layout */
         .content-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -252,6 +251,7 @@
             if (localCredits >= maxCredits) {
                 document.getElementById('timer-display').innerText = "MAX";
                 lastRegenTime = Date.now();
+                localStorage.setItem('dj_user_credits', localCredits);
                 localStorage.setItem('dj_last_regen', lastRegenTime);
                 return;
             }
@@ -290,50 +290,54 @@
 
             searchField.disabled = false;
 
-            // Handle the Screen Width Button Transformation
             if (userAccessToken) {
                 document.getElementById('connect-spotify-btn').style.display = 'none';
                 document.getElementById('my-playlists-btn').style.display = 'block';
-                
-                // Prefetch playlists invisibly so they open instantly when "My Playlists" is pressed
-                if (!savedPlaylistsHTML) {
-                    silentFetchPlaylists();
-                }
             } else {
                 document.getElementById('connect-spotify-btn').style.display = 'block';
                 document.getElementById('my-playlists-btn').style.display = 'none';
             }
         }
 
-        async function silentFetchPlaylists() {
+        // Active handling click flow configuration updates
+        async function togglePlaylistsView() {
+            const targetList = document.getElementById('content-target-list');
+            document.getElementById('search-input').value = ""; 
+            currentView = "playlists";
+            document.getElementById('content-view-title').innerText = "Your Playlists";
+            document.getElementById('view-action-slot').innerHTML = "";
+
+            if (savedPlaylistsHTML) {
+                targetList.innerHTML = savedPlaylistsHTML;
+                return;
+            }
+
+            targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:40px 0; text-align:center;">Loading your Spotify playlists...</p>`;
+            
             try {
                 const res = await fetch('/api/playlists', {
                     headers: { 'user-token': userAccessToken }
                 });
+                
                 if (res.status === 401) { logoutExpiredSession(); return; }
                 const playlists = await res.json();
                 
-                if(playlists.length > 0) {
-                    savedPlaylistsHTML = `<div class="content-grid">` + playlists.map(pl => `
-                        <div class="playlist-card" onclick="loadPlaylistTracks('${pl.id}', '${pl.name.replace(/'/g, "\\'")}')">
-                            <img src="${pl.images?.[0]?.url || 'https://picsum.photos/150'}">
-                            <p class="playlist-name">${pl.name}</p>
-                        </div>
-                    `).join('') + `</div>`;
+                if (!playlists || playlists.length === 0) {
+                    targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:40px 0; text-align:center;">No playlists found on this account.</p>`;
+                    return;
                 }
-            } catch(e) { console.log("Silent caching failed."); }
-        }
-
-        function togglePlaylistsView() {
-            if (!savedPlaylistsHTML) {
-                document.getElementById('content-target-list').innerHTML = `<p style="color:#666; font-style:italic; padding:20px 0; text-align:center;">Loading playlists...</p>`;
-                return;
+                
+                savedPlaylistsHTML = `<div class="content-grid">` + playlists.map(pl => `
+                    <div class="playlist-card" onclick="loadPlaylistTracks('${pl.id}', '${pl.name.replace(/'/g, "\\'")}')">
+                        <img src="${pl.images?.[0]?.url || 'https://picsum.photos/150'}">
+                        <p class="playlist-name">${pl.name}</p>
+                    </div>
+                `).join('') + `</div>`;
+                
+                targetList.innerHTML = savedPlaylistsHTML;
+            } catch(e) { 
+                targetList.innerHTML = `<p style="color:red; font-style:italic; padding:40px 0; text-align:center;">Failed loading playlists.</p>`;
             }
-            document.getElementById('search-input').value = ""; // Clear active catalog filtering
-            currentView = "playlists";
-            document.getElementById('content-view-title').innerText = "Your Playlists";
-            document.getElementById('view-action-slot').innerHTML = "";
-            document.getElementById('content-target-list').innerHTML = savedPlaylistsHTML;
         }
 
         async function loadPlaylistTracks(id, playlistName) {
@@ -353,7 +357,7 @@
                 } else {
                     targetList.innerHTML = generateTrackRowsHTML(tracks);
                 }
-            } catch(e) { console.log("Track extraction error."); }
+            } catch(e) { console.log("Track list parsing error."); }
         }
 
         function revertToGlobalSearchMode() {
@@ -420,10 +424,8 @@
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" added to the queue!`);
                 
-                // Clear input arrays and snap smoothly back into the active category folder view
                 if (currentView === "playlist_tracks") {
-                    // Stay on the playlist track page so they can spend more credits on their songs
-                    const activeHeaderTitle = document.getElementById('content-view-title').innerText;
+                     updateUIState(); // Just update buttons to handle disabled states natively
                 } else {
                     document.getElementById('search-input').value = "";
                     revertToGlobalSearchMode();
