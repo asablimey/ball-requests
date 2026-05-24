@@ -29,7 +29,6 @@
             max-width: 480px;
         }
 
-        /* 🟢 Subtle Green Left Accent Border for Title */
         h2 {
             font-weight: 800; 
             letter-spacing: -0.5px; 
@@ -38,7 +37,6 @@
             padding-left: 10px;
         }
 
-        /* 🟢 Top Border Accent Line Added to Status Card */
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -52,8 +50,6 @@
         }
 
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
-        
-        /* 🟢 Turned numbers green to draw the eye */
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
         .search-box {
@@ -70,7 +66,6 @@
         }
         .search-box:focus { border-color: var(--spotify-green); }
 
-        /* Shared row style for uniform layout between playlists and tracks */
         .track-row, .playlist-row {
             display: flex;
             justify-content: space-between;
@@ -81,33 +76,31 @@
             border-radius: 8px;
             border: 1px solid #222;
         }
-        .playlist-row { cursor: pointer; transition: background 0.2s; }
-        .playlist-row:hover { background: #202020; }
+        .playlist-row { cursor: pointer; transition: background 0.2s ease; }
+        .playlist-row:hover { background: #202020; border-color: #333; }
 
         .track-details { display: flex; align-items: center; gap: 12px; }
         .track-details img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
-        .track-title { font-weight: 700; margin: 0; font-size: 1rem; color: white; }
+        .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
         .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
 
-        .view-section-title {
+        .section-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin: 20px 0 10px 0;
+            margin: 15px 0 10px 2px;
         }
-
+        .section-header h4 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        
         .back-btn {
             background-color: #282828;
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 20px;
+            padding: 4px 12px;
+            border-radius: 12px;
             font-weight: 700;
             cursor: pointer;
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            font-size: 0.75rem;
         }
         .back-btn:hover { background-color: #333; }
 
@@ -122,37 +115,7 @@
             font-size: 0.85rem;
         }
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
-        
-        /* 🔌 Spotify Brand Connect Button Container */
-        .auth-container {
-            text-align: center;
-            padding: 40px 20px;
-            background-color: var(--panel-bg);
-            border: 1px solid #222;
-            border-radius: 8px;
-            margin-top: 20px;
-        }
-
-        .connect-btn {
-            background-color: var(--spotify-green);
-            color: white;
-            border: none;
-            padding: 12px 28px;
-            border-radius: 25px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.95rem;
-            text-decoration: none;
-            display: inline-block;
-            margin-top: 15px;
-            transition: background-color 0.2s, transform 0.1s;
-        }
-        .connect-btn:hover {
-            background-color: #1ed760;
-            transform: scale(1.02);
-        }
-        
-        .empty-msg { color: var(--text-muted); font-size: 0.9rem; padding: 15px 0; }
+        .empty-placeholder { color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 30px 0; font-style: italic; }
     </style>
 </head>
 <body>
@@ -173,12 +136,10 @@
 
         <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
         
-        <div id="dynamic-display-zone">
-            <div class="view-section-title">
-                <h3 id="view-title-header" style="margin:0; font-size: 1.1rem; letter-spacing: -0.3px; text-transform: uppercase;">Your Playlists</h3>
-            </div>
-            <div id="results-list"></div>
+        <div class="section-header">
+            <h4 id="display-title">Featured Playlists</h4>
         </div>
+        <div id="results-list"></div>
     </div>
 
     <script>
@@ -187,25 +148,12 @@
         let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
-        let userAccessToken = "";
 
         if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
             lastRegenTime = Date.now();
             localStorage.setItem('dj_user_credits', localCredits);
             localStorage.setItem('dj_last_regen', lastRegenTime);
-        }
-
-        function parseAuthToken() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const tokenFromUrl = urlParams.get('access_token');
-            if (tokenFromUrl) {
-                userAccessToken = tokenFromUrl;
-                localStorage.setItem('user_token', tokenFromUrl);
-                window.history.pushState({}, document.title, "/");
-            } else {
-                userAccessToken = localStorage.getItem('user_token');
-            }
         }
 
         async function syncWithServer() {
@@ -264,195 +212,108 @@
                 inputs.placeholder = "Submissions are currently CLOSED by the DJ";
                 inputs.disabled = true;
             } else {
-                if (!inputs.disabled && !inputs.value.trim() && !document.getElementById('back-to-playlists-btn')) {
-                    inputs.placeholder = "Search tracks, artists... (Clear search to go back)";
-                }
+                inputs.placeholder = "Search tracks, artists...";
+                inputs.disabled = false;
             }
         }
 
-        function showAuthScreen() {
-            document.getElementById('search-input').style.display = 'none';
-            document.getElementById('view-title-header').innerText = "AUTHENTICATION REQUIRED";
-            document.getElementById('results-list').innerHTML = `
-                <div class="auth-container">
-                    <p style="margin: 0 0 15px 0; color: var(--text-muted); line-height: 1.4;">Your music dashboard session has expired or is invalid. Please link your host Spotify player account.</p>
-                    <a class="connect-btn" href="/api/login">Connect Spotify</a>
-                </div>
-            `;
-        }
-
-        // 📂 FETCH PLAYLIST FOLDERS
-        async function fetchUserPlaylists() {
+        // 📂 LOAD PLAYLIST FOLDERS
+        async function loadFeaturedPlaylists() {
             const listContainer = document.getElementById('results-list');
-            if (!userAccessToken) {
-                showAuthScreen();
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/playlists', {
-                    headers: { 'user-token': userAccessToken }
-                });
-                
-                if (res.status === 401 || res.status === 403) {
-                    showAuthScreen();
-                    return;
-                }
-                
-                const playlists = await res.json();
-
-                document.getElementById('search-input').style.display = 'block';
-                document.getElementById('dynamic-display-zone').firstElementChild.innerHTML = `
-                    <h3 id="view-title-header" style="margin:0; font-size: 1.1rem; letter-spacing: -0.3px; text-transform: uppercase;">Your Playlists</h3>
-                `;
-
-                if (!playlists || playlists.length === 0) {
-                    listContainer.innerHTML = '<p class="empty-msg">No playlists found on this account.</p>';
-                    return;
-                }
-
-                listContainer.innerHTML = playlists.map(playlist => {
-                    const artwork = playlist.artwork || playlist.images?.[0]?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100&auto=format&fit=crop';
-                    const name = playlist.name || 'Unnamed Playlist';
-                    const trackCount = playlist.trackCount !== undefined ? playlist.trackCount : (playlist.tracks?.total || 0);
-
-                    return `
-                        <div class="playlist-row" onclick="fetchPlaylistTracks('${playlist.id}', '${name.replace(/'/g, "\\'")}')">
-                            <div class="track-details">
-                                <img src="${artwork}">
-                                <div>
-                                    <p class="track-title">${name}</p>
-                                    <p class="track-artist">${trackCount} Tracks</p>
-                                </div>
-                            </div>
-                            <div style="color: var(--text-muted); font-weight: bold; font-size: 1.1rem; padding-right: 5px;">➔</div>
-                        </div>
-                    `;
-                }).join('');
-            } catch (e) {
-                showAuthScreen();
-            }
-        }
-
-        // 🎵 FETCH TRACKS INSIDE A PLAYLIST
-        async function fetchPlaylistTracks(playlistId, playlistName) {
-            const listContainer = document.getElementById('results-list');
-            const searchBar = document.getElementById('search-input');
+            document.getElementById('display-title').innerHTML = "Featured Playlists";
             
-            searchBar.value = '';
-            searchBar.placeholder = "Search locked in playlist view (clear search to unlock)";
-
-            document.getElementById('dynamic-display-zone').firstElementChild.innerHTML = `
-                <h3 style="margin:0; font-size: 1.1rem; letter-spacing: -0.3px; text-transform: uppercase;">${playlistName}</h3>
-                <button id="back-to-playlists-btn" class="back-btn" onclick="clearPlaylistView()">◀ Back</button>
-            `;
-
-            listContainer.innerHTML = '<p class="empty-msg">Loading playlist songs...</p>';
-
             try {
-                const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
-                    headers: { 'user-token': userAccessToken }
-                });
-
-                if (res.status === 401 || res.status === 403) {
-                    showAuthScreen();
-                    return;
-                }
-
-                const rawData = await res.json();
+                const res = await fetch('/api/playlists');
+                const playlists = await res.json();
                 
-                // Extract track array handling both clean custom models and raw Spotify paging collection structures
-                let tracksArray = Array.isArray(rawData) ? rawData : (rawData.items || []);
-
-                if (!tracksArray || tracksArray.length === 0) {
-                    listContainer.innerHTML = '<p class="empty-msg">No playable tracks found inside this playlist.</p>';
+                if(!playlists.length) {
+                    listContainer.innerHTML = '<p class="empty-placeholder">No playlists configured.</p>';
                     return;
                 }
 
-                renderTrackRows(tracksArray);
+                listContainer.innerHTML = playlists.map(p => `
+                    <div class="playlist-row" onclick="viewPlaylistTracks('${p.id}', '${p.name.replace(/'/g, "\\'")}')">
+                        <div class="track-details">
+                            <img src="${p.artwork}">
+                            <div>
+                                <p class="track-title">${p.name}</p>
+                                <p class="track-artist">${p.trackCount} Tracks Available</p>
+                            </div>
+                        </div>
+                        <div style="color: var(--spotify-green); font-weight: bold; padding-right: 5px;">➔</div>
+                    </div>
+                `).join('');
             } catch (e) {
-                listContainer.innerHTML = '<p class="empty-msg">Failed to load songs from playlist.</p>';
+                listContainer.innerHTML = '<p class="empty-placeholder">Error loading music banks.</p>';
             }
         }
 
-        function clearPlaylistView() {
-            const searchBar = document.getElementById('search-input');
-            searchBar.placeholder = "Search tracks, artists...";
-            fetchUserPlaylists();
+        // 🎵 VIEW TRACKS INSIDE PLAYLIST
+        async function viewPlaylistTracks(playlistId, playlistName) {
+            const listContainer = document.getElementById('results-list');
+            listContainer.innerHTML = '<p class="empty-placeholder">Opening folder...</p>';
+            
+            document.getElementById('display-title').innerHTML = `
+                <span>${playlistName}</span>
+                <button class="back-btn" onclick="clearSearchAndReset()">Back</button>
+            `;
+
+            try {
+                const res = await fetch(`/api/playlists/${playlistId}/tracks`);
+                const tracks = await res.json();
+                renderTrackRows(tracks);
+            } catch (e) {
+                listContainer.innerHTML = '<p class="empty-placeholder">Failed to pull index items.</p>';
+            }
         }
 
-        // 🔍 ENGINE SEARCH CONTROL
+        // 🔍 GLOBAL SEARCH
         let searchTimeout;
         function searchSongs() {
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
-            
-            if (!query) { 
-                fetchUserPlaylists(); 
-                return; 
-            }
+            if (!query) { loadFeaturedPlaylists(); return; }
 
-            document.getElementById('dynamic-display-zone').firstElementChild.innerHTML = `
-                <h3 style="margin:0; font-size: 1.1rem; letter-spacing: -0.3px; text-transform: uppercase;">Search Results</h3>
-            `;
+            document.getElementById('display-title').innerHTML = "Search Results";
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-                        headers: { 'user-token': userAccessToken }
-                    });
-                    
-                    if (res.status === 401 || res.status === 403) {
-                        showAuthScreen();
-                        return;
-                    }
-
+                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
                     const data = await res.json();
-                    let tracks = data.tracks || [];
-                    if (!Array.isArray(tracks) && data.tracks?.items) {
-                        tracks = data.tracks.items;
-                    }
-                    
-                    if (tracks.length === 0) {
-                        document.getElementById('results-list').innerHTML = '<p class="empty-msg">No matching tracks found.</p>';
-                        return;
-                    }
-
-                    renderTrackRows(tracks);
+                    renderTrackRows(data.tracks);
                 } catch (e) { console.log("Search error."); }
             }, 300);
         }
 
-        // 🖼️ UNIVERSAL PARSER ENGINE FOR TRACK ROW RENDERING
-        function renderTrackRows(tracks) {
-            document.getElementById('results-list').innerHTML = tracks.map(item => {
-                // Handle nested track mappings if retrieved directly from raw Spotify playlist paging models
-                const track = item.track ? item.track : item;
-                
-                // Safe property fallback checking logic
-                const id = track.id || '';
-                const name = track.name || 'Unknown Title';
-                const artistName = track.artist || track.artists?.[0]?.name || 'Unknown Artist';
-                const artworkUrl = track.artwork || track.album?.images?.[0]?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100&auto=format&fit=crop';
-                
-                // Re-normalize clean layout payload object
-                const unifiedTrack = {
-                    id: id,
-                    name: name,
-                    artist: artistName,
-                    artwork: artworkUrl
-                };
+        function clearSearchAndReset() {
+            document.getElementById('search-input').value = '';
+            loadFeaturedPlaylists();
+        }
 
+        // 🖼️ RENDER TRACK MODULE
+        function renderTrackRows(tracks) {
+            const listContainer = document.getElementById('results-list');
+            if (!tracks.length) {
+                listContainer.innerHTML = '<p class="empty-placeholder">No tracks found.</p>';
+                return;
+            }
+
+            listContainer.innerHTML = tracks.map(track => {
+                // Safely convert track object to an escaped attribute string
+                const serialized = JSON.stringify(track).replace(/"/g, '&quot;');
                 return `
                     <div class="track-row">
                         <div class="track-details">
-                            <img src="${artworkUrl}" alt="${name}">
+                            <img src="${track.artwork}">
                             <div>
-                                <p class="track-title">${name}</p>
-                                <p class="track-artist">${artistName}</p>
+                                <p class="track-title">${track.name}</p>
+                                <p class="track-artist">${track.artist}</p>
                             </div>
                         </div>
-                        <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(unifiedTrack).replace(/"/g, '&quot;')})">Request</button>
+                        <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} 
+                            onclick="submitRequest(JSON.parse(this.getAttribute('data-track')))" data-track="${serialized}">
+                            Request
+                        </button>
                     </div>
                 `;
             }).join('');
@@ -475,20 +336,17 @@
                 }
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" submitted successfully!`);
-                
-                document.getElementById('search-input').value = '';
-                clearPlaylistView();
+                clearSearchAndReset();
             } else {
                 const errData = await res.json();
                 alert(errData.error || "Submission failed.");
             }
         }
 
-        parseAuthToken();
         setInterval(handleCreditCalculations, 1000);
         setInterval(syncWithServer, 5000);
         syncWithServer();
-        fetchUserPlaylists();
+        loadFeaturedPlaylists(); // Instantly pull playlists on launch!
     </script>
 </body>
 </html>
