@@ -1,4 +1,4 @@
-TYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -146,16 +146,15 @@ TYPE html>
     </div>
 
     <script>
-        const password = "ballDJ2026"; 
         let requestsAllowed = true;
 
         async function updateDashboard() {
             try {
-                const res = await fetch('/api/admin/data', { headers: { 'Authorization': password } });
-                if (!res.ok) { document.body.innerHTML = "<h2>Access Denied.</h2>"; return; }
+                const res = await fetch('/api/admin/data');
+                if (!res.ok) return;
                 const data = await res.json();
                 
-                // Keep input values synchronized unless active typing is occurring
+                // Synchronize input fields safely
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
                     document.getElementById('input-max-credits').value = data.maxCredits;
                 }
@@ -201,7 +200,7 @@ TYPE html>
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
@@ -211,7 +210,7 @@ TYPE html>
         async function triggerAction(id, action) {
             await fetch('/api/admin/action', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id, action })
             });
             updateDashboard();
@@ -221,7 +220,7 @@ TYPE html>
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': password },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: null, action: actionType })
                 });
                 updateDashboard();
@@ -231,7 +230,7 @@ TYPE html>
         async function toggleRequests() {
             await fetch('/api/admin/toggle', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ allow: !requestsAllowed })
             });
             updateDashboard();
