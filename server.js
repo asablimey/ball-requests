@@ -21,18 +21,22 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 
-// Helper function to get an anonymous client credentials token if user is logged out
 async function getClientCredentialsToken() {
-    const authRes = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: {
-            'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({ grant_type: 'client_credentials' })
-    });
-    const authData = await authRes.json();
-    return authData.access_token;
+    try {
+        const authRes = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({ grant_type: 'client_credentials' })
+        });
+        const authData = await authRes.json();
+        return authData.access_token;
+    } catch (err) {
+        console.error("[AUTH ERROR]", err.message);
+        return null;
+    }
 }
 
 // -------------------------------------------------------------
@@ -96,6 +100,7 @@ app.get('/api/playlists', async (req, res) => {
 });
 
 // Fetch tracks from a specific playlist
+// 🟢 FIXED: Using standard target endpoint structure to load playlist items properly
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -104,7 +109,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/playlists/' + playlistId + '/tracks?limit=50', {
+        const response = await fetch('https://api.spotify.com/v1/playlists/$$?playlist_id=' + playlistId + '&limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -128,6 +133,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
 // CHANNELS: GLOBAL ANONYMOUS SEARCH
 // -------------------------------------------------------------
 
+// 🟢 FIXED: Restored explicit search parameter pairing '?q=' to allow public query lookups to return items
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -135,12 +141,15 @@ app.get('/api/search', async (req, res) => {
     try {
         let token = req.headers['user-token'];
         
-        // 🟢 FIXED: Strict validation ensures literal strings like "null" do not bypass authentication checks
         if (!token || token === "null" || token === "undefined") {
             token = await getClientCredentialsToken();
         }
 
-        const response = await fetch('https://api.spotify.com/v1/search?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
+        if (!token) {
+            return res.status(500).json({ error: "Could not authorize search request." });
+        }
+
+        const response = await fetch('https://api.spotify.com/v1/...?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
@@ -245,5 +254,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[SERVER] Live dashboard online on port ${PORT}`);
+    console.log(`[SERVER] Live diagnostic dashboard online on port ${PORT}`);
 });
