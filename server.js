@@ -9,8 +9,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 🔐 SPOTIFY API CREDENTIALS
-const SPOTIFY_CLIENT_ID = '406febd8d4e34c7b9e85849f380210ce'; 
-const SPOTIFY_CLIENT_SECRET = '7527e2daea834658934e06a4cea1422a';
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID; 
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 // Global DJ Settings (Editable from Admin Panel)
 let maxCredits = 3;             // Default max credits a user can hold
