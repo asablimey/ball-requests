@@ -21,6 +21,20 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 
+// Helper function to get an anonymous client credentials token if user is logged out
+async function getClientCredentialsToken() {
+    const authRes = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({ grant_type: 'client_credentials' })
+    });
+    const authData = await authRes.json();
+    return authData.access_token;
+}
+
 // -------------------------------------------------------------
 // SPOTIFY USER OAUTH HANDLERS
 // -------------------------------------------------------------
@@ -63,9 +77,12 @@ app.get('/callback', async (req, res) => {
     }
 });
 
+// Fetch user playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
-    if (!userToken) return res.status(401).json({ error: "No user token provided." });
+    if (!userToken || userToken === "null" || userToken === "undefined") {
+        return res.status(401).json({ error: "No user token provided." });
+    }
 
     try {
         const response = await fetch('https://api.spotify.com/v1/me/playlists', {
@@ -78,15 +95,16 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Removed broken template literal formatting to ensure track lists resolve correctly
+// Fetch tracks from a specific playlist
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
-    if (!userToken) return res.status(401).json({ error: "No user token provided." });
+    if (!userToken || userToken === "null" || userToken === "undefined") {
+        return res.status(401).json({ error: "No user token provided." });
+    }
 
     try {
-        const apiUrl = 'https://api.spotify.com/v1/playlists/$' + playlistId + '/tracks?limit=50';
-        const response = await fetch(apiUrl, {
+        const response = await fetch('https://api.spotify.com/v1/playlists/' + playlistId + '/tracks?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -107,10 +125,9 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// CHANNELS: GLOBAL ANONYMOUS SEARCH & APP RULES
+// CHANNELS: GLOBAL ANONYMOUS SEARCH
 // -------------------------------------------------------------
 
-// 🟢 FIXED: Cleaned concatenation string parameters to restore the global search field parsing behavior
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -118,21 +135,12 @@ app.get('/api/search', async (req, res) => {
     try {
         let token = req.headers['user-token'];
         
+        // 🟢 FIXED: Strict validation ensures literal strings like "null" do not bypass authentication checks
         if (!token || token === "null" || token === "undefined") {
-            const authRes = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: {
-                    'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: new URLSearchParams({ grant_type: 'client_credentials' })
-            });
-            const authData = await authRes.json();
-            token = authData.access_token;
+            token = await getClientCredentialsToken();
         }
 
-        const searchUrl = 'https://api.spotify.com/v1/search?q=$' + encodeURIComponent(query) + '&type=track&limit=15';
-        const response = await fetch(searchUrl, {
+        const response = await fetch('https://api.spotify.com/v1/search?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
@@ -181,7 +189,7 @@ app.post('/api/request', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// MASTER ADMINISTRATIVE ENDPOINTS
+// ADMINISTRATIVE MASTER CONTROL
 // -------------------------------------------------------------
 
 app.get('/api/admin/data', (req, res) => {
@@ -237,5 +245,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    console.log(`[SERVER] Live dashboard online on port ${PORT}`);
 });
