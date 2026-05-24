@@ -7,7 +7,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
 // 🔐 SPOTIFY API CREDENTIALS (Pulled securely from Render environment variables)
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
@@ -47,13 +46,17 @@ async function refreshSpotifyToken() {
 }
 
 // 🔐 PASSWORD PROTECTED ADMIN ROUTE
-app.get('/dashboard', (req, res) => {
+// This intercepts "/admin.html" before express.static can serve it freely!
+app.get('/admin.html', (req, res) => {
     if (req.query.password === ADMIN_PASSWORD) {
         res.sendFile(path.join(__dirname, 'public', 'admin.html'));
     } else {
         res.status(403).send('<h1>Access Denied</h1><p>You need the correct admin password appended to the URL to view this page.</p>');
     }
 });
+
+// Serve the rest of the public folder assets safely
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- API ENDPOINTS FOR THE APP ---
 
