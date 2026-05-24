@@ -21,6 +21,7 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 
+// Your original working token generator
 async function getClientCredentialsToken() {
     try {
         const authRes = await fetch('https://accounts.spotify.com/api/token', {
@@ -104,13 +105,12 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 
     try {
-        // Checking Route 1: Try endpoint 52 matching track values
-        const response = await fetch('https://api.spotify.com/v1/playlists/$$/' + playlistId + '/tracks?limit=50', {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/$$/${playlistId}/tracks?limit=50`, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         
-        // Checking Route 2: Fallback checks to find nested arrays or direct lists
+        // Supports nested items arrays or flat objects
         const rawItems = Array.isArray(data) ? data : (data.items || data.tracks || []);
         
         const tracks = rawItems.map(item => {
@@ -129,7 +129,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 });
 
-// Global anonymous search feature
+// REVERTED: Your original, working search endpoint before the updates
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -144,13 +144,14 @@ app.get('/api/search', async (req, res) => {
             return res.status(500).json({ error: "Could not authorize search request." });
         }
 
-        const response = await fetch('https://api.spotify.com/v1/search?q=$$?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
+        // Restored your working search path structure
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$$?q=${encodeURIComponent(query)}&type=track&limit=15`, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
         
-        // Checking Route 3: Extract direct track items arrays safely
-        const items = Array.isArray(data) ? data : (data.tracks?.items || data.items || data.tracks || []);
+        // Safe mapping that works with your server's exact structure
+        const items = data.tracks?.items || data.items || (Array.isArray(data) ? data : []);
         
         const tracks = items.map(track => ({
             id: track.id || Math.random().toString(),
