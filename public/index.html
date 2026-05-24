@@ -78,7 +78,6 @@
             border: none;
             color: white;
         }
-        .playlists-toggle-btn:hover { filter: brightness(1.08); }
 
         .back-btn {
             background-color: #333;
@@ -118,9 +117,8 @@
             border-radius: 8px;
             margin-bottom: 8px;
             cursor: pointer;
-            transition: background 0.15s ease;
         }
-        .playlist-row-item:hover { background-color: var(--card-bg); border-color: #444; }
+        .playlist-row-item:hover { background-color: var(--card-bg); }
         .playlist-row-item img { width: 50px; height: 50px; border-radius: 4px; object-fit: cover; }
         .playlist-info-meta { flex-grow: 1; min-width: 0; }
         .playlist-name { font-size: 0.95rem; font-weight: 700; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -153,7 +151,6 @@
             cursor: pointer;
             font-size: 0.85rem;
             flex-shrink: 0;
-            margin-left: 10px;
         }
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
         
@@ -162,9 +159,8 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 12px;
-            margin-top: 5px;
         }
-        h3.section-label { font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.75px; margin: 0; }
+        h3.section-label { font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); margin: 0; }
     </style>
 </head>
 <body>
@@ -213,14 +209,18 @@
         const urlParams = new URLSearchParams(window.location.search);
         let userAccessToken = urlParams.get('access_token');
         
-        if (userAccessToken) {
+        // Ensure string cleaning to prevent literal 'null' text evaluations
+        if (userAccessToken && userAccessToken !== "null" && userAccessToken !== "undefined") {
             localStorage.setItem('dj_spotify_user_token', userAccessToken);
             window.history.replaceState({}, document.title, "/");
         } else {
             userAccessToken = localStorage.getItem('dj_spotify_user_token');
+            if (userAccessToken === "null" || userAccessToken === "undefined") {
+                userAccessToken = null;
+            }
         }
 
-        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
+        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null) {
             localCredits = maxCredits;
             lastRegenTime = Date.now();
             localStorage.setItem('dj_user_credits', localCredits);
@@ -249,8 +249,6 @@
             if (localCredits >= maxCredits) {
                 document.getElementById('timer-display').innerText = "MAX";
                 lastRegenTime = Date.now();
-                localStorage.setItem('dj_user_credits', localCredits);
-                localStorage.setItem('dj_last_regen', lastRegenTime);
                 return;
             }
 
@@ -281,7 +279,6 @@
             if (!systemRequestsOpen) {
                 searchField.placeholder = "Submissions are currently CLOSED by the DJ";
                 searchField.disabled = true;
-                document.getElementById('auth-placement-zone').style.display = 'none';
                 document.getElementById('content-target-list').innerHTML = '';
                 return;
             }
@@ -313,7 +310,7 @@
             
             try {
                 const res = await fetch('/api/playlists', {
-                    headers: { 'user-token': userAccessToken }
+                    headers: { 'user-token': userAccessToken || "" }
                 });
                 
                 if (res.status === 401) { logoutExpiredSession(); return; }
@@ -346,7 +343,7 @@
                 targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:40px 0; text-align:center;">Loading playlist items...</p>`;
                 
                 const res = await fetch('/api/playlists/' + id + '/tracks', {
-                    headers: { 'user-token': userAccessToken }
+                    headers: { 'user-token': userAccessToken || "" }
                 });
                 const tracks = await res.json();
                 
@@ -354,12 +351,12 @@
                 document.getElementById('content-view-title').innerText = playlistName;
                 document.getElementById('view-action-slot').innerHTML = `<button class="back-btn" onclick="togglePlaylistsView()">◀ Back</button>`;
                 
-                if(tracks.length === 0) {
+                if(!tracks || tracks.length === 0) {
                     targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:20px 0; text-align:center;">This playlist has no songs.</p>`;
                 } else {
                     targetList.innerHTML = generateTrackRowsHTML(tracks);
                 }
-            } catch(e) { console.log("Track list parsing error."); }
+            } catch(e) { targetList.innerHTML = `<p style="color:red; text-align:center;">Failed parsing items.</p>`; }
         }
 
         function revertToGlobalSearchMode() {
@@ -422,19 +419,9 @@
 
             if (res.ok) {
                 localCredits--;
-                if (localCredits === maxCredits - 1) {
-                    lastRegenTime = Date.now();
-                    localStorage.setItem('dj_last_regen', lastRegenTime);
-                }
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" added to the queue!`);
-                
-                if (currentView === "playlist_tracks") {
-                     updateUIState(); 
-                } else {
-                    document.getElementById('search-input').value = "";
-                    revertToGlobalSearchMode();
-                }
+                updateUIState();
             } else {
                 const errData = await res.json();
                 alert(errData.error || "Submission failed.");
