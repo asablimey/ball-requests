@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 LIVE AUTHENTICATION FOR PUBLIC SEARCH (Client Credentials Flow)
+// 🌐 SPOTIFY OFFICIAL CLIENT CREDENTIALS FLOW (For Global Search Backups)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -28,7 +28,8 @@ async function getSpotifyToken() {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/api/token', {
+        // Switched to Official Spotify Accounts API
+        const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
@@ -40,7 +41,7 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Successfully fetched live access token.");
+            console.log("[SPOTIFY] Successfully fetched live official access token.");
         } else {
             console.log("[SPOTIFY ERROR] Authentication failed:", data);
         }
@@ -49,6 +50,7 @@ async function getSpotifyToken() {
     }
 }
 
+// Token refreshes every 50 minutes
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
@@ -58,6 +60,7 @@ const REDIRECT_URI = process.env.REDIRECT_URI || 'https://song-requests-gnzd.onr
 
 app.get('/api/login', (req, res) => {
     const scopes = 'playlist-read-private playlist-read-collaborative';
+    // Switched to Official Authorization Endpoint
     res.redirect('https://accounts.spotify.com/authorize' +
         '?response_type=code' +
         '&client_id=' + process.env.SPOTIFY_CLIENT_ID +
@@ -70,6 +73,7 @@ app.get('/callback', async (req, res) => {
     if (!code) return res.redirect('/?error=auth_failed');
 
     try {
+        // Switched to Official Token Exchange Endpoint
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
@@ -99,25 +103,18 @@ app.get('/api/playlists', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
+        // Switched to Official Spotify Me Playlists Endpoint
         const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         
-        const items = (data.items || []).map(p => {
-            let count = 0;
-            if (p.tracks) {
-                if (typeof p.tracks === 'number') count = p.tracks;
-                else if (p.tracks.total !== undefined) count = p.tracks.total;
-            }
-            
-            return {
-                id: p.id,
-                name: p.name || 'Untitled Playlist',
-                trackCount: count,
-                artwork: p.images && p.images.length > 0 ? p.images[0].url : 'https://picsum.photos/48'
-            };
-        });
+        const items = (data.items || []).map(p => ({
+            id: p.id,
+            name: p.name || 'Untitled Playlist',
+            trackCount: p.tracks && p.tracks.total ? p.tracks.total : 0,
+            artwork: p.images && p.images.length > 0 ? p.images[0].url : 'https://picsum.photos/48'
+        }));
         
         res.json(items);
     } catch (err) {
@@ -132,7 +129,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     
-    // DIFFERENT APPROACH: Explicitly concatenated string to avoid template backtick bugs completely
+    // Switched to Official Spotify Playlist Tracks Endpoint
     const targetUrl = 'https://api.spotify.com/v1/playlists/' + req.params.id + '/tracks?limit=50';
     
     try {
@@ -186,7 +183,7 @@ app.get('/api/search', async (req, res) => {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
-    // DIFFERENT APPROACH: Concatenated string layout for safety
+    // Switched to Official Spotify Search API Endpoint
     const searchUrl = 'https://api.spotify.com/v1/search?q=' + encodeURIComponent(query) + '&type=track&limit=10';
 
     try {
