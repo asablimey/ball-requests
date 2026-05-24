@@ -349,19 +349,23 @@
                 target.innerHTML = '<p style="color:#666; text-align:center;">No tracks found.</p>';
                 return;
             }
-            target.innerHTML = tracks.map(track => `
-                <div class="track-row">
-                    <div class="track-details">
-                        <img src="${track.artwork}">
-                        <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+            target.innerHTML = tracks.map(track => {
+                const safeTrack = JSON.stringify(track).replace(/"/g, '&quot;');
+                return `
+                    <div class="track-row">
+                        <div class="track-details">
+                            <img src="${track.artwork}">
+                            <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+                        </div>
+                        <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest('${safeTrack}')">Request</button>
                     </div>
-                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '"')})">Request</button>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
-        async function submitRequest(track) {
+        async function submitRequest(trackJsonStr) {
             if (localCredits <= 0 || !systemRequestsOpen) return;
+            const track = JSON.parse(trackJsonStr.replace(/&quot;/g, '"'));
 
             const res = await fetch('/api/request', {
                 method: 'POST',
