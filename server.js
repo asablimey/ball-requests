@@ -167,4 +167,24 @@ app.post('/api/admin/remove', (req, res) => {
     
     const index = queue.findIndex(item => item.id === trackId);
     if (index !== -1) {
-        const removed
+        const removedTrack = queue.splice(index, 1)[0];
+        if (played) {
+            history.unshift(removedTrack);
+            if (history.length > 20) history.pop();
+        }
+    }
+    res.json({ success: true });
+});
+
+app.post('/api/admin/clear-queue', (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    queue = [];
+    res.json({ success: true });
+});
+
+// Start the live server hook
+app.listen(PORT, () => {
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    refreshSpotifyToken();
+});
