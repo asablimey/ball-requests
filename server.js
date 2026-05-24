@@ -7,6 +7,9 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 🔒 Static Administrative Password
+const ADMIN_PASSWORD = "ballDJ2026";
+
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
@@ -17,7 +20,6 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 USE OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -114,7 +116,9 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
+// 🔒 Admin Endpoint Password Checks
 app.get('/api/admin/data', (req, res) => {
+    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
@@ -125,6 +129,7 @@ app.get('/api/admin/data', (req, res) => {
 });
 
 app.post('/api/admin/config', (req, res) => {
+    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { maxCredits, countdownLength } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
@@ -132,12 +137,14 @@ app.post('/api/admin/config', (req, res) => {
 });
 
 app.post('/api/admin/toggle', (req, res) => {
+    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { allow } = req.body;
     if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
     res.json({ success: true });
 });
 
 app.post('/api/admin/action', (req, res) => {
+    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { id, action } = req.body;
     if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
     if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
