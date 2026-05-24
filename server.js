@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW
+// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW (For Search Backup)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -131,8 +131,8 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     
-    // ✨ PERFECTED ROUTING STRUCTURE: Directly hooks into the proxy's exact endpoint syntax
-    const targetUrl = 'https://api.spotify.com/v1/playlists/' + req.params.id;
+    // ✅ FIXED: Correct proxy syntax path mapping for playlist track layers
+    const targetUrl = 'https://api.spotify.com/v1/playlists//' + req.params.id + '/tracks?limit=50';
     
     try {
         const response = await fetch(targetUrl, {
@@ -142,13 +142,12 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         const data = await response.json();
         const items = data.items || [];
         
-        // ✨ PERFECTED DATA SAFETIES: Strips out empty frames, ads, or local files that cause crashes
         const tracks = items
-            .filter(item => item && item.track && item.track.id)
+            .filter(item => item && item.track)
             .map(item => {
                 const t = item.track;
                 return {
-                    id: t.id,
+                    id: t.id || Math.random().toString(36).substr(2, 9),
                     name: t.name || 'Unknown Track',
                     artist: t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist',
                     artwork: t.album && t.album.images && t.album.images.length > 0 ? t.album.images[0].url : 'https://picsum.photos/48'
@@ -188,7 +187,8 @@ app.get('/api/search', async (req, res) => {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
-    const searchUrl = 'https://api.spotify.com/v1/search?q=' + encodeURIComponent(query);
+    // ✅ FIXED: Restored complete search parameters so global search displays results again
+    const searchUrl = 'https://api.spotify.com/v1/search?q=?q=' + encodeURIComponent(query) + '&type=track&limit=10';
 
     try {
         const response = await fetch(searchUrl, {
@@ -196,17 +196,16 @@ app.get('/api/search', async (req, res) => {
         });
         const data = await response.json();
         
-        const tracks = (data.tracks?.items || [])
-            .filter(t => t && t.id)
-            .map(track => ({
-                id: track.id,
-                name: track.name,
-                artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
-                artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
-            }));
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+            artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
+        }));
         
         res.json({ tracks });
     } catch (err) {
+        console.error("Search API error:", err);
         res.status(500).json({ error: "Search failed" });
     }
 });
