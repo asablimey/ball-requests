@@ -86,7 +86,7 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
+        /* 🟢 ORIGINAL LAYOUT STYLES */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -221,32 +221,41 @@
 
     <script>
         let requestsAllowed = true;
-        let isAuthorized = false; // Prevents background fetch before checking pass
+        let savedPassword = ""; // Kept in running memory only after server confirmation
 
-        // 🔒 PASSWORD SECURITY CHECK
-        function verifyPassword() {
+        // 🔒 SECURE BACKEND PASSWORD CHECK
+        async function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
             
-            // 🔑 Confirmed System Password
-            const masterPassword = "ballDJ2026"; 
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: inputField.value })
+                });
 
-            if (inputField.value === masterPassword) {
-                isAuthorized = true;
-                document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard(); // Run immediately upon validation
-            } else {
-                errorMsg.style.display = 'block';
-                inputField.value = '';
-                inputField.focus();
+                if (res.ok) {
+                    savedPassword = inputField.value; 
+                    document.getElementById('admin-lock-screen').style.display = 'none';
+                    updateDashboard(); 
+                } else {
+                    errorMsg.style.display = 'block';
+                    inputField.value = '';
+                    inputField.focus();
+                }
+            } catch(e) {
+                alert("Could not connect to verification server.");
             }
         }
 
         async function updateDashboard() {
-            if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+            if (!savedPassword) return; 
             
             try {
-                const res = await fetch('/api/admin/data');
+                const res = await fetch('/api/admin/data', {
+                    headers: { 'X-Admin-Password': savedPassword }
+                });
                 if (!res.ok) return;
                 const data = await res.json();
                 
@@ -290,13 +299,16 @@
         }
 
         async function saveSystemRules() {
-            if (!isAuthorized) return;
+            if (!savedPassword) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Password': savedPassword
+                },
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
@@ -304,21 +316,27 @@
         }
 
         async function triggerAction(id, action) {
-            if (!isAuthorized) return;
+            if (!savedPassword) return;
             await fetch('/api/admin/action', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Password': savedPassword
+                },
                 body: JSON.stringify({ id, action })
             });
             updateDashboard();
         }
 
         async function clearSystem(actionType, message) {
-            if (!isAuthorized) return;
+            if (!savedPassword) return;
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Admin-Password': savedPassword
+                    },
                     body: JSON.stringify({ id: null, action: actionType })
                 });
                 updateDashboard();
@@ -326,16 +344,18 @@
         }
 
         async function toggleRequests() {
-            if (!isAuthorized) return;
+            if (!savedPassword) return;
             await fetch('/api/admin/toggle', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Password': savedPassword
+                },
                 body: JSON.stringify({ allow: !requestsAllowed })
             });
             updateDashboard();
         }
 
-        // Lock screen focus on setup load
         window.onload = () => {
             document.getElementById('password-input').focus();
         };
