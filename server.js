@@ -22,10 +22,9 @@ let activeQueue = [];
 let playedHistory = [];
 
 // -------------------------------------------------------------
-// SPOTIFY USER OAUTH HANDLERS (Corrected standard Spotify URI)
+// SPOTIFY USER OAUTH HANDLERS
 // -------------------------------------------------------------
 
-// Kicks off the official Spotify login redirect
 app.get('/api/login', (req, res) => {
     const scopes = 'playlist-read-private playlist-read-collaborative';
     res.redirect('https://accounts.spotify.com/authorize' +
@@ -35,7 +34,6 @@ app.get('/api/login', (req, res) => {
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
 });
 
-// Exchanges auth code for an access token and passes it back to the client
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     if (!code) return res.redirect('/?error=auth_failed');
@@ -65,13 +63,12 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// Fetches the logged-in guest's personal playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=30', {
             headers: { 'Authorization': `Bearer ${userToken}` }
         });
         const data = await response.json();
@@ -81,7 +78,7 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
-// Fetches tracks inside a specific user playlist
+// 🟢 FIXED: Added missing $ for template literal string interpolation
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -181,7 +178,7 @@ app.post('/api/request', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// MASTER ADMINISTRATIVE ENDPOINTS (Untouched)
+// MASTER ADMINISTRATIVE ENDPOINTS
 // -------------------------------------------------------------
 
 app.get('/api/admin/data', (req, res) => {
