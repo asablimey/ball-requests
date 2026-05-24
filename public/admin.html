@@ -3,242 +3,181 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DJ Control Center</title>
-    <style>
-        :root {
-            --spotify-green: #1DB954;
-            --spotify-black: #121212;
-            --panel-bg: #181818;
-            --card-bg: #242424;
-            --blue-action: #007aff;
-            --red-action: #e91429;
-        }
+    <title>DJ Admin Dashboard</title>
+    <link rel="stylesheet" href="style.css">
 
-        body { 
-            background-color: var(--spotify-black); 
-            color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
-            padding: 25px; 
-            margin: 0; 
-        }
-
-        .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            border-bottom: 1px solid #282828; 
-            padding-bottom: 20px; 
-            margin-bottom: 20px; 
-        }
-
-        h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
-
-        /* Configuration Controls Widget */
-        .config-dashboard {
-            background-color: var(--panel-bg);
-            border: 1px solid #282828;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 25px;
-            display: flex;
-            gap: 20px;
-            align-items: flex-end;
-            flex-wrap: wrap;
-        }
-
-        .input-group { display: flex; flex-direction: column; gap: 8px; }
-        .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
-        .input-group input { 
-            background-color: var(--card-bg); 
-            border: 1px solid #333; 
-            padding: 10px 14px; 
-            color: white; 
-            border-radius: 6px; 
-            font-size: 1rem; 
-            width: 140px;
-            font-weight: bold;
-        }
-
-        .save-config-btn {
-            background-color: white;
-            color: black;
-            border: none;
-            padding: 11px 22px;
-            border-radius: 6px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.95rem;
-            transition: all 0.15s ease;
-        }
-        .save-config-btn:hover { background-color: var(--spotify-green); color: white; }
-
-        .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
-
-        .toggle-btn { 
-            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
-            transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-
-        .utility-btn {
-            padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
-            background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
-        }
-        .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
-
-        .open-status { background-color: var(--spotify-green); color: white; }
-        .closed-status { background-color: var(--red-action); color: white; }
-
-        .lists-container { display: flex; gap: 30px; flex-wrap: wrap; }
-        .panel { flex: 1; min-width: 340px; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; }
-
-        h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
-
-        .song-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c; }
-        .song-details { display: flex; align-items: center; gap: 16px; }
-        .song-details img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
-        .song-title { font-weight: 700; margin: 0; font-size: 1.1rem; }
-        .song-artist { color: #a7a7a7; margin: 4px 0 0 0; font-size: 0.9rem; }
-
-        .actions { display: flex; gap: 10px; }
-        .btn { padding: 12px 16px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.9rem; }
-        .btn:hover { filter: brightness(1.1); }
-        .btn-top { background-color: var(--blue-action); }
-        .btn-played { background-color: var(--spotify-green); }
-        .btn-remove { background-color: #3e3e3e; }
-        .btn-remove:hover { background-color: var(--red-action); }
-
-        .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
-        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>DJ Master Control</h1>
-        <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-    </div>
-
-    <div class="config-dashboard">
-        <div class="input-group">
-            <label>Max Credit Bank</label>
-            <input type="number" id="input-max-credits" min="1">
+    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #111; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
+        <h2 style="font-size: 28px; margin-bottom: 5px;">DJ Control Panel Locked</h2>
+        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
+        <div style="display: flex; gap: 10px;">
+            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: #222; color: white; font-size: 16px; outline: none; width: 200px;">
+            <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: #1DB954; color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
         </div>
-        <div class="input-group">
-            <label>Regen Timer (Secs)</label>
-            <input type="number" id="input-countdown" min="5">
-        </div>
-        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-    </div>
-
-    <div class="control-bar">
-        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
-    </div>
-
-    <div class="lists-container">
-        <div class="panel">
-            <h2>Current Queue</h2>
-            <div id="queue-list"></div>
-        </div>
-        <div class="panel">
-            <h2>Song History (Played)</h2>
-            <div id="history-list"></div>
-        </div>
+        <p id="gate-error" style="color: #ff4d4d; margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
     </div>
 
     <script>
-        const password = "ballDJ2026"; 
-        let requestsAllowed = true;
+        function checkAdminPassword() {
+            const input = document.getElementById('admin-pass-input').value;
+            const errorMsg = document.getElementById('gate-error');
+            
+            // 🔑 Matches the password set inside your server config
+            if (input === "ballDJ2026") {
+                // Hide the lock screen layer and reveal your dashboard layout
+                document.getElementById('password-gate').style.display = 'none';
+            } else {
+                errorMsg.style.display = 'block';
+                document.getElementById('admin-pass-input').value = '';
+            }
+        }
+        
+        // Allow pressing 'Enter' key inside the text box to submit
+        document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById('admin-pass-input').focus();
+            document.getElementById('admin-pass-input').addEventListener("keypress", (e) => {
+                if (e.key === "Enter") checkAdminPassword();
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="admin-container">
+        <header>
+            <h1>DJ Administration Panel</h1>
+            <p>Year 11 Ball Request Engine</p>
+        </header>
 
-        async function updateDashboard() {
+        <section class="controls-card">
+            <h2>Global Session Configs</h2>
+            <div class="control-group">
+                <label>Max User Credits:</label>
+                <input type="number" id="max-credits-input" value="3" min="1">
+            </div>
+            <div class="control-group">
+                <label>Regen Time (Seconds):</label>
+                <input type="number" id="regen-time-input" value="60" min="5">
+            </div>
+            <div class="control-group toggle-group">
+                <label>Allow New Submissions:</label>
+                <input type="checkbox" id="allow-requests-toggle" checked>
+            </div>
+            <button id="save-configs-btn" class="btn-primary">Apply Settings</button>
+        </section>
+
+        <section class="queue-card">
+            <div class="queue-header">
+                <h2>Active Request Queue</h2>
+                <button id="clear-queue-btn" class="btn-danger">Nuke Queue</button>
+            </div>
+            <ul id="admin-queue-list" class="song-list">
+                </ul>
+        </section>
+
+        <section class="history-card">
+            <h2>Recently Played Tracks</h2>
+            <ul id="admin-history-list" class="song-list text-muted">
+                </ul>
+        </section>
+    </div>
+
+    <script>
+        const ADMIN_PASSWORD = "ballDJ2026";
+
+        async function fetchAdminDashboard() {
             try {
-                const res = await fetch('/api/admin/data', { headers: { 'Authorization': password } });
-                if (!res.ok) { document.body.innerHTML = "<h2>Access Denied.</h2>"; return; }
+                const res = await fetch('/api/queue');
                 const data = await res.json();
                 
-                // Keep input values synchronized unless active typing is occurring
-                if(document.activeElement !== document.getElementById('input-max-credits')) {
-                    document.getElementById('input-max-credits').value = data.maxCredits;
+                // Update config fields visually if not focused
+                if(document.activeElement !== document.getElementById('max-credits-input')) {
+                    document.getElementById('max-credits-input').value = data.configs.maxCredits;
                 }
-                if(document.activeElement !== document.getElementById('input-countdown')) {
-                    document.getElementById('input-countdown').value = data.countdownLength;
+                if(document.activeElement !== document.getElementById('regen-time-input')) {
+                    document.getElementById('regen-time-input').value = data.configs.countdownLength;
                 }
+                document.getElementById('allow-requests-toggle').checked = data.configs.requestsAllowed;
 
-                const toggleBtn = document.getElementById('toggle-requests');
-                requestsAllowed = data.requestsAllowed;
-                toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
-                toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                const queueList = document.getElementById('queue-list');
-                queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
-                    <div class="song-row">
+                // Render Queue
+                const queueList = document.getElementById('admin-queue-list');
+                queueList.innerHTML = data.queue.length === 0 ? '<li class="empty-msg">No active song requests yet.</li>' : '';
+                data.queue.forEach(track => {
+                    const li = document.createElement('li');
+                    li.className = 'song-item';
+                    li.innerHTML = `
+                        <img src="${track.albumArt}" class="album-art" alt="Album Cover">
                         <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+                            <span class="track-name">${track.name}</span>
+                            <span class="track-artist">${track.artist}</span>
                         </div>
-                        <div class="actions">
-                            <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
-                            <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
-                            <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
+                        <div class="vote-badge">🔥 ${track.votes}</div>
+                        <div class="action-buttons">
+                            <button onclick="removeTrack('${track.id}', true)" class="btn-success">Play Next</button>
+                            <button onclick="removeTrack('${track.id}', false)" class="btn-warn">Drop</button>
                         </div>
-                    </div>
-                `).join('');
-
-                const historyList = document.getElementById('history-list');
-                historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
-                    <div class="song-row history-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch(e) { console.log("Sync error."); }
-        }
-
-        async function saveSystemRules() {
-            const maxVal = document.getElementById('input-max-credits').value;
-            const downVal = document.getElementById('input-countdown').value;
-
-            const res = await fetch('/api/admin/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
-            });
-            if(res.ok) alert("System parameters updated successfully.");
-            updateDashboard();
-        }
-
-        async function triggerAction(id, action) {
-            await fetch('/api/admin/action', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
-                body: JSON.stringify({ id, action })
-            });
-            updateDashboard();
-        }
-
-        async function clearSystem(actionType, message) {
-            if (confirm(message)) {
-                await fetch('/api/admin/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': password },
-                    body: JSON.stringify({ id: null, action: actionType })
+                    `;
+                    queueList.appendChild(li);
                 });
-                updateDashboard();
+
+                // Render History
+                const historyList = document.getElementById('admin-history-list');
+                historyList.innerHTML = data.history.length === 0 ? '<li class="empty-msg">No tracks played yet this session.</li>' : '';
+                data.history.forEach(track => {
+                    const li = document.createElement('li');
+                    li.className = 'song-item history-item';
+                    li.innerHTML = `
+                        <img src="${track.albumArt}" class="album-art thumbnail" alt="Album Cover">
+                        <div class="song-details">
+                            <span class="track-name">${track.name}</span>
+                            <span class="track-artist">${track.artist}</span>
+                        </div>
+                    `;
+                    historyList.appendChild(li);
+                });
+
+            } catch (err) {
+                console.error("Dashboard failed sync sequence:", err);
             }
         }
 
-        async function toggleRequests() {
-            await fetch('/api/admin/toggle', {
+        async function removeTrack(trackId, played) {
+            await fetch('/api/admin/remove', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': password },
-                body: JSON.stringify({ allow: !requestsAllowed })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: ADMIN_PASSWORD, trackId, played })
             });
-            updateDashboard();
+            fetchAdminDashboard();
         }
 
-        setInterval(updateDashboard, 3000);
-        updateDashboard();
+        document.getElementById('save-configs-btn').addEventListener('click', async () => {
+            const configs = {
+                maxCredits: document.getElementById('max-credits-input').value,
+                countdownLength: document.getElementById('regen-time-input').value,
+                requestsAllowed: document.getElementById('allow-requests-toggle').checked
+            };
+
+            await fetch('/api/admin/update-configs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: ADMIN_PASSWORD, configs })
+            });
+            alert("Global session configuration updated!");
+            fetchAdminDashboard();
+        });
+
+        document.getElementById('clear-queue-btn').addEventListener('click', async () => {
+            if(confirm("Are you absolutely sure you want to completely clear the entire queue?")) {
+                await fetch('/api/admin/clear-queue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: ADMIN_PASSWORD })
+                });
+                fetchAdminDashboard();
+            }
+        });
+
+        // Initialize and loop background sync tasks
+        fetchAdminDashboard();
+        setInterval(fetchAdminDashboard, 3000);
     </script>
 </body>
 </html>
