@@ -179,7 +179,7 @@
         </div>
     </div>
 
-    <div id="admin-dashboard" style="display: none;">
+    <div id="admin-dashboard" style="display: none !important;">
         <div class="header">
             <h1>DJ Master Control</h1>
             <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
@@ -216,34 +216,30 @@
 
     <script>
         let requestsAllowed = true;
-        let adminPassword = localStorage.getItem('dj_admin_password') || "";
-        let syncLoopInterval = null;
+        let adminPassword = ""; // ❌ No local storage storage allowed
+        let isAuthorized = false;
 
+        // Force layout setup on load
         document.addEventListener("DOMContentLoaded", () => {
-            if (adminPassword) {
-                verifySavedCredentials();
-            } else {
-                showLoginUI();
-            }
+            showLoginUI();
         });
 
         function submitLogin() {
-            const entry = document.getElementById('password-field').value;
+            const entry = document.getElementById('password-field').value.trim();
             if (!entry) return;
             adminPassword = entry;
-            localStorage.setItem('dj_admin_password', adminPassword);
-            verifySavedCredentials();
+            verifyCredentials();
         }
 
-        async function verifySavedCredentials() {
+        async function verifyCredentials() {
             try {
                 const res = await fetch('/api/admin/data', {
                     headers: { 'Authorization': adminPassword }
                 });
                 
                 if (res.status === 401) {
-                    localStorage.removeItem('dj_admin_password');
                     adminPassword = "";
+                    isAuthorized = false;
                     alert("Invalid administrative password code.");
                     document.getElementById('password-field').value = "";
                     showLoginUI();
@@ -251,45 +247,37 @@
                 }
                 
                 if (res.ok) {
+                    isAuthorized = true;
                     showDashboardUI();
                     updateDashboard();
-                    
-                    // 🔄 Only start background refreshes after access is cleared!
-                    if (!syncLoopInterval) {
-                        syncLoopInterval = setInterval(updateDashboard, 3000);
-                    }
                 } else {
                     showLoginUI();
                 }
             } catch (e) {
-                console.log("Connection initialization error.");
+                console.log("Network communication error.");
                 showLoginUI();
             }
         }
 
         function showLoginUI() {
-            if(syncLoopInterval) {
-                clearInterval(syncLoopInterval);
-                syncLoopInterval = null;
-            }
-            document.getElementById('login-screen').style.display = 'flex';
-            document.getElementById('admin-dashboard').style.display = 'none';
+            isAuthorized = false;
+            document.getElementById('login-screen').style.setProperty('display', 'flex', 'important');
+            document.getElementById('admin-dashboard').style.setProperty('display', 'none', 'important');
         }
 
         function showDashboardUI() {
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('admin-dashboard').style.display = 'block';
+            document.getElementById('login-screen').style.setProperty('display', 'none', 'important');
+            document.getElementById('admin-dashboard').style.setProperty('display', 'block', 'important');
         }
 
         async function updateDashboard() {
-            if (!adminPassword) return;
+            if (!isAuthorized || !adminPassword) return;
             try {
                 const res = await fetch('/api/admin/data', {
                     headers: { 'Authorization': adminPassword }
                 });
                 if (res.status === 401) {
-                    localStorage.removeItem('dj_admin_password');
-                    window.location.reload();
+                    window.location.reload(); // Instantly wipe screen on credentials fault
                     return;
                 }
                 if (!res.ok) return;
@@ -335,6 +323,7 @@
         }
 
         async function saveSystemRules() {
+            if (!isAuthorized) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
 
@@ -351,6 +340,7 @@
         }
 
         async function triggerAction(id, action) {
+            if (!isAuthorized) return;
             await fetch('/api/admin/action', {
                 method: 'POST',
                 headers: { 
@@ -363,6 +353,7 @@
         }
 
         async function clearSystem(actionType, message) {
+            if (!isAuthorized) return;
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
@@ -377,6 +368,7 @@
         }
 
         async function toggleRequests() {
+            if (!isAuthorized) return;
             await fetch('/api/admin/toggle', {
                 method: 'POST',
                 headers: { 
@@ -387,6 +379,13 @@
             });
             updateDashboard();
         }
+
+        // Live automatic updates background loop
+        setInterval(() => {
+            if (isAuthorized) {
+                updateDashboard();
+            }
+        }, 3000);
     </script>
 </body>
 </html>
