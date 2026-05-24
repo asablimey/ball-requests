@@ -171,7 +171,7 @@
 </head>
 <body>
 
-    <div id="login-screen">
+    <div id="login-screen" style="display: flex;">
         <div class="login-card">
             <h2>DJ Portal Security</h2>
             <input type="password" id="password-field" class="login-field" placeholder="Enter Access Password" onkeydown="if(event.key === 'Enter') submitLogin()">
@@ -217,11 +217,15 @@
     <script>
         let requestsAllowed = true;
         let adminPassword = localStorage.getItem('dj_admin_password') || "";
+        let syncLoopInterval = null;
 
-        // Check if a saved password can automatically bypass login
-        if (adminPassword) {
-            verifySavedCredentials();
-        }
+        document.addEventListener("DOMContentLoaded", () => {
+            if (adminPassword) {
+                verifySavedCredentials();
+            } else {
+                showLoginUI();
+            }
+        });
 
         function submitLogin() {
             const entry = document.getElementById('password-field').value;
@@ -249,13 +253,25 @@
                 if (res.ok) {
                     showDashboardUI();
                     updateDashboard();
+                    
+                    // 🔄 Only start background refreshes after access is cleared!
+                    if (!syncLoopInterval) {
+                        syncLoopInterval = setInterval(updateDashboard, 3000);
+                    }
+                } else {
+                    showLoginUI();
                 }
             } catch (e) {
                 console.log("Connection initialization error.");
+                showLoginUI();
             }
         }
 
         function showLoginUI() {
+            if(syncLoopInterval) {
+                clearInterval(syncLoopInterval);
+                syncLoopInterval = null;
+            }
             document.getElementById('login-screen').style.display = 'flex';
             document.getElementById('admin-dashboard').style.display = 'none';
         }
@@ -371,10 +387,6 @@
             });
             updateDashboard();
         }
-
-        setInterval(() => {
-            if (adminPassword) updateDashboard();
-        }, 3000);
     </script>
 </body>
 </html>
