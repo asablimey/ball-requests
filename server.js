@@ -83,7 +83,8 @@ app.get('/api/search', async (req, res) => {
             id: track.id,
             name: track.name,
             artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48'
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false // Preservation of explicit flag status
         }));
         
         res.json({ tracks });
@@ -108,6 +109,7 @@ app.post('/api/request', (req, res) => {
             title: track.name,
             artist: track.artist || 'Unknown Artist',
             artwork: track.artwork || 'https://picsum.photos/48',
+            explicit: track.explicit || false, // Preserve explicit flag inside the queue array
             votes: 1
         });
     }
