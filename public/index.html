@@ -29,16 +29,15 @@
             max-width: 480px;
         }
 
-        /* 🟢 Subtle Green Left Accent Border for Title */
         h2 {
             font-weight: 800; 
             letter-spacing: -0.5px; 
+            margin-top: 0;
             margin-bottom: 15px;
             border-left: 4px solid var(--spotify-green);
             padding-left: 10px;
         }
 
-        /* 🟢 Top Border Accent Line Added to Status Card */
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -52,9 +51,50 @@
         }
 
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
-        
-        /* 🟢 Turned numbers green to draw the eye */
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
+
+        /* 🟢 GIANT SCREEN-WIDTH ACTION BUTTONS */
+        .action-block-btn {
+            width: 100%;
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 1rem;
+            display: block;
+            text-align: center;
+            box-sizing: border-box;
+            margin-bottom: 20px;
+            transition: background 0.2s, transform 0.1s;
+        }
+        .action-block-btn:hover { filter: brightness(1.05); }
+        .action-block-btn:active { transform: scale(0.99); }
+        
+        /* Secondary look for the Playlists toggle hook */
+        .playlists-toggle-btn {
+            background-color: #242424;
+            border: 1px solid #333;
+            color: white;
+        }
+        .playlists-toggle-btn:hover { background-color: #2a2a2a; border-color: var(--spotify-green); }
+
+        .back-btn {
+            background-color: #333;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+        }
+        .back-btn:hover { background-color: #444; }
 
         .search-box {
             width: 100%;
@@ -66,9 +106,30 @@
             font-size: 1rem;
             box-sizing: border-box;
             outline: none;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
         .search-box:focus { border-color: var(--spotify-green); }
+
+        /* Content Grid Structures */
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .playlist-card {
+            background-color: var(--panel-bg);
+            border: 1px solid #222;
+            border-radius: 10px;
+            padding: 12px;
+            cursor: pointer;
+            text-align: center;
+            transition: background 0.15s ease;
+        }
+        .playlist-card:hover { background-color: var(--card-bg); }
+        .playlist-card img { width: 100%; aspect-ratio: 1; border-radius: 6px; object-fit: cover; margin-bottom: 8px; }
+        .playlist-name { font-size: 0.85rem; font-weight: 700; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         .track-row {
             display: flex;
@@ -82,9 +143,9 @@
         }
 
         .track-details { display: flex; align-items: center; gap: 12px; }
-        .track-details img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
-        .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
-        .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
+        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; }
+        .track-title { font-weight: 700; margin: 0; font-size: 0.95rem; }
+        .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.8rem; }
 
         .req-btn {
             background-color: var(--spotify-green);
@@ -97,6 +158,15 @@
             font-size: 0.85rem;
         }
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
+        
+        .section-header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            margin-top: 5px;
+        }
+        h3.section-label { font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.75px; margin: 0; }
     </style>
 </head>
 <body>
@@ -115,8 +185,22 @@
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
-        <div id="results-list"></div>
+        <div id="auth-placement-zone">
+            <a href="/api/login" id="connect-spotify-btn" class="action-block-btn">Connect Spotify</a>
+            <button id="my-playlists-btn" class="action-block-btn playlists-toggle-btn" style="display: none;" onclick="togglePlaylistsView()">My Playlists</button>
+        </div>
+
+        <div id="search-box-wrapper">
+            <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
+        </div>
+
+        <div id="dynamic-content-area">
+            <div class="section-header-container">
+                <h3 class="section-label" id="content-view-title">Global Search</h3>
+                <div id="view-action-slot"></div>
+            </div>
+            <div id="content-target-list"></div>
+        </div>
     </div>
 
     <script>
@@ -125,6 +209,18 @@
         let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
+        let currentView = "search"; // "search", "playlists", "playlist_tracks"
+        let savedPlaylistsHTML = ""; 
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        let userAccessToken = urlParams.get('access_token');
+        
+        if (userAccessToken) {
+            localStorage.setItem('dj_spotify_user_token', userAccessToken);
+            window.history.replaceState({}, document.title, "/");
+        } else {
+            userAccessToken = localStorage.getItem('dj_spotify_user_token');
+        }
 
         if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
@@ -148,10 +244,8 @@
                     localStorage.setItem('dj_user_credits', localCredits);
                 }
                 
-                updateUI();
-            } catch (e) {
-                console.log("Sync error.");
-            }
+                updateUIState();
+            } catch (e) { console.log("Sync error."); }
         }
 
         function handleCreditCalculations() {
@@ -179,43 +273,133 @@
             const secs = remainingSeconds % 60;
             
             document.getElementById('timer-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-            updateUI();
+            updateUIState();
         }
 
-        function updateUI() {
+        function updateUIState() {
             document.getElementById('credits-display').innerText = `${localCredits} / ${maxCredits}`;
-            const inputs = document.getElementById('search-input');
+            const searchField = document.getElementById('search-input');
+            
             if (!systemRequestsOpen) {
-                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
-                inputs.disabled = true;
-            } else {
-                inputs.placeholder = "Search tracks, artists...";
-                inputs.disabled = false;
+                searchField.placeholder = "Submissions are currently CLOSED by the DJ";
+                searchField.disabled = true;
+                document.getElementById('auth-placement-zone').style.display = 'none';
+                document.getElementById('content-target-list').innerHTML = '';
+                return;
             }
+
+            searchField.disabled = false;
+
+            // Handle the Screen Width Button Transformation
+            if (userAccessToken) {
+                document.getElementById('connect-spotify-btn').style.display = 'none';
+                document.getElementById('my-playlists-btn').style.display = 'block';
+                
+                // Prefetch playlists invisibly so they open instantly when "My Playlists" is pressed
+                if (!savedPlaylistsHTML) {
+                    silentFetchPlaylists();
+                }
+            } else {
+                document.getElementById('connect-spotify-btn').style.display = 'block';
+                document.getElementById('my-playlists-btn').style.display = 'none';
+            }
+        }
+
+        async function silentFetchPlaylists() {
+            try {
+                const res = await fetch('/api/playlists', {
+                    headers: { 'user-token': userAccessToken }
+                });
+                if (res.status === 401) { logoutExpiredSession(); return; }
+                const playlists = await res.json();
+                
+                if(playlists.length > 0) {
+                    savedPlaylistsHTML = `<div class="content-grid">` + playlists.map(pl => `
+                        <div class="playlist-card" onclick="loadPlaylistTracks('${pl.id}', '${pl.name.replace(/'/g, "\\'")}')">
+                            <img src="${pl.images?.[0]?.url || 'https://picsum.photos/150'}">
+                            <p class="playlist-name">${pl.name}</p>
+                        </div>
+                    `).join('') + `</div>`;
+                }
+            } catch(e) { console.log("Silent caching failed."); }
+        }
+
+        function togglePlaylistsView() {
+            if (!savedPlaylistsHTML) {
+                document.getElementById('content-target-list').innerHTML = `<p style="color:#666; font-style:italic; padding:20px 0; text-align:center;">Loading playlists...</p>`;
+                return;
+            }
+            document.getElementById('search-input').value = ""; // Clear active catalog filtering
+            currentView = "playlists";
+            document.getElementById('content-view-title').innerText = "Your Playlists";
+            document.getElementById('view-action-slot').innerHTML = "";
+            document.getElementById('content-target-list').innerHTML = savedPlaylistsHTML;
+        }
+
+        async function loadPlaylistTracks(id, playlistName) {
+            try {
+                const res = await fetch(`/api/playlists/${id}/tracks`, {
+                    headers: { 'user-token': userAccessToken }
+                });
+                const tracks = await res.json();
+                
+                currentView = "playlist_tracks";
+                document.getElementById('content-view-title').innerText = `${playlistName}`;
+                document.getElementById('view-action-slot').innerHTML = `<button class="back-btn" onclick="togglePlaylistsView()">◀ Back</button>`;
+                
+                const targetList = document.getElementById('content-target-list');
+                if(tracks.length === 0) {
+                    targetList.innerHTML = `<p style="color:#666; font-style:italic; padding:20px 0; text-align:center;">This playlist has no songs.</p>`;
+                } else {
+                    targetList.innerHTML = generateTrackRowsHTML(tracks);
+                }
+            } catch(e) { console.log("Track extraction error."); }
+        }
+
+        function revertToGlobalSearchMode() {
+            currentView = "search";
+            document.getElementById('content-view-title').innerText = "Global Search";
+            document.getElementById('view-action-slot').innerHTML = "";
+            document.getElementById('content-target-list').innerHTML = '';
         }
 
         let searchTimeout;
         function searchSongs() {
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
-            if (!query) { document.getElementById('results-list').innerHTML = ''; return; }
+            
+            if (!query) { 
+                revertToGlobalSearchMode();
+                return; 
+            }
+
+            currentView = "search";
+            document.getElementById('content-view-title').innerText = "Global Search Matches";
+            document.getElementById('view-action-slot').innerHTML = "";
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+                        headers: { 'user-token': userAccessToken || "" }
+                    });
                     const data = await res.json();
-                    
-                    document.getElementById('results-list').innerHTML = data.tracks.map(track => `
-                        <div class="track-row">
-                            <div class="track-details">
-                                <img src="${track.artwork}">
-                                <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
-                            </div>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
-                        </div>
-                    `).join('');
+                    if (document.getElementById('search-input').value.trim() !== "") {
+                        document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(data.tracks || []);
+                    }
                 } catch (e) { console.log("Search error."); }
             }, 300);
+        }
+
+        function generateTrackRowsHTML(tracks) {
+            return tracks.map(track => `
+                <div class="track-row">
+                    <div class="track-details">
+                        <img src="${track.artwork}">
+                        <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+                    </div>
+                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '"')})">Request</button>
+                </div>
+            `).join('');
         }
 
         async function submitRequest(track) {
@@ -234,14 +418,26 @@
                     localStorage.setItem('dj_last_regen', lastRegenTime);
                 }
                 localStorage.setItem('dj_user_credits', localCredits);
-                alert(`"${track.name}" submitted successfully!`);
-                document.getElementById('search-input').value = '';
-                document.getElementById('results-list').innerHTML = '';
-                updateUI();
+                alert(`"${track.name}" added to the queue!`);
+                
+                // Clear input arrays and snap smoothly back into the active category folder view
+                if (currentView === "playlist_tracks") {
+                    // Stay on the playlist track page so they can spend more credits on their songs
+                    const activeHeaderTitle = document.getElementById('content-view-title').innerText;
+                } else {
+                    document.getElementById('search-input').value = "";
+                    revertToGlobalSearchMode();
+                }
             } else {
                 const errData = await res.json();
                 alert(errData.error || "Submission failed.");
             }
+        }
+
+        function logoutExpiredSession() {
+            localStorage.removeItem('dj_spotify_user_token');
+            userAccessToken = null;
+            window.location.reload();
         }
 
         setInterval(handleCreditCalculations, 1000);
