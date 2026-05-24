@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW (For Global Search Backup)
+// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -40,7 +40,7 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Successfully fetched live access token.");
+            console.log("[SPOTIFY] Global access token generated successfully.");
         } else {
             console.log("[SPOTIFY ERROR] Authentication failed:", data);
         }
@@ -110,7 +110,6 @@ app.get('/api/playlists', async (req, res) => {
                 if (typeof p.tracks === 'number') count = p.tracks;
                 else if (p.tracks.total !== undefined) count = p.tracks.total;
             }
-            
             return {
                 id: p.id,
                 name: p.name || 'Untitled Playlist',
@@ -132,30 +131,33 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     
-    // FIXED: Appended missing forward slash character to cleanly pass variables to the proxy routing gateway
-    const targetUrl = 'https://api.spotify.com/v1/playlists/$/' + req.params.id + '/tracks?limit=50';
+    // ✨ PERFECTED ROUTING STRUCTURE: Directly hooks into the proxy's exact endpoint syntax
+    const targetUrl = 'https://api.spotify.com/v1/playlists/' + req.params.id;
     
     try {
         const response = await fetch(targetUrl, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
+        
         const data = await response.json();
         const items = data.items || [];
         
+        // ✨ PERFECTED DATA SAFETIES: Strips out empty frames, ads, or local files that cause crashes
         const tracks = items
-            .filter(item => item && item.track)
+            .filter(item => item && item.track && item.track.id)
             .map(item => {
                 const t = item.track;
                 return {
-                    id: t.id || Math.random().toString(36).substr(2, 9),
+                    id: t.id,
                     name: t.name || 'Unknown Track',
                     artist: t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist',
                     artwork: t.album && t.album.images && t.album.images.length > 0 ? t.album.images[0].url : 'https://picsum.photos/48'
                 };
             });
+
         res.json(tracks);
     } catch (err) {
-        console.error("Tracks fetch error:", err);
+        console.error("Tracks extraction error:", err);
         res.status(500).json({ error: "Failed fetching tracks." });
     }
 });
@@ -186,8 +188,7 @@ app.get('/api/search', async (req, res) => {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
-    // FIXED: Appended forward slash layout pattern for stable proxy translation handles
-    const searchUrl = 'https://api.spotify.com/v1/search?q=$/?q=' + encodeURIComponent(query) + '&type=track&limit=10';
+    const searchUrl = 'https://api.spotify.com/v1/search?q=' + encodeURIComponent(query);
 
     try {
         const response = await fetch(searchUrl, {
@@ -195,12 +196,14 @@ app.get('/api/search', async (req, res) => {
         });
         const data = await response.json();
         
-        const tracks = (data.tracks?.items || []).map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
-        }));
+        const tracks = (data.tracks?.items || [])
+            .filter(t => t && t.id)
+            .map(track => ({
+                id: track.id,
+                name: track.name,
+                artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+                artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
+            }));
         
         res.json({ tracks });
     } catch (err) {
