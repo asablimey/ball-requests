@@ -86,7 +86,21 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
+        /* Explicit indicator layout definition */
+        .explicit-badge {
+            background-color: var(--red-action);
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 900;
+            padding: 2px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 1;
+        }
+
+        /* 🟢 ORIGINAL LAYOUT STYLES */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -221,20 +235,18 @@
 
     <script>
         let requestsAllowed = true;
-        let isAuthorized = false; // Prevents background fetch before checking pass
+        let isAuthorized = false;
 
-        // 🔒 PASSWORD SECURITY CHECK
         function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
             
-            // 🔑 Confirmed System Password
             const masterPassword = "ballDJ2026"; 
 
             if (inputField.value === masterPassword) {
                 isAuthorized = true;
                 document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard(); // Run immediately upon validation
+                updateDashboard();
             } else {
                 errorMsg.style.display = 'block';
                 inputField.value = '';
@@ -243,7 +255,7 @@
         }
 
         async function updateDashboard() {
-            if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+            if (!isAuthorized) return; 
             
             try {
                 const res = await fetch('/api/admin/data');
@@ -267,7 +279,13 @@
                     <div class="song-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+                            <div>
+                                <p class="song-title">
+                                    ${song.title}
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </p>
+                               <p class="song-artist">${song.artist}</p>
+                            </div>
                         </div>
                         <div class="actions">
                             <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
@@ -282,7 +300,13 @@
                     <div class="song-row history-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+                            <div>
+                                <p class="song-title">
+                                    ${song.title}
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </p>
+                                <p class="song-artist">${song.artist}</p>
+                            </div>
                         </div>
                     </div>
                 `).join('');
@@ -335,7 +359,6 @@
             updateDashboard();
         }
 
-        // Lock screen focus on setup load
         window.onload = () => {
             document.getElementById('password-input').focus();
         };
