@@ -7,6 +7,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 🔐 SPOTIFY API CREDENTIALS (Pulled securely from Render environment variables)
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
@@ -44,19 +45,6 @@ async function refreshSpotifyToken() {
         console.error('[SPOTIFY ERROR] Failed to fetch access token:', err);
     }
 }
-
-// 🔐 PASSWORD PROTECTED ADMIN ROUTE
-// This intercepts "/admin.html" before express.static can serve it freely!
-app.get('/admin.html', (req, res) => {
-    if (req.query.password === ADMIN_PASSWORD) {
-        res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-    } else {
-        res.status(403).send('<h1>Access Denied</h1><p>You need the correct admin password appended to the URL to view this page.</p>');
-    }
-});
-
-// Serve the rest of the public folder assets safely
-app.use(express.static(path.join(__dirname, 'public')));
 
 // --- API ENDPOINTS FOR THE APP ---
 
@@ -179,24 +167,4 @@ app.post('/api/admin/remove', (req, res) => {
     
     const index = queue.findIndex(item => item.id === trackId);
     if (index !== -1) {
-        const removedTrack = queue.splice(index, 1)[0];
-        if (played) {
-            history.unshift(removedTrack);
-            if (history.length > 20) history.pop();
-        }
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/admin/clear-queue', (req, res) => {
-    const { password } = req.body;
-    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
-    queue = [];
-    res.json({ success: true });
-});
-
-// Start the live server hook
-app.listen(PORT, () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
-    refreshSpotifyToken();
-});
+        const removed
