@@ -3,255 +3,237 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Submit Song Request</title>
+    <title>Submit a Request</title>
     <style>
         :root {
             --spotify-green: #1DB954;
             --spotify-black: #121212;
-            --spotify-dark-grey: #181818;
-            --spotify-light-grey: #282828;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+            --text-muted: #a7a7a7;
         }
 
-        * { box-sizing: border-box; }
-
-        body { 
-            background: linear-gradient(180deg, #191919 0%, var(--spotify-black) 100%);
-            color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            padding: 15px; 
+        body {
+            background-color: var(--spotify-black);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            padding: 20px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .container { 
-            width: 100%; 
-            max-width: 600px; 
-            text-align: center; 
+        .container {
+            width: 100%;
+            max-width: 480px;
         }
 
-        .logo-area { margin-bottom: 25px; }
-
-        h1 { 
-            color: white; 
-            font-size: clamp(2rem, 6vw, 2.8rem); 
-            margin: 0 0 10px 0; 
-            font-weight: 800;
-            letter-spacing: -0.5px;
-        }
-
-        /* Upgraded Dashboard Credit Stats Counter */
-        .credit-badge-container {
-            background-color: var(--spotify-dark-grey);
-            border: 1px solid #252525;
-            padding: 15px 20px;
-            border-radius: 14px;
-            margin-bottom: 25px;
+        .status-card {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            text-align: left;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
 
-        .credit-title { font-weight: 700; font-size: 1.05rem; margin: 0; }
-        .credit-count { color: var(--spotify-green); font-size: 1.3rem; font-weight: 800; }
-        .credit-timer { color: #888; font-size: 0.85rem; margin-top: 4px; }
+        .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
+        .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; }
 
-        .search-box { 
-            width: 100%; 
-            padding: 20px 24px; 
-            border-radius: 50px; 
-            border: 1px solid transparent; 
-            background-color: var(--spotify-light-grey); 
-            color: white; 
-            font-size: 1.15rem; 
-            outline: none; 
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        .search-box {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 14px;
+            color: white;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            outline: none;
+            margin-bottom: 15px;
         }
+        .search-box:focus { border-color: var(--spotify-green); }
 
-        .search-box:focus { 
-            border-color: var(--spotify-green); 
-            background-color: #333333;
-            box-shadow: 0 0 20px rgba(29, 185, 84, 0.35);
-        }
-
-        .results-list { list-style: none; padding: 0; width: 100%; text-align: left; margin: 20px 0 0 0; }
-
-        .song-item { 
-            display: flex; 
-            align-items: center; 
-            background: var(--spotify-dark-grey); 
-            padding: 14px; 
-            margin-bottom: 12px; 
-            border-radius: 14px; 
-            justify-content: space-between; 
+        .track-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: var(--panel-bg);
+            margin-bottom: 8px;
+            border-radius: 8px;
             border: 1px solid #222;
         }
 
-        .song-info { display: flex; align-items: center; gap: 16px; overflow: hidden; }
-        .song-info img { border-radius: 6px; width: 56px; height: 56px; object-fit: cover; flex-shrink: 0; }
-        .text-details { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .title { font-weight: 700; font-size: 1.1rem; margin: 0; color: #fff; }
-        .artist { color: #b3b3b3; font-size: 0.9rem; margin: 5px 0 0 0; }
+        .track-details { display: flex; align-items: center; gap: 12px; }
+        .track-details img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
+        .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
+        .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
 
-        .req-btn { 
-            background-color: var(--spotify-green); 
-            color: white; 
-            border: none; 
-            padding: 12px 22px; 
-            border-radius: 50px; 
-            font-weight: 700; 
-            cursor: pointer; 
-            font-size: 0.95rem; 
-            transition: all 0.2s ease;
-            flex-shrink: 0;
+        .req-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.85rem;
         }
-
-        .req-btn:disabled {
-            background-color: #444;
-            color: #888;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
-
-        .status-msg { 
-            font-size: 1.3rem; 
-            color: #b3b3b3; 
-            display: none; 
-            background: var(--spotify-dark-grey);
-            padding: 50px 20px;
-            border-radius: 16px;
-            border: 1px solid #222;
-        }
+        .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
     </style>
 </head>
 <body>
+
     <div class="container">
-        <div class="logo-area">
-            <h1>Song Requests</h1>
+        <h2 style="font-weight: 800; letter-spacing: -0.5px; margin-bottom: 15px;">Request a Song</h2>
+        
+        <div class="status-card">
+            <div class="status-info">
+                <h3>Your Credits</h3>
+                <p id="credits-display">- / -</p>
+            </div>
+            <div class="status-info" style="text-align: right;">
+                <h3>Next Credit In</h3>
+                <p id="timer-display">--:--</p>
+            </div>
         </div>
 
-        <div class="credit-badge-container">
-            <div>
-                <p class="credit-title">Your Available Requests</p>
-                <div id="regen-timer-text" class="credit-timer">All credits loaded</div>
-            </div>
-            <div id="credit-display" class="credit-count">- / -</div>
-        </div>
-        
-        <div id="active-ui">
-            <input type="text" id="search-input" class="search-box" placeholder="Search song or artist...">
-            <ul id="results" class="results-list"></ul>
-        </div>
-        
-        <div id="closed-ui" class="status-msg">🔒<br><br>Requests are closed right now.</div>
+        <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
+        <div id="results-list"></div>
     </div>
 
     <script>
-        // Generate or pull a locked identifier token unique to this specific device browser
-        if (!localStorage.getItem('ball_user_token')) {
-            localStorage.setItem('ball_user_token', 'user_' + Math.random().toString(36).substr(2, 9));
+        let maxCredits = 3;
+        let localCredits = parseInt(localStorage.getItem('dj_user_credits')) ?? null;
+        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen')) ?? Date.now();
+        let regenIntervalLength = 60; 
+        let systemRequestsOpen = true;
+
+        // Initialize user data if missing
+        if (localCredits === null) {
+            localCredits = maxCredits;
+            localStorage.setItem('dj_user_credits', localCredits);
+            localStorage.setItem('dj_last_regen', lastRegenTime);
         }
-        const userToken = localStorage.getItem('ball_user_token');
 
-        const searchInput = document.getElementById('search-input');
-        const resultsList = document.getElementById('results');
-        let currentCredits = 0;
-        let countdownTimer = 0;
-        let countdownInterval = null;
-
-        async function fetchSystemSync() {
+        async function syncWithServer() {
             try {
-                const res = await fetch('/api/status', { headers: { 'user-token': userToken } });
+                const res = await fetch('/data');
+                if (!res.ok) return;
                 const data = await res.json();
-                
-                if(!data.requestsAllowed) {
-                    document.getElementById('active-ui').style.display = 'none';
-                    document.getElementById('closed-ui').style.display = 'block';
-                } else {
-                    document.getElementById('active-ui').style.display = 'block';
-                    document.getElementById('closed-ui').style.display = 'none';
-                }
 
-                currentCredits = data.userCredits;
-                document.getElementById('credit-display').innerText = `${currentCredits} / ${data.maxCredits}`;
+                maxCredits = data.maxCredits;
+                regenIntervalLength = data.countdownLength;
+                systemRequestsOpen = data.requestsAllowed;
+
+                if (localCredits > maxCredits) {
+                    localCredits = maxCredits;
+                    localStorage.setItem('dj_user_credits', localCredits);
+                }
                 
-                countdownTimer = data.nextRegenIn;
-                startVisualCountdown(data.userCredits === data.maxCredits);
-            } catch (e) { console.log("Sync error"); }
+                updateUI();
+            } catch (e) {
+                console.log("Sync error.");
+            }
         }
 
-        function startVisualCountdown(isMaxed) {
-            clearInterval(countdownInterval);
-            const timerLabel = document.getElementById('regen-timer-text');
-            
-            if (isMaxed) {
-                timerLabel.innerText = "Full Credits";
+        function handleCreditCalculations() {
+            if (localCredits >= maxCredits) {
+                document.getElementById('timer-display').innerText = "MAX";
+                lastRegenTime = Date.now();
+                localStorage.setItem('dj_last_regen', lastRegenTime);
                 return;
             }
 
-            function updateClockString() {
-                if (countdownTimer <= 0) {
-                    timerLabel.innerText = "Syncing credit refresh...";
-                    fetchSystemSync();
-                    return;
-                }
-                timerLabel.innerText = `Next credit loads in ${countdownTimer}s`;
-                countdownTimer--;
-            }
+            const now = Date.now();
+            const elapsedSeconds = Math.floor((now - lastRegenTime) / 1000);
             
-            updateClockString();
-            countdownInterval = setInterval(updateClockString, 1000);
+            if (elapsedSeconds >= regenIntervalLength) {
+                const creditsToGain = Math.floor(elapsedSeconds / regenIntervalLength);
+                localCredits = Math.min(maxCredits, localCredits + creditsToGain);
+                lastRegenTime = lastRegenTime + (creditsToGain * regenIntervalLength * 1000);
+                
+                localStorage.setItem('dj_user_credits', localCredits);
+                localStorage.setItem('dj_last_regen', lastRegenTime);
+            }
+
+            const remainingSeconds = regenIntervalLength - (Math.floor((Date.now() - lastRegenTime) / 1000) % regenIntervalLength);
+            const mins = Math.floor(remainingSeconds / 60);
+            const secs = remainingSeconds % 60;
+            
+            document.getElementById('timer-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            updateUI();
         }
 
-        searchInput.addEventListener('input', async (e) => {
-            const query = e.target.value.trim();
-            if(query.length < 2) { resultsList.innerHTML = ''; return; }
-            
-            const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-            const tracks = await res.json();
-            
-            resultsList.innerHTML = tracks.map(track => `
-                <li class="song-item">
-                    <div class="song-info">
-                        <img src="${track.artwork}">
-                        <div class="text-details">
-                            <p class="title">${track.title}</p>
-                            <p class="artist">${track.artist}</p>
-                        </div>
-                    </div>
-                    <button class="req-btn" ${currentCredits < 1 ? 'disabled' : ''} onclick="requestSong('${track.title.replace(/'/g, "\\'")}', '${track.artist.replace(/'/g, "\\'")}', '${track.artwork}')">
-                        ${currentCredits < 1 ? 'Locked' : 'Request'}
-                    </button>
-                </li>
-            `).join('');
-        });
+        function updateUI() {
+            document.getElementById('credits-display').innerText = `${localCredits} / ${maxCredits}`;
+            const inputs = document.getElementById('search-input');
+            if (!systemRequestsOpen) {
+                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
+                inputs.disabled = true;
+            } else {
+                inputs.placeholder = "Search tracks, artists...";
+                inputs.disabled = false;
+            }
+        }
 
-        async function requestSong(title, artist, artwork) {
-            if(currentCredits < 1) return alert("You have run out of request credits!");
-            
+        let searchTimeout;
+        function searchSongs() {
+            clearTimeout(searchTimeout);
+            const query = document.getElementById('search-input').value.trim();
+            if (!query) { document.getElementById('results-list').innerHTML = ''; return; }
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                    const data = await res.json();
+                    
+                    document.getElementById('results-list').innerHTML = data.tracks.map(track => `
+                        <div class="track-row">
+                            <div class="track-details">
+                                <img src="${track.artwork}">
+                                <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+                            </div>
+                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
+                        </div>
+                    `).join('');
+                } catch (e) { console.log("Search error."); }
+            }, 300);
+        }
+
+        async function submitRequest(track) {
+            if (localCredits <= 0 || !systemRequestsOpen) return;
+
             const res = await fetch('/api/request', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'user-token': userToken },
-                body: JSON.stringify({ title, artist, artwork })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ track })
             });
-            if(res.ok) {
-                alert(`"${title}" sent to the DJ!`);
-                searchInput.value = '';
-                resultsList.innerHTML = '';
-                fetchSystemSync();
+
+            if (res.ok) {
+                localCredits--;
+                if (localCredits === maxCredits - 1) {
+                    lastRegenTime = Date.now();
+                    localStorage.setItem('dj_last_regen', lastRegenTime);
+                }
+                localStorage.setItem('dj_user_credits', localCredits);
+                alert(`"${track.name}" submitted successfully!`);
+                document.getElementById('search-input').value = '';
+                document.getElementById('results-list').innerHTML = '';
+                updateUI();
             } else {
-                alert('Request failed. You might be out of credits.');
+                const errData = await res.json();
+                alert(errData.error || "Submission failed.");
             }
         }
 
-        setInterval(fetchSystemSync, 10000); // Global state update loop
-        fetchSystemSync();
+        setInterval(handleCreditCalculations, 1000);
+        setInterval(syncWithServer, 5000);
+        syncWithServer();
     </script>
 </body>
 </html>
