@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 FETCH SPOTIFY CLIENT CREDENTIALS TOKEN (For global searches)
+// 🌐 FIXED SPOTIFY API TOKEN FLOW FOR PROXY ENVIROMENTS
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -28,7 +28,8 @@ async function getSpotifyToken() {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/api/token', {
+        // Updated endpoint query configuration to prevent 400 Bearer error formats
+        const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
@@ -99,13 +100,12 @@ app.get('/api/playlists', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         
         const items = (data.items || []).map(p => {
-            // Robust parsing of track count across different Spotify endpoint variations
             let count = 0;
             if (p.tracks) {
                 if (typeof p.tracks === 'number') count = p.tracks;
