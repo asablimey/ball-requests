@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -8,11 +9,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🔐 SPOTIFY API CREDENTIALS
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID; 
+// 🔐 SPOTIFY API CREDENTIALS (Pulled securely from Render environment variables)
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Global DJ Settings (Editable from Admin Panel)
+// // Global DJ Settings (Editable from Admin Panel)
 let maxCredits = 3;             // Default max credits a user can hold
 let countdownLength = 60;       // Default countdown time in seconds to earn 1 credit back
 let requestsAllowed = true;
@@ -21,8 +22,8 @@ let requestsAllowed = true;
 let queue = [];
 let history = [];
 let userBanks = {};             // Keeps track of individual student credit accounts
-let spotifyAccessToken = ''; 
-const ADMIN_PASSWORD = "ballDJ2026"; 
+let spotifyAccessToken = '';
+const ADMIN_PASSWORD = "ballDJ2026";
 
 // INTERNAL FUNCTION: Request fresh access token from Spotify API
 async function refreshSpotifyToken() {
@@ -39,162 +40,160 @@ async function refreshSpotifyToken() {
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
             console.log('[SPOTIFY] Connected to live database successfully.');
-        } else {
-            console.log('[SPOTIFY ERROR] Authentication failed.');
         }
     } catch (err) {
-        console.error('[SPOTIFY ERROR] Connection failed:', err.message);
+        console.error('[SPOTIFY ERROR] Failed to fetch access token:', err);
     }
 }
 
-// MIDDLEWARE: Identifies users or creates a credit bank profile if they are new
-function trackUserCredits(req, res, next) {
-    const userId = req.headers['user-token'] || 'default-guest';
-    const now = Date.now();
-
-    if (!userBanks[userId]) {
-        userBanks[userId] = {
-            credits: maxCredits,
-            lastRegenTime: now
-        };
-    }
-
-    const user = userBanks[userId];
-
-    // Passively calculate structural credit regeneration over elapsed time
-    if (user.credits < maxCredits) {
-        const msPerCredit = countdownLength * 1000;
-        const timePassed = now - user.lastRegenTime;
-        const creditsToEarn = Math.floor(timePassed / msPerCredit);
-
-        if (creditsToEarn > 0) {
-            user.credits = Math.min(maxCredits, user.credits + creditsToEarn);
-            user.lastRegenTime = user.lastRegenTime + (creditsToEarn * msPerCredit);
-        }
+// 🔐 PASSWORD PROTECTED ADMIN ROUTE
+app.get('/admin.html', (req, res) => {
+    if (req.query.password === ADMIN_PASSWORD) {
+        res.sendFile(path.join(__dirname, 'public', 'admin.html'));
     } else {
-        user.lastRegenTime = now; // Constantly forward-align timer if already maxed out
+        res.status(403).send('<h1>Access Denied</h1><p>You need the correct admin password appended to the URL to view this page.</p>');
     }
+});
 
-    req.userData = user;
-    req.userId = userId;
-    next();
-}
+// --- API ENDPOINTS FOR THE APP ---
 
-// GUEST ENDPOINT: Live Spotify Search Connection
+// Search Tracks via Spotify API
 app.get('/api/search', async (req, res) => {
-    const query = req.query.q ? req.query.q.trim() : '';
-    if (!query || !spotifyAccessToken) return res.json([]);
+    const query = req.query.q;
+    if (!query) return res.json([]);
+    
+    if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
-        if (response.status === 401) await refreshSpotifyToken();
+        
+        if (response.status === 401) { // Token expired
+            await refreshSpotifyToken();
+            return res.redirect(req.originalUrl);
+        }
+
         const data = await response.json();
-        const tracks = data.tracks?.items.map(item => ({
-            id: item.id,
-            title: item.name,
-            artist: item.artists.map(a => a.name).join(', '),
-            artwork: item.album.images[2]?.url || item.album.images[0]?.url || 'https://picsum.photos/50/50'
+        const tracks = data.tracks?.items.map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            albumArt: track.album.images[0]?.url || ''
         })) || [];
+        
         res.json(tracks);
-    } catch (error) {
-        res.json([]);
+    } catch (err) {
+        res.status(500).json({ error: 'Search failed' });
     }
 });
 
-// GUEST ENDPOINT: Get system status along with the individual's credit balance
-app.get('/api/status', trackUserCredits, (req, res) => {
-    const nextRegenIn = req.userData.credits < maxCredits 
-        ? Math.max(0, Math.ceil((countdownLength * 1000 - (Date.now() - req.userData.lastRegenTime)) / 1000))
-        : 0;
-
+// Get Current Queue & Global Configs
+app.get('/api/queue', (req, res) => {
     res.json({
-        requestsAllowed,
-        maxCredits,
-        countdownLength,
-        userCredits: req.userData.credits,
-        nextRegenIn
+        queue,
+        history,
+        configs: { maxCredits, countdownLength, requestsAllowed }
     });
 });
 
-// GUEST ENDPOINT: Submit request (Deducting 1 credit)
-app.post('/api/request', trackUserCredits, (req, res) => {
-    if (!requestsAllowed) return res.status(403).json({ error: "Requests closed." });
-    if (req.userData.credits < 1) return res.status(400).json({ error: "Out of credits!" });
-
-    const { title, artist, artwork } = req.body;
-    
-    // Deduct credit points
-    req.userData.credits -= 1;
-    if (req.userData.credits === maxCredits - 1) {
-        req.userData.lastRegenTime = Date.now(); // Start countdown sequence
+// Track and Manage Credits per User IP
+app.get('/api/user-status', (req, res) => {
+    const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    if (!userBanks[userIp]) {
+        userBanks[userIp] = { credits: maxCredits, lastRegen: Date.now() };
     }
-
-    const newRequest = { id: Date.now().toString(), title, artist, artwork };
-    queue.push(newRequest);
     
-    console.log(`[REQUESTED] "${title}" | Credits remaining for user: ${req.userData.credits}`);
-    res.json({ success: true, userCredits: req.userData.credits });
-});
-
-// ADMIN PROTECTION MIDDLEWARE
-const checkAuth = (req, res, next) => {
-    if (req.headers.authorization === ADMIN_PASSWORD) return next();
-    res.status(401).json({ error: "Unauthorized" });
-};
-
-// ADMIN ENDPOINT: Fetch complete dashboard data
-app.get('/api/admin/data', checkAuth, (req, res) => {
-    res.json({ queue, history, requestsAllowed, maxCredits, countdownLength });
-});
-
-// ADMIN ENDPOINT: Modify rule restrictions (Max bank limit & Countdown duration)
-app.post('/api/admin/config', checkAuth, (req, res) => {
-    if (req.body.maxCredits !== undefined) maxCredits = parseInt(req.body.maxCredits) || 1;
-    if (req.body.countdownLength !== undefined) countdownLength = parseInt(req.body.countdownLength) || 10;
+    let user = userBanks[userIp];
+    const now = Date.now();
+    const elapsedSeconds = Math.floor((now - user.lastRegen) / 1000);
     
-    // Flush active user bank timers to align immediately to new changes
-    Object.keys(userBanks).forEach(id => {
-        userBanks[id].credits = Math.min(maxCredits, userBanks[id].credits);
-        userBanks[id].lastRegenTime = Date.now();
-    });
-
-    console.log(`[CONFIG UPDATE] Max Credits: ${maxCredits}, Cooldown Loop: ${countdownLength}s`);
-    res.json({ success: true, maxCredits, countdownLength });
+    if (user.credits < maxCredits && elapsedSeconds >= countdownLength) {
+        const earned = Math.floor(elapsedSeconds / countdownLength);
+        user.credits = Math.min(maxCredits, user.credits + earned);
+        user.lastRegen = now;
+    }
+    
+    let timeRemaining = 0;
+    if (user.credits < maxCredits) {
+        timeRemaining = countdownLength - (Math.floor((now - user.lastRegen) / 1000) % countdownLength);
+    }
+    
+    res.json({ credits: user.credits, timeRemaining, maxCredits, countdownLength, requestsAllowed });
 });
 
-// ADMIN ENDPOINT: Toggle open status
-app.post('/api/admin/toggle', checkAuth, (req, res) => {
-    requestsAllowed = req.body.allow;
-    res.json({ success: true, requestsAllowed });
+// Submit a Request
+app.post('/api/request', (req, res) => {
+    if (!requestsAllowed) return res.status(400).json({ error: 'Song requests are currently locked by the DJ.' });
+
+    const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const { track } = req.body;
+    
+    if (!userBanks[userIp] || userBanks[userIp].credits <= 0) {
+        return res.status(400).json({ error: 'Out of credits! Wait for the timer to reset.' });
+    }
+    
+    const isDuplicate = queue.some(item => item.id === track.id);
+    if (isDuplicate) return res.status(400).json({ error: 'This song is already in the queue!' });
+
+    userBanks[userIp].credits -= 1;
+    if (userBanks[userIp].credits === maxCredits - 1) {
+        userBanks[userIp].lastRegen = Date.now();
+    }
+    
+    queue.push({ ...track, votes: 1, id: track.id, timestamp: Date.now() });
+    res.json({ success: true });
 });
 
-// ADMIN ENDPOINT: Queue modifications
-app.post('/api/admin/action', checkAuth, (req, res) => {
-    const { id, action } = req.body;
+// Upvote an Existing Request
+app.post('/api/upvote', (req, res) => {
+    const { trackId } = req.body;
+    const song = queue.find(item => item.id === trackId);
+    if (song) {
+        song.votes += 1;
+        queue.sort((a, b) => b.votes - a.votes || a.timestamp - b.timestamp);
+        res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Song not found in active queue.' });
+    }
+});
 
-    if (action === 'clearQueue') queue = [];
-    else if (action === 'clearHistory') history = [];
-    else {
-        const songIndex = queue.findIndex(s => s.id === id);
-        if (songIndex !== -1) {
-            const song = queue[songIndex];
-            if (action === 'played') {
-                history.unshift(song);
-                queue.splice(songIndex, 1);
-            } else if (action === 'remove') {
-                queue.splice(songIndex, 1);
-            } else if (action === 'top') {
-                queue.splice(songIndex, 1);
-                queue.unshift(song);
-            }
+// --- ADMIN SPECIFIC ENDPOINTS ---
+
+app.post('/api/admin/update-configs', (req, res) => {
+    const { password, configs } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    
+    maxCredits = Number(configs.maxCredits);
+    countdownLength = Number(configs.countdownLength);
+    requestsAllowed = configs.requestsAllowed;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/remove', (req, res) => {
+    const { password, trackId, played } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const index = queue.findIndex(item => item.id === trackId);
+    if (index !== -1) {
+        const removedTrack = queue.splice(index, 1)[0];
+        if (played) {
+            history.unshift(removedTrack);
+            if (history.length > 20) history.pop();
         }
     }
-    res.json({ success: true, queue, history });
+    res.json({ success: true });
 });
 
-app.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
-    await refreshSpotifyToken();
+app.post('/api/admin/clear-queue', (req, res) => {
+    const { password } = req.body;
+    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+    queue = [];
+    res.json({ success: true });
+});
+
+// Start the live server hook
+app.listen(PORT, () => {
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    refreshSpotifyToken();
 });
