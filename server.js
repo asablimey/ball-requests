@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 LIVE SPOTIFY API TOKEN (Client Credentials Flow for public search)
+// 🌐 FETCH SPOTIFY CLIENT CREDENTIALS TOKEN (For global searches)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -124,6 +124,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
+        // FIXED: Added missing $ sign to properly insert the playlist ID variable
         const response = await fetch(`https://api.spotify.com/v1/playlists/${req.params.id}/tracks?limit=50`, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
@@ -175,6 +176,7 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
+        // FIXED: Added missing $ sign to properly insert the query string variable
         const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
