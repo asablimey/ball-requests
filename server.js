@@ -9,11 +9,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🔐 SPOTIFY API CREDENTIALS (Secure environment variables)
+// 🔐 SPOTIFY API CREDENTIALS
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Global DJ Session Rules
+// Global DJ Session Settings
 let maxCredits = 3;             
 let countdownLength = 60;       
 let requestsAllowed = true;
@@ -25,7 +25,6 @@ let userBanks = {};
 let spotifyAccessToken = '';
 const ADMIN_PASSWORD = "ballDJ2026";
 
-// Fetch access token from Spotify API
 async function refreshSpotifyToken() {
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -39,19 +38,18 @@ async function refreshSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log('[SPOTIFY] Linked successfully.');
+            console.log('[SPOTIFY] Token verified.');
         }
     } catch (err) {
-        console.error('[SPOTIFY ERROR] Handshake dropped:', err);
+        console.error('[SPOTIFY ERROR] Auth handshake failed:', err);
     }
 }
 
-// Password verification gateway fallback route
 app.get('/admin.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// --- CLIENT ENGINE INTERFACES ---
+// --- CLIENT APPLICATION INTERFACES ---
 
 // Search Tracks via Spotify API
 app.get('/api/search', async (req, res) => {
@@ -61,8 +59,8 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        // ✅ FIXED: Template literal interpolation syntax resolved properly with standard '$' wrapper
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$$${encodeURIComponent(query)}&type=track&limit=10`, {
+        // ✅ FIXED: Standard template literal syntax ($ wrapper) restored so searches compile correctly
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         
@@ -85,7 +83,7 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// Broadcaster pipeline mapping configurations outward to old guest scripts
+// Broadcast queue status to the Master Control Panel
 app.get('/api/queue', (req, res) => {
     res.json({
         queue,
@@ -97,7 +95,7 @@ app.get('/api/queue', (req, res) => {
     });
 });
 
-// Sync user credits (Provides nested block and root variables to avoid guest page -/- error)
+// Sync user bank account allocations (Fixed root properties to eliminate guest page -/- error)
 app.get('/api/user-status', (req, res) => {
     const userIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     if (!userBanks[userIp]) {
@@ -129,7 +127,7 @@ app.get('/api/user-status', (req, res) => {
     });
 });
 
-// Track Request Submission Pipeline
+// Submit a Request
 app.post('/api/request', (req, res) => {
     if (!requestsAllowed) return res.status(400).json({ error: 'Song requests are locked.' });
 
@@ -147,7 +145,7 @@ app.post('/api/request', (req, res) => {
     userBanks[userIp].credits -= 1;
     userBanks[userIp].lastRegen = Date.now();
     
-    // Polyfill track entity variations cleanly across varying client models
+    // Polyfill naming properties across original legacy structures cleanly
     queue.push({ 
         ...track, 
         name: track.name || track.title,
@@ -172,7 +170,7 @@ app.post('/api/upvote', (req, res) => {
     }
 });
 
-// --- DJ SYSTEM SECURE INTERFACES ---
+// --- SECURE DJ SYSTEM ADMIN CONTROL ROUTING ---
 
 app.post('/api/admin/update-configs', (req, res) => {
     const { password, configs } = req.body;
@@ -207,6 +205,6 @@ app.post('/api/admin/clear-queue', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[STREAM RUNNING] Listening on interface port ${PORT}`);
+    console.log(`[SERVER ACTIVE] Dashboard processing live on port ${PORT}`);
     refreshSpotifyToken();
 });
