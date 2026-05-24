@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const fetch = require('node-fetch'); // Double check "node-fetch": "^2.6.7" is in package.json
+const fetch = require('node-fetch'); // Ensure "node-fetch": "^2.6.7" is in package.json
 const app = express();
 const PORT = process.env.PORT || 10000;
 
