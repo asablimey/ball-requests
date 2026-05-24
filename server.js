@@ -98,4 +98,120 @@ app.get('/data', (req, res) => {
         requestsAllowed: systemConfigs.requestsAllowed,
         minSongsBetweenRepeats: systemConfigs.minSongsBetweenRepeats,
         queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history
+        history: playedHistory
+    });
+});
+
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
+    const userToken = req.headers['user-token'] || spotifyAccessToken;
+    if (!query || !userToken) return res.json({ tracks: [] });
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${userToken}` }
+        });
+        const data = await response.json();
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: formatDuration(track.duration_ms)
+        }));
+        res.json({ tracks });
+    } catch (err) {
+        res.status(500).json({ error: "Search failed" });
+    }
+});
+
+app.post('/api/request', (req, res) => {
+    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    const { track } = req.body;
+    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+
+    // Anti-spam configuration constraint validation
+    const recentPlays = playedHistory.slice(0, systemConfigs.minSongsBetweenRepeats);
+    const wasPlayedTooRecently = recentPlays.some(pastTrack => pastTrack.id === track.id);
+
+    if (wasPlayedTooRecently) {
+        return res.status(400).json({ 
+            error: `This song was played too recently! Try again after another ${systemConfigs.minSongsBetweenRepeats} tracks step off the stage.` 
+        });
+    }
+
+    const existingTrack = activeQueue.find(t => t.id === track.id);
+    if (existingTrack) {
+        existingTrack.votes = (existingTrack.votes || 1) + 1;
+    } else {
+        activeQueue.push({
+            id: track.id || Date.now().toString(),
+            title: track.name,
+            artist: track.artist || 'Unknown Artist',
+            artwork: track.artwork || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: track.duration || '--:--',
+            votes: 1
+        });
+    }
+    res.json({ success: true });
+});
+
+// -------------------------------------------------------------
+// CONTROL LAYER (ADMIN)
+// -------------------------------------------------------------
+app.get('/api/admin/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        minSongsBetweenRepeats: systemConfigs.minSongsBetweenRepeats,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
+    });
+});
+
+app.post('/api/admin/config', (req, res) => {
+    const { maxCredits, countdownLength, minSongsBetweenRepeats } = req.body;
+    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
+    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
+    if (minSongsBetweenRepeats !== undefined) systemConfigs.minSongsBetweenRepeats = parseInt(minSongsBetweenRepeats) ?? systemConfigs.minSongsBetweenRepeats;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/action', (req, res) => {
+    const { id, action } = req.body;
+    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
+    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
+
+    const trackIndex = activeQueue.findIndex(t => t.id === id);
+    if (trackIndex !== -1) {
+        if (action === 'top') {
+            const track = activeQueue[trackIndex];
+            const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
+            track.votes = highestVotes + 1;
+        } else if (action === 'played') {
+            const [track] = activeQueue.splice(trackIndex, 1);
+            playedHistory.unshift(track);
+        } else if (action === 'remove') {
+            activeQueue.splice(trackIndex, 1);
+        }
+    }
+    res.json({ success: true });
+});
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, async () => {
+    console.log(`[SERVER] Running on port ${PORT}`);
+    await getSpotifyToken();
+});
