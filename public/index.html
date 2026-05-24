@@ -73,12 +73,13 @@
         .action-block-btn:hover { filter: brightness(1.05); }
         .action-block-btn:active { transform: scale(0.99); }
         
+        /* 🟢 FIXED: "My Playlists" button style matches brand colors perfectly */
         .playlists-toggle-btn {
-            background-color: #242424;
-            border: 1px solid #333;
+            background-color: var(--spotify-green);
+            border: none;
             color: white;
         }
-        .playlists-toggle-btn:hover { background-color: #2a2a2a; border-color: var(--spotify-green); }
+        .playlists-toggle-btn:hover { filter: brightness(1.08); }
 
         .back-btn {
             background-color: #333;
@@ -108,7 +109,6 @@
         }
         .search-box:focus { border-color: var(--spotify-green); }
 
-        /* 🟢 FIXED: Clean playlist row listing style */
         .playlist-row-item {
             display: flex;
             align-items: center;
@@ -325,7 +325,6 @@
                     return;
                 }
                 
-                // 🟢 FIXED: Beautiful list rendering instead of messy grids
                 savedPlaylistsHTML = playlists.map(pl => `
                     <div class="playlist-row-item" onclick="loadPlaylistTracks('${pl.id}', '${pl.name.replace(/'/g, "\\'")}')">
                         <img src="${pl.images?.[0]?.url || 'https://picsum.photos/150'}">
@@ -408,7 +407,7 @@
                             <p class="track-artist">${track.artist}</p>
                         </div>
                     </div>
-                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
+                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '"')})">Request</button>
                 </div>
             `).join('');
         }
