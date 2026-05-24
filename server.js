@@ -15,93 +15,68 @@ let systemConfigs = {
 
 let activeQueue = [];
 let playedHistory = [];
+let spotifyAccessToken = "";
 
-// -------------------------------------------------------------
-// SPOTIFY AUTHENTICATION & PLAYLIST ENDPOINTS
-// -------------------------------------------------------------
-
-// Redirects user to Spotify's login page
-app.get('/api/login', (req, res) => {
+// 🌐 USE OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY
+async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
-    if (!clientId) {
-        return res.status(500).send("Server missing SPOTIFY_CLIENT_ID environment variable.");
-    }
-    
-    const redirectUri = encodeURIComponent(`${req.protocol}://${req.get('host')}/`);
-    // Requests access to read private and collaborative playlists
-    res.redirect(`https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}&scope=playlist-read-private%20playlist-read-collaborative`);
-});
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Fetch all playlists belonging to the logged-in user
-app.get('/api/playlists', async (req, res) => {
-    const userToken = req.headers['user-token'];
-    if (!userToken) return res.status(401).json({ error: "Missing access token" });
+    if (!clientId || !clientSecret) {
+        console.log("[WARNING] Spotify API credentials are missing in Render environment settings.");
+        return;
+    }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=20', {
-            headers: { 'Authorization': `Bearer ${userToken}` }
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials'
         });
 
-        if (!response.ok) return res.status(response.status).json({ error: "Spotify API error" });
         const data = await response.json();
-        
-        const formatted = (data.items || []).map(p => ({
-            id: p.id,
-            name: p.name,
-            trackCount: p.tracks?.total || 0,
-            artwork: p.images?.[0]?.url || 'https://picsum.photos/100'
-        }));
-        res.json(formatted);
+        if (data.access_token) {
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Successfully fetched live access token.");
+        } else {
+            console.log("[SPOTIFY ERROR] Authentication failed:", data);
+        }
     } catch (err) {
-        res.status(500).json({ error: "Server failed to fetch playlists" });
+        console.error("[SPOTIFY CRITICAL ERROR]:", err.message);
     }
+}
+
+setInterval(getSpotifyToken, 1000 * 60 * 50);
+
+// -------------------------------------------------------------
+// GET & POST ENDPOINTS
+// -------------------------------------------------------------
+
+app.get('/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
+    });
 });
 
-// Fetch songs inside a chosen playlist
-app.get('/api/playlists/:id/tracks', async (req, res) => {
-    const userToken = req.headers['user-token'];
-    const playlistId = req.params.id;
-    if (!userToken) return res.status(401).json({ error: "Missing access token" });
-
-    try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
-            headers: { 'Authorization': `Bearer ${userToken}` }
-        });
-
-        if (!response.ok) return res.status(response.status).json({ error: "Spotify API error" });
-        const data = await response.json();
-
-        const cleanTracks = (data.items || [])
-            .filter(item => item.track !== null)
-            .map(item => {
-                const t = item.track;
-                return {
-                    id: t.id,
-                    name: t.name,
-                    artist: t.artists.map(a => a.name).join(', '),
-                    artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48'
-                };
-            });
-
-        res.json(cleanTracks);
-    } catch (err) {
-        res.status(500).json({ error: "Server failed to compile tracks" });
-    }
-});
-
-// Global Search Endpoint using the user's login token
 app.get('/api/search', async (req, res) => {
-    const userToken = req.headers['user-token'];
     const query = req.query.q;
-    if (!userToken) return res.status(401).json({ error: "Missing access token" });
     if (!query) return res.json({ tracks: [] });
 
+    if (!spotifyAccessToken) {
+        return res.status(500).json({ error: "Token uninitialized." });
+    }
+
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=15`, {
-            headers: { 'Authorization': `Bearer ${userToken}` }
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
-        
-        if (!response.ok) return res.status(response.status).json({ error: "Search failed" });
         const data = await response.json();
         
         const tracks = (data.tracks?.items || []).map(track => ({
@@ -113,22 +88,8 @@ app.get('/api/search', async (req, res) => {
         
         res.json({ tracks });
     } catch (err) {
-        res.status(500).json({ error: "Search crashed" });
+        res.status(500).json({ error: "Search failed" });
     }
-});
-
-// -------------------------------------------------------------
-// USER REQUESTS & ADMIN OVERRIDES (100% UNTOUCHED)
-// -------------------------------------------------------------
-
-app.get('/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history: playedHistory
-    });
 });
 
 app.post('/api/request', (req, res) => {
@@ -201,4 +162,7 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => console.log(`[SERVER] Running request interface on port ${PORT}`));
+app.listen(PORT, async () => {
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    await getSpotifyToken();
+});
