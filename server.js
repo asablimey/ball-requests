@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY (Client Credentials)
+// 🌐 LIVE SPOTIFY API TOKEN (Client Credentials Flow for public search)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -99,7 +99,7 @@ app.get('/api/playlists', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -124,7 +124,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         return res.status(401).json({ error: "No user token provided." });
     }
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists/' + req.params.id + '/tracks?limit=50', {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${req.params.id}/tracks?limit=50`, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
@@ -175,7 +175,7 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists/search?q=' + encodeURIComponent(query) + '&type=track&limit=10', {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
