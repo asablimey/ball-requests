@@ -147,10 +147,24 @@
 
     <script>
         let requestsAllowed = true;
+        // 🔒 Read or prompt for admin password entry on load
+        let adminPassword = localStorage.getItem('dj_admin_password');
+        if (!adminPassword) {
+            adminPassword = prompt("Enter Administrative Access Password:");
+            localStorage.setItem('dj_admin_password', adminPassword);
+        }
 
         async function updateDashboard() {
             try {
-                const res = await fetch('/api/admin/data');
+                const res = await fetch('/api/admin/data', {
+                    headers: { 'Authorization': adminPassword }
+                });
+                if (res.status === 401) {
+                    alert("Unauthorized password credential. Resetting entry prompt.");
+                    localStorage.removeItem('dj_admin_password');
+                    window.location.reload();
+                    return;
+                }
                 if (!res.ok) return;
                 const data = await res.json();
                 
@@ -199,7 +213,10 @@
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': adminPassword
+                },
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
@@ -209,7 +226,10 @@
         async function triggerAction(id, action) {
             await fetch('/api/admin/action', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': adminPassword
+                },
                 body: JSON.stringify({ id, action })
             });
             updateDashboard();
@@ -219,7 +239,10 @@
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': adminPassword
+                    },
                     body: JSON.stringify({ id: null, action: actionType })
                 });
                 updateDashboard();
@@ -229,7 +252,10 @@
         async function toggleRequests() {
             await fetch('/api/admin/toggle', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': adminPassword
+                },
                 body: JSON.stringify({ allow: !requestsAllowed })
             });
             updateDashboard();
