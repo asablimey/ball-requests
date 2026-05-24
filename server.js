@@ -13,7 +13,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// // Global DJ Settings (Editable from Admin Panel)
+// Global DJ Settings (Editable from Admin Panel)
 let maxCredits = 3;             // Default max credits a user can hold
 let countdownLength = 60;       // Default countdown time in seconds to earn 1 credit back
 let requestsAllowed = true;
@@ -47,7 +47,7 @@ async function refreshSpotifyToken() {
 }
 
 // 🔐 PASSWORD PROTECTED ADMIN ROUTE
-app.get('/admin.html', (req, res) => {
+app.get('/dashboard', (req, res) => {
     if (req.query.password === ADMIN_PASSWORD) {
         res.sendFile(path.join(__dirname, 'public', 'admin.html'));
     } else {
