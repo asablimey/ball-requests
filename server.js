@@ -63,13 +63,13 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Pointing to official api.spotify.com URL
+// 🟢 FIXED: Using official Spotify endpoint to fetch playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
             headers: { 'Authorization': `Bearer ${userToken}` }
         });
         const data = await response.json();
@@ -79,7 +79,7 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Pointing to official api.spotify.com endpoint with working template string
+// 🟢 FIXED: Using official Spotify endpoint to fetch tracks from a chosen playlist
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -110,6 +110,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
 // CHANNELS: GLOBAL ANONYMOUS SEARCH & APP RULES
 // -------------------------------------------------------------
 
+// 🟢 FIXED: Using official Spotify endpoint to process public global track queries
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
