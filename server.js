@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// 🌐 USE OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY
+// Keep your working Client Credentials routine intact
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -52,7 +52,88 @@ async function getSpotifyToken() {
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// GET & POST ENDPOINTS
+// NEW ADDITION: SPOTIFY USER CONNECT & CALLBACK OAUTH FLOW
+// -------------------------------------------------------------
+const REDIRECT_URI = process.env.REDIRECT_URI || 'https://song-requests-gnzd.onrender.com/callback';
+
+app.get('/api/login', (req, res) => {
+    const scopes = 'playlist-read-private playlist-read-collaborative';
+    res.redirect('https://accounts.spotify.com/authorize' +
+        '?response_type=code' +
+        '&client_id=' + process.env.SPOTIFY_CLIENT_ID +
+        (scopes ? '&scope=' + encodeURIComponent(scopes) : '') +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
+});
+
+app.get('/callback', async (req, res) => {
+    const code = req.query.code || null;
+    if (!code) return res.redirect('/?error=auth_failed');
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(process.env.SPOTIFY_CLIENT_ID + ':' + process.env.SPOTIFY_CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=authorization_code&code=' + code + '&redirect_uri=' + encodeURIComponent(REDIRECT_URI)
+        });
+
+        const data = await response.json();
+        if (data.access_token) {
+            res.redirect('/?access_token=' + data.access_token);
+        } else {
+            res.redirect('/?error=token_failed');
+        }
+    } catch (err) {
+        res.redirect('/?error=server_error');
+    }
+});
+
+// -------------------------------------------------------------
+// NEW ADDITION: PLAYLIST & TRACK FETCH ENDPOINTS
+// -------------------------------------------------------------
+app.get('/api/playlists', async (req, res) => {
+    const userToken = req.headers['user-token'];
+    if (!userToken || userToken === "null" || userToken === "undefined") {
+        return res.status(401).json({ error: "No user token provided." });
+    }
+    try {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+            headers: { 'Authorization': 'Bearer ' + userToken }
+        });
+        const data = await response.json();
+        res.json(data.items || []);
+    } catch (err) {
+        res.status(500).json({ error: "Failed fetching playlists." });
+    }
+});
+
+app.get('/api/playlists/:id/tracks', async (req, res) => {
+    const userToken = req.headers['user-token'];
+    if (!userToken || userToken === "null" || userToken === "undefined") {
+        return res.status(401).json({ error: "No user token provided." });
+    }
+    try {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists/' + req.params.id + '/tracks?limit=50', {
+            headers: { 'Authorization': 'Bearer ' + userToken }
+        });
+        const data = await response.json();
+        const items = data.items || [];
+        const tracks = items.filter(i => i && i.track).map(item => ({
+            id: item.track.id,
+            name: item.track.name,
+            artist: item.track.artists ? item.track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+            artwork: item.track.album?.images[0]?.url || 'https://picsum.photos/48'
+        }));
+        res.json(tracks);
+    } catch (err) {
+        res.status(500).json({ error: "Failed fetching tracks." });
+    }
+});
+
+// -------------------------------------------------------------
+// GET & POST ENDPOINTS (Your working items with fixed search string)
 // -------------------------------------------------------------
 
 app.get('/data', (req, res) => {
@@ -69,13 +150,20 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
-    if (!spotifyAccessToken) {
+    // Use user-token if logged in, fallback to client credentials token
+    let token = req.headers['user-token'];
+    if (!token || token === "null" || token === "undefined") {
+        token = spotifyAccessToken;
+    }
+
+    if (!token) {
         return res.status(500).json({ error: "Token uninitialized." });
     }
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        // FIXED: String interpolation typo changed to secure concatenation format
+        const response = await fetch('https://api.spotify.com/v1/me/playlists/search?q=' + encodeURIComponent(query) + '&type=track&limit=10', {
+            headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
         
