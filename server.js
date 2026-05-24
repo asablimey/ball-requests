@@ -17,7 +17,7 @@ let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
 
-// Keep your working Client Credentials routine intact
+// 🌐 OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY (Client Credentials)
 async function getSpotifyToken() {
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -52,7 +52,7 @@ async function getSpotifyToken() {
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// NEW ADDITION: SPOTIFY USER CONNECT & CALLBACK OAUTH FLOW
+// SPOTIFY CONNECT (USER OAUTH FLOW) ENDPOINTS
 // -------------------------------------------------------------
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://song-requests-gnzd.onrender.com/callback';
 
@@ -91,7 +91,7 @@ app.get('/callback', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// NEW ADDITION: PLAYLIST & TRACK FETCH ENDPOINTS
+// USER PLAYLISTS & TRACKS DATA EXTRACTION ENDPOINTS
 // -------------------------------------------------------------
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
@@ -103,8 +103,17 @@ app.get('/api/playlists', async (req, res) => {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
-        res.json(data.items || []);
+        
+        const items = (data.items || []).map(p => ({
+            id: p.id,
+            name: p.name || 'Untitled Playlist',
+            trackCount: p.tracks?.total || 0,
+            artwork: p.images?.[0]?.url || 'https://picsum.photos/48'
+        }));
+        
+        res.json(items);
     } catch (err) {
+        console.error("Playlist fetch error:", err);
         res.status(500).json({ error: "Failed fetching playlists." });
     }
 });
@@ -120,22 +129,28 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
         });
         const data = await response.json();
         const items = data.items || [];
-        const tracks = items.filter(i => i && i.track).map(item => ({
-            id: item.track.id,
-            name: item.track.name,
-            artist: item.track.artists ? item.track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
-            artwork: item.track.album?.images[0]?.url || 'https://picsum.photos/48'
-        }));
+        
+        const tracks = items
+            .filter(item => item && item.track)
+            .map(item => {
+                const t = item.track;
+                return {
+                    id: t.id || Math.random().toString(36).substr(2, 9),
+                    name: t.name || 'Unknown Track',
+                    artist: t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+                    artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48'
+                };
+            });
         res.json(tracks);
     } catch (err) {
+        console.error("Tracks fetch error:", err);
         res.status(500).json({ error: "Failed fetching tracks." });
     }
 });
 
 // -------------------------------------------------------------
-// GET & POST ENDPOINTS (Your working items with fixed search string)
+// CORE GET & POST ENDPOINTS
 // -------------------------------------------------------------
-
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
@@ -150,7 +165,6 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
-    // Use user-token if logged in, fallback to client credentials token
     let token = req.headers['user-token'];
     if (!token || token === "null" || token === "undefined") {
         token = spotifyAccessToken;
@@ -161,7 +175,6 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        // FIXED: String interpolation typo changed to secure concatenation format
         const response = await fetch('https://api.spotify.com/v1/me/playlists/search?q=' + encodeURIComponent(query) + '&type=track&limit=10', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
@@ -202,6 +215,9 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
+// -------------------------------------------------------------
+// ADMIN OVERRIDE ENDPOINTS
+// -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
