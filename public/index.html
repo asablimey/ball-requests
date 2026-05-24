@@ -11,6 +11,7 @@
             --panel-bg: #181818;
             --card-bg: #242424;
             --text-muted: #a7a7a7;
+            --red-action: #e91429;
         }
 
         body {
@@ -29,7 +30,6 @@
             max-width: 480px;
         }
 
-        /* 🟢 Subtle Green Left Accent Border for Title */
         h2 {
             font-weight: 800; 
             letter-spacing: -0.5px; 
@@ -38,7 +38,6 @@
             padding-left: 10px;
         }
 
-        /* 🟢 Top Border Accent Line Added to Status Card */
         .status-card {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -52,8 +51,6 @@
         }
 
         .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
-        
-        /* 🟢 Turned numbers green to draw the eye */
         .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
         .search-box {
@@ -85,6 +82,20 @@
         .track-details img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
         .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
         .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
+
+        /* Explicit E indicator badge layout styling */
+        .explicit-badge {
+            background-color: var(--red-action);
+            color: white;
+            font-size: 0.65rem;
+            font-weight: 900;
+            padding: 2px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 1;
+        }
 
         .req-btn {
             background-color: var(--spotify-green);
@@ -205,16 +216,32 @@
                     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
                     const data = await res.json();
                     
-                    document.getElementById('results-list').innerHTML = data.tracks.map(track => `
-                        <div class="track-row">
+                    const container = document.getElementById('results-list');
+                    container.innerHTML = ''; 
+
+                    data.tracks.forEach((track, index) => {
+                        const row = document.createElement('div');
+                        row.className = 'track-row';
+                        row.innerHTML = `
                             <div class="track-details">
                                 <img src="${track.artwork}">
-                                <div><p class="track-title">${track.name}</p><p class="track-artist">${track.artist}</p></div>
+                                <div>
+                                    <p class="track-title">
+                                        ${track.name}
+                                        ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                    </p>
+                                    <p class="track-artist">${track.artist}</p>
+                                </div>
                             </div>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '&quot;')})">Request</button>
-                        </div>
-                    `).join('');
-                } catch (e) { console.log("Search error."); }
+                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''}>Request</button>
+                        `;
+                        
+                        const btn = row.querySelector('.req-btn');
+                        btn.addEventListener('click', () => submitRequest(track));
+                        container.appendChild(row);
+                    });
+
+                } catch (e) { console.log("Search error.", e); }
             }, 300);
         }
 
