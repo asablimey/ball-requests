@@ -22,6 +22,71 @@
             margin: 0; 
         }
 
+        /* 🔒 PASSWORD LOCK OVERLAY STYLES */
+        #admin-lock-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: var(--spotify-black);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .lock-container {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            max-width: 320px;
+            width: 100%;
+        }
+
+        .lock-container h2 {
+            margin-top: 0;
+            color: white;
+            font-size: 1.6rem;
+            margin-bottom: 20px;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .lock-input {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 12px;
+            color: white;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            outline: none;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        .lock-input:focus { border-color: var(--spotify-green); }
+
+        .lock-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1rem;
+        }
+        .lock-btn:hover { filter: brightness(1.1); }
+        .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
+
+        /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -33,7 +98,6 @@
 
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
 
-        /* Configuration Controls Widget */
         .config-dashboard {
             background-color: var(--panel-bg);
             border: 1px solid #282828;
@@ -91,7 +155,7 @@
         .lists-container { display: flex; gap: 30px; flex-wrap: wrap; }
         .panel { flex: 1; min-width: 340px; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; }
 
-        h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
+        .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
         .song-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c; }
         .song-details { display: flex; align-items: center; gap: 16px; }
@@ -112,6 +176,16 @@
     </style>
 </head>
 <body>
+
+    <div id="admin-lock-screen">
+        <div class="lock-container">
+            <h2>Enter DJ Password</h2>
+            <input type="password" id="password-input" class="lock-input" placeholder="••••••••" onkeydown="if(event.key === 'Enter') verifyPassword()">
+            <button class="lock-btn" onclick="verifyPassword()">Unlock Dashboard</button>
+            <div id="lock-error-msg" class="lock-error">Incorrect password. Access denied.</div>
+        </div>
+    </div>
+
     <div class="header">
         <h1>DJ Master Control</h1>
         <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
@@ -147,8 +221,30 @@
 
     <script>
         let requestsAllowed = true;
+        let isAuthorized = false; // Prevents background fetch before checking pass
+
+        // 🔒 PASSWORD SECURITY CHECK
+        function verifyPassword() {
+            const inputField = document.getElementById('password-input');
+            const errorMsg = document.getElementById('lock-error-msg');
+            
+            // 🔑 Confirmed System Password
+            const masterPassword = "ballDJ2026"; 
+
+            if (inputField.value === masterPassword) {
+                isAuthorized = true;
+                document.getElementById('admin-lock-screen').style.display = 'none';
+                updateDashboard(); // Run immediately upon validation
+            } else {
+                errorMsg.style.display = 'block';
+                inputField.value = '';
+                inputField.focus();
+            }
+        }
 
         async function updateDashboard() {
+            if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+            
             try {
                 const res = await fetch('/api/admin/data');
                 if (!res.ok) return;
@@ -194,6 +290,7 @@
         }
 
         async function saveSystemRules() {
+            if (!isAuthorized) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
 
@@ -207,6 +304,7 @@
         }
 
         async function triggerAction(id, action) {
+            if (!isAuthorized) return;
             await fetch('/api/admin/action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -216,6 +314,7 @@
         }
 
         async function clearSystem(actionType, message) {
+            if (!isAuthorized) return;
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
@@ -227,6 +326,7 @@
         }
 
         async function toggleRequests() {
+            if (!isAuthorized) return;
             await fetch('/api/admin/toggle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -235,8 +335,12 @@
             updateDashboard();
         }
 
+        // Lock screen focus on setup load
+        window.onload = () => {
+            document.getElementById('password-input').focus();
+        };
+
         setInterval(updateDashboard, 3000);
-        updateDashboard();
     </script>
 </body>
 </html>
