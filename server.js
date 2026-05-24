@@ -10,9 +10,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Dynamically sets the redirect path to avoid any mismatch config errors
-const REDIRECT_URI = `https://song-requests-gnzd.onrender.com/api/callback`;
-
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
@@ -29,8 +26,12 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
+// Background token generator - authenticates the app itself directly
 async function getSpotifyToken() {
-    if (!CLIENT_ID || !CLIENT_SECRET) return;
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+        console.error("[SPOTIFY] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET in environment variables.");
+        return;
+    }
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
@@ -41,75 +42,33 @@ async function getSpotifyToken() {
             body: 'grant_type=client_credentials'
         });
         const data = await response.json();
-        if (data.access_token) spotifyAccessToken = data.access_token;
+        if (data.access_token) {
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Master API access token refreshed successfully.");
+        } else {
+            console.error("[SPOTIFY] Failed to fetch token:", data);
+        }
     } catch (err) {
-        console.error("Token error:", err.message);
+        console.error("[SPOTIFY] Auth error:", err.message);
     }
 }
+// Automatically refresh the master token every 50 minutes
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// SPOTIFY AUTHENTICATION
+// USER SEARCH API (Uses Master Token)
 // -------------------------------------------------------------
-app.get('/api/login', (req, res) => {
-    const scope = 'playlist-read-private playlist-read-collaborative';
-    res.redirect('https://accounts.spotify.com/authorize?' +
-        new URLSearchParams({
-            response_type: 'code',
-            client_id: CLIENT_ID,
-            scope: scope,
-            redirect_uri: REDIRECT_URI
-        }).toString());
-});
-
-app.get('/api/callback', async (req, res) => {
-    const code = req.query.code || null;
-    try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                code: code,
-                redirect_uri: REDIRECT_URI,
-                grant_type: 'authorization-code'
-            }).toString()
-        });
-        const data = await response.json();
-        
-        if (data.access_token) {
-            res.redirect(`/#access_token=${data.access_token}`);
-        } else {
-            res.redirect('/?error=auth_failed');
-        }
-    } catch (err) {
-        res.redirect('/?error=server_error');
-    }
-});
-
-// -------------------------------------------------------------
-// CORE DATA API
-// -------------------------------------------------------------
-app.get('/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history: playedHistory
-    });
-});
-
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
-    const userToken = req.headers['user-token'] || spotifyAccessToken;
-    if (!query || !userToken) return res.json({ tracks: [] });
+    if (!query) return res.json({ tracks: [] });
+    
+    if (!spotifyAccessToken) {
+        await getSpotifyToken(); 
+    }
 
     try {
         const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
-            headers: { 'Authorization': `Bearer ${userToken}` }
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
         const tracks = (data.tracks?.items || []).map(track => ({
@@ -122,7 +81,7 @@ app.get('/api/search', async (req, res) => {
         }));
         res.json({ tracks });
     } catch (err) {
-        res.status(500).json({ error: "Search failed" });
+        res.status(500).json({ error: "Search feature unavailable" });
     }
 });
 
@@ -146,6 +105,16 @@ app.post('/api/request', (req, res) => {
         });
     }
     res.json({ success: true });
+});
+
+app.get('/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
+    });
 });
 
 // -------------------------------------------------------------
