@@ -136,7 +136,7 @@
         }
 
         .track-details { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
-        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; flex-shrink: 0; flex-shrink: 0; }
         .track-meta-text { min-width: 0; overflow: hidden; }
         .track-title { font-weight: 700; margin: 0; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -209,7 +209,6 @@
         const urlParams = new URLSearchParams(window.location.search);
         let userAccessToken = urlParams.get('access_token');
         
-        // Ensure string cleaning to prevent literal 'null' text evaluations
         if (userAccessToken && userAccessToken !== "null" && userAccessToken !== "undefined") {
             localStorage.setItem('dj_spotify_user_token', userAccessToken);
             window.history.replaceState({}, document.title, "/");
@@ -321,15 +320,22 @@
                     return;
                 }
                 
-                savedPlaylistsHTML = playlists.map(pl => `
-                    <div class="playlist-row-item" onclick="loadPlaylistTracks('${pl.id}', '${pl.name.replace(/'/g, "\\'")}')">
-                        <img src="${pl.images?.[0]?.url || 'https://picsum.photos/150'}">
-                        <div class="playlist-info-meta">
-                            <p class="playlist-name">${pl.name}</p>
-                            <p class="playlist-tracks-count">${pl.tracks?.total || 0} Tracks</p>
+                savedPlaylistsHTML = playlists.map(pl => {
+                    const plId = pl.id || '';
+                    const plName = pl.name || 'Untitled Playlist';
+                    const imgUrl = pl.artwork || pl.images?.[0]?.url || 'https://picsum.photos/150';
+                    const totalTracks = pl.tracks?.total || pl.total || 0;
+                    
+                    return `
+                        <div class="playlist-row-item" onclick="loadPlaylistTracks('${plId}', '${plName.replace(/'/g, "\\'")}')">
+                            <img src="${imgUrl}">
+                            <div class="playlist-info-meta">
+                                <p class="playlist-name">${plName}</p>
+                                <p class="playlist-tracks-count">${totalTracks} Tracks</p>
+                            </div>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
                 
                 targetList.innerHTML = savedPlaylistsHTML;
             } catch(e) { 
@@ -387,7 +393,7 @@
                     });
                     const data = await res.json();
                     if (document.getElementById('search-input').value.trim() !== "") {
-                        document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(data.tracks || []);
+                        document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(data.tracks || data || []);
                     }
                 } catch (e) { console.log("Search error."); }
             }, 300);
