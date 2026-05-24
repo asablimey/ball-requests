@@ -21,7 +21,7 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 
-// Your original working token generator
+// Standard Client Credentials Token for Anonymous Search
 async function getClientCredentialsToken() {
     try {
         const authRes = await fetch('https://accounts.spotify.com/api/token', {
@@ -35,10 +35,12 @@ async function getClientCredentialsToken() {
         const authData = await authRes.json();
         return authData.access_token || null;
     } catch (err) {
+        console.error("Error fetching client credentials token:", err);
         return null;
     }
 }
 
+// Standard Spotify OAuth Authorization Link
 app.get('/api/login', (req, res) => {
     const scopes = 'playlist-read-private playlist-read-collaborative';
     res.redirect('https://accounts.spotify.com/authorize' +
@@ -48,6 +50,7 @@ app.get('/api/login', (req, res) => {
         '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
 });
 
+// Standard OAuth Callback
 app.get('/callback', async (req, res) => {
     const code = req.query.code || null;
     if (!code) return res.redirect('/?error=auth_failed');
@@ -77,7 +80,7 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// Fetch user playlists
+// Official Endpoint: Fetch User Playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken || userToken === "null" || userToken === "undefined") {
@@ -85,18 +88,17 @@ app.get('/api/playlists', async (req, res) => {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
-        const playlists = Array.isArray(data) ? data : (data.items || []);
-        res.json(playlists);
+        res.json(data.items || []);
     } catch (err) {
         res.status(500).json({ error: "Failed fetching playlists." });
     }
 });
 
-// Fetch tracks from a specific playlist
+// Official Endpoint: Fetch Tracks Inside a Playlist
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -105,31 +107,31 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/$$/${playlistId}/tracks?limit=50`, {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         
-        // Supports nested items arrays or flat objects
-        const rawItems = Array.isArray(data) ? data : (data.items || data.tracks || []);
-        
-        const tracks = rawItems.map(item => {
-            const track = item.track || item;
-            return {
-                id: track.id || Math.random().toString(),
-                name: track.name || 'Unknown Track',
-                artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
-                artwork: track.artwork || (track.album?.images?.[0]?.url) || 'https://picsum.photos/48'
-            };
-        });
+        const items = data.items || [];
+        const tracks = items
+            .filter(item => item && item.track) // Filter out empty or deleted tracks
+            .map(item => {
+                const track = item.track;
+                return {
+                    id: track.id,
+                    name: track.name,
+                    artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+                    artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48'
+                };
+            });
 
         res.json(tracks);
     } catch (err) {
-        res.status(500).json({ error: "Failed fetching tracks." });
+        res.status(500).json({ error: "Failed fetching playlist tracks." });
     }
 });
 
-// REVERTED: Your original, working search endpoint before the updates
+// Official Endpoint: Global Search API
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -144,20 +146,17 @@ app.get('/api/search', async (req, res) => {
             return res.status(500).json({ error: "Could not authorize search request." });
         }
 
-        // Restored your working search path structure
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$$?q=${encodeURIComponent(query)}&type=track&limit=15`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=15`, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
         
-        // Safe mapping that works with your server's exact structure
-        const items = data.tracks?.items || data.items || (Array.isArray(data) ? data : []);
-        
+        const items = data.tracks?.items || [];
         const tracks = items.map(track => ({
-            id: track.id || Math.random().toString(),
-            name: track.name || 'Unknown Track',
-            artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
-            artwork: track.artwork || (track.album?.images?.[0]?.url) || 'https://picsum.photos/48'
+            id: track.id,
+            name: track.name,
+            artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+            artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48'
         }));
         
         res.json({ tracks });
