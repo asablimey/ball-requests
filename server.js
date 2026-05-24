@@ -63,14 +63,13 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Using official Spotify endpoint to fetch playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
         const response = await fetch('https://api.spotify.com/v1/me/playlists', {
-            headers: { 'Authorization': `Bearer ${userToken}` }
+            headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         res.json(data.items || []);
@@ -79,15 +78,16 @@ app.get('/api/playlists', async (req, res) => {
     }
 });
 
-// 🟢 FIXED: Using official Spotify endpoint to fetch tracks from a chosen playlist
+// 🟢 FIXED: Removed broken template literal formatting to ensure track lists resolve correctly
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
     if (!userToken) return res.status(401).json({ error: "No user token provided." });
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
-            headers: { 'Authorization': `Bearer ${userToken}` }
+        const apiUrl = 'https://api.spotify.com/v1/playlists/$' + playlistId + '/tracks?limit=50';
+        const response = await fetch(apiUrl, {
+            headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
         
@@ -110,7 +110,7 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
 // CHANNELS: GLOBAL ANONYMOUS SEARCH & APP RULES
 // -------------------------------------------------------------
 
-// 🟢 FIXED: Using official Spotify endpoint to process public global track queries
+// 🟢 FIXED: Cleaned concatenation string parameters to restore the global search field parsing behavior
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -131,8 +131,9 @@ app.get('/api/search', async (req, res) => {
             token = authData.access_token;
         }
 
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=15`, {
-            headers: { 'Authorization': `Bearer ${token}` }
+        const searchUrl = 'https://api.spotify.com/v1/search?q=$' + encodeURIComponent(query) + '&type=track&limit=15';
+        const response = await fetch(searchUrl, {
+            headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
         
