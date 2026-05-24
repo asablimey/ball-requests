@@ -28,8 +28,7 @@ const ADMIN_PASSWORD = "ballDJ2026";
 // INTERNAL FUNCTION: Request fresh access token from Spotify API
 async function refreshSpotifyToken() {
     try {
-        // ✅ FIXED: Using proper proxy string interpolation format
-        const response = await fetch('http://googleusercontent.com/spotify.com/api/token', {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -47,11 +46,6 @@ async function refreshSpotifyToken() {
     }
 }
 
-// 🔐 PASSWORD PROTECTED ADMIN ROUTE
-app.get('/admin.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
 // --- API ENDPOINTS FOR THE APP ---
 
 // Search Tracks via Spotify API
@@ -62,8 +56,7 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await refreshSpotifyToken();
 
     try {
-        // ✅ FIXED: Added the missing '$' before the bracket so template literal works
-        const response = await fetch(`http://googleusercontent.com/spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         
@@ -117,7 +110,7 @@ app.get('/api/user-status', (req, res) => {
         timeRemaining = countdownLength - (Math.floor((now - user.lastRegen) / 1000) % countdownLength);
     }
     
-    res.json({ credits: user.credits, timeRemaining, maxCredits, countdownLength, requestsAllowed, configs: { maxCredits, countdownLength, requestsAllowed } });
+    res.json({ credits: user.credits, timeRemaining, maxCredits, countdownLength, requestsAllowed });
 });
 
 // Submit a Request
@@ -139,16 +132,7 @@ app.post('/api/request', (req, res) => {
         userBanks[userIp].lastRegen = Date.now();
     }
     
-    queue.push({ 
-        ...track, 
-        name: track.name || track.title,
-        title: track.title || track.name,
-        albumArt: track.albumArt || track.artwork,
-        artwork: track.artwork || track.albumArt,
-        votes: 1, 
-        id: track.id, 
-        timestamp: Date.now() 
-    });
+    queue.push({ ...track, votes: 1, id: track.id, timestamp: Date.now() });
     res.json({ success: true });
 });
 
@@ -183,24 +167,4 @@ app.post('/api/admin/remove', (req, res) => {
     
     const index = queue.findIndex(item => item.id === trackId);
     if (index !== -1) {
-        const removedTrack = queue.splice(index, 1)[0];
-        if (played) {
-            history.unshift(removedTrack);
-            if (history.length > 20) history.pop();
-        }
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/admin/clear-queue', (req, res) => {
-    const { password } = req.body;
-    if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
-    queue = [];
-    res.json({ success: true });
-});
-
-// Start the live server hook
-app.listen(PORT, () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
-    refreshSpotifyToken();
-});
+        const removed
