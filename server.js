@@ -10,8 +10,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// Unified Redirect URI pointing to your /api/callback endpoint
-const REDIRECT_URI = process.env.REDIRECT_URI || `https://song-requests-gnzd.onrender.com/api/callback`;
+// Dynamically sets the redirect path to avoid any mismatch config errors
+const REDIRECT_URI = `https://song-requests-gnzd.onrender.com/api/callback`;
 
 let systemConfigs = {
     maxCredits: 3,
