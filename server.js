@@ -7,11 +7,6 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const ADMIN_PASSWORD = "ballDJ2026";
-const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
-const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI || 'https://song-requests-gnzd.onrender.com/callback';
-
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
@@ -20,147 +15,45 @@ let systemConfigs = {
 
 let activeQueue = [];
 let playedHistory = [];
+let spotifyAccessToken = "";
 
-async function getClientCredentialsToken() {
-    try {
-        const authRes = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({ grant_type: 'client_credentials' })
-        });
-        const authData = await authRes.json();
-        return authData.access_token || null;
-    } catch (err) {
-        return null;
+// 🌐 USE OFFICIAL ACCOUNTS TIMEOUT ENDPOINT FOR SPOTIFY
+async function getSpotifyToken() {
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+        console.log("[WARNING] Spotify API credentials are missing in Render environment settings.");
+        return;
     }
-}
-
-app.get('/api/login', (req, res) => {
-    const scopes = 'playlist-read-private playlist-read-collaborative';
-    res.redirect('https://accounts.spotify.com/authorize' +
-        '?response_type=code' +
-        '&client_id=' + CLIENT_ID +
-        (scopes ? '&scope=' + encodeURIComponent(scopes) : '') +
-        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
-});
-
-app.get('/callback', async (req, res) => {
-    const code = req.query.code || null;
-    if (!code) return res.redirect('/?error=auth_failed');
 
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: new URLSearchParams({
-                code: code,
-                redirect_uri: REDIRECT_URI,
-                grant_type: 'authorization_code'
-            })
+            body: 'grant_type=client_credentials'
         });
 
         const data = await response.json();
         if (data.access_token) {
-            res.redirect('/?access_token=' + data.access_token);
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Successfully fetched live access token.");
         } else {
-            res.redirect('/?error=token_failed');
+            console.log("[SPOTIFY ERROR] Authentication failed:", data);
         }
     } catch (err) {
-        res.redirect('/?error=server_error');
+        console.error("[SPOTIFY CRITICAL ERROR]:", err.message);
     }
-});
+}
 
-// Fetch user playlists
-app.get('/api/playlists', async (req, res) => {
-    const userToken = req.headers['user-token'];
-    if (!userToken || userToken === "null" || userToken === "undefined") {
-        return res.status(401).json({ error: "No user token provided." });
-    }
+setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-    try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
-            headers: { 'Authorization': 'Bearer ' + userToken }
-        });
-        const data = await response.json();
-        const playlists = Array.isArray(data) ? data : (data.items || []);
-        res.json(playlists);
-    } catch (err) {
-        res.status(500).json({ error: "Failed fetching playlists." });
-    }
-});
-
-// Fetch tracks from playlist (Fixed string concatenation)
-app.get('/api/playlists/:id/tracks', async (req, res) => {
-    const playlistId = req.params.id;
-    const userToken = req.headers['user-token'];
-    if (!userToken || userToken === "null" || userToken === "undefined") {
-        return res.status(401).json({ error: "No user token provided." });
-    }
-
-    try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists/' + playlistId + '/tracks?limit=50', {
-            headers: { 'Authorization': 'Bearer ' + userToken }
-        });
-        const data = await response.json();
-        
-        const rawItems = Array.isArray(data) ? data : (data.items || data.tracks || []);
-        
-        const tracks = rawItems.map(item => {
-            const track = item.track || item;
-            return {
-                id: track.id || Math.random().toString(),
-                name: track.name || 'Unknown Track',
-                artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
-                artwork: track.artwork || (track.album && track.album.images && track.album.images[0] ? track.album.images[0].url : 'https://picsum.photos/48')
-            };
-        });
-
-        res.json(tracks);
-    } catch (err) {
-        res.status(500).json({ error: "Failed fetching tracks." });
-    }
-});
-
-// Reverted back to your exact working string addition setup
-app.get('/api/search', async (req, res) => {
-    const query = req.query.q;
-    if (!query) return res.json({ tracks: [] });
-
-    try {
-        let token = req.headers['user-token'];
-        if (!token || token === "null" || token === "undefined") {
-            token = await getClientCredentialsToken();
-        }
-
-        if (!token) {
-            return res.status(500).json({ error: "Could not authorize search request." });
-        }
-
-        const response = await fetch('https://api.spotify.com/v1/me/playlists/search?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        const data = await response.json();
-        
-        const items = data.tracks && data.tracks.items ? data.tracks.items : (data.items || (Array.isArray(data) ? data : []));
-        
-        const tracks = items.map(track => ({
-            id: track.id || Math.random().toString(),
-            name: track.name || 'Unknown Track',
-            artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
-            artwork: track.artwork || (track.album && track.album.images && track.album.images[0] ? track.album.images[0].url : 'https://picsum.photos/48')
-        }));
-        
-        res.json({ tracks });
-    } catch (err) {
-        res.status(500).json({ error: "Search failed" });
-    }
-});
+// -------------------------------------------------------------
+// GET & POST ENDPOINTS
+// -------------------------------------------------------------
 
 app.get('/data', (req, res) => {
     res.json({
@@ -172,8 +65,37 @@ app.get('/data', (req, res) => {
     });
 });
 
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [] });
+
+    if (!spotifyAccessToken) {
+        return res.status(500).json({ error: "Token uninitialized." });
+    }
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await response.json();
+        
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48'
+        }));
+        
+        res.json({ tracks });
+    } catch (err) {
+        res.status(500).json({ error: "Search failed" });
+    }
+});
+
 app.post('/api/request', (req, res) => {
-    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    if (!systemConfigs.requestsAllowed) {
+        return res.status(403).json({ error: "Submissions closed." });
+    }
     const { track } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
@@ -193,7 +115,6 @@ app.post('/api/request', (req, res) => {
 });
 
 app.get('/api/admin/data', (req, res) => {
-    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
@@ -204,7 +125,6 @@ app.get('/api/admin/data', (req, res) => {
 });
 
 app.post('/api/admin/config', (req, res) => {
-    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { maxCredits, countdownLength } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
@@ -212,14 +132,12 @@ app.post('/api/admin/config', (req, res) => {
 });
 
 app.post('/api/admin/toggle', (req, res) => {
-    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { allow } = req.body;
     if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
     res.json({ success: true });
 });
 
 app.post('/api/admin/action', (req, res) => {
-    if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     const { id, action } = req.body;
     if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
     if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
@@ -244,6 +162,7 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-    console.log('[SERVER] Ready on port ' + PORT);
+app.listen(PORT, async () => {
+    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
+    await getSpotifyToken();
 });
