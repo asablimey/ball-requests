@@ -134,16 +134,14 @@
 </head>
 <body>
 
-    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: var(--spotify-black); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
-        <div style="text-align: center;">
-            <h2 style="font-size: 28px; margin-bottom: 5px; color: white; border: none;">DJ Control Panel Locked</h2>
-            <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
-            <div style="display: flex; gap: 10px; justify-content: center;">
-                <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: var(--panel-bg); color: white; font-size: 16px; outline: none; width: 200px;">
-                <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: var(--spotify-green); color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
-            </div>
-            <p id="gate-error" style="color: var(--red-action); margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
+    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #111; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
+        <h2 style="font-size: 28px; margin-bottom: 5px;">DJ Control Panel Locked</h2>
+        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
+        <div style="display: flex; gap: 10px;">
+            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: #222; color: white; font-size: 16px; outline: none; width: 200px;">
+            <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: #1DB954; color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
         </div>
+        <p id="gate-error" style="color: #ff4d4d; margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
     </div>
 
     <div class="header">
@@ -165,6 +163,7 @@
 
     <div class="control-bar">
         <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
     <div class="lists-container">
@@ -181,6 +180,7 @@
     <script>
         const password = "ballDJ2026"; 
         let requestsAllowed = true;
+        const ADMIN_PASSWORD = "ballDJ2026";
 
         async function updateDashboard() {
             try {
@@ -199,94 +199,87 @@
                 toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
                 toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
 
-                // Render Active Queue
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
                     <div class="song-row">
                         <div class="song-details">
-                            <img src="${song.albumArt || ''}" alt="Cover">
-                            <div>
-                                <p class="song-title">${song.name}</p>
-                                <p class="song-artist">${song.artist} <span style="color:var(--spotify-green); margin-left:10px;">🔥 ${song.votes || 1}</span></p>
-                            </div>
+                            <img src="${song.artwork || song.albumArt || ''}">
+                            <div><p class="song-title">${song.title || song.name}</p><p class="song-artist">${song.artist}</p></div>
                         </div>
                         <div class="actions">
+                            <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
                             <button class="btn btn-played" onclick="removeTrack('${song.id}', true)">✔ Played</button>
                             <button class="btn btn-remove" onclick="removeTrack('${song.id}', false)">✖ Drop</button>
                         </div>
                     </div>
                 `).join('');
 
-                // Render History List
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
                     <div class="song-row history-row">
                         <div class="song-details">
-                            <img src="${song.albumArt || ''}" alt="Cover">
-                            <div>
-                                <p class="song-title">${song.name}</p>
-                                <p class="song-artist">${song.artist}</p>
-                            </div>
+                            <img src="${song.artwork || song.albumArt || ''}">
+                            <div><p class="song-title">${song.title || song.name}</p><p class="song-artist">${song.artist}</p></div>
                         </div>
                     </div>
                 `).join('');
             } catch(e) { 
-                console.log("Sync error:", e); 
+                console.log("Sync error."); 
             }
+        }
+
+        async function saveSystemRules() {
+            const maxVal = document.getElementById('input-max-credits').value;
+            const downVal = document.getElementById('input-countdown').value;
+            
+            await fetch('/api/admin/update-configs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: ADMIN_PASSWORD, configs: { maxCredits: maxVal, countdownLength: downVal, requestsAllowed } })
+            });
+            alert("System parameters updated successfully.");
+            updateDashboard();
         }
 
         async function removeTrack(trackId, played) {
             await fetch('/api/admin/remove', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password, trackId, played })
+                body: JSON.stringify({ password: ADMIN_PASSWORD, trackId, played })
             });
             updateDashboard();
         }
 
-        async function saveSystemRules() {
-            const maxVal = document.getElementById('input-max-credits').value;
-            const downVal = document.getElementById('input-countdown').value;
-
-            const configs = {
-                maxCredits: Number(maxVal),
-                countdownLength: Number(downVal),
-                requestsAllowed: requestsAllowed
-            };
-
-            await fetch('/api/admin/update-configs', {
+        async function triggerAction(id, action) {
+            await fetch('/api/admin/action', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password, configs })
-            });
-            alert("System parameters updated successfully.");
-            updateDashboard();
-        }
-
-        async function toggleRequests() {
-            const configs = {
-                maxCredits: document.getElementById('input-max-credits').value,
-                countdownLength: document.getElementById('input-countdown').value,
-                requestsAllowed: !requestsAllowed
-            };
-
-            await fetch('/api/admin/update-configs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password, configs })
+                headers: { 'Content-Type': 'application/json', 'Authorization': password },
+                body: JSON.stringify({ id, action })
             });
             updateDashboard();
         }
 
         async function clearSystem(actionType, message) {
             if (confirm(message)) {
-                await fetch('/api/admin/clear-queue', {
+                const endpoint = actionType === 'clearQueue' ? '/api/admin/clear-queue' : '/api/admin/clear-history';
+                await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password })
+                    body: JSON.stringify({ password: ADMIN_PASSWORD })
                 });
                 updateDashboard();
             }
+        }
+
+        async function toggleRequests() {
+            const maxVal = document.getElementById('input-max-credits').value;
+            const downVal = document.getElementById('input-countdown').value;
+            await fetch('/api/admin/update-configs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: ADMIN_PASSWORD, configs: { maxCredits: maxVal, countdownLength: downVal, requestsAllowed: !requestsAllowed } })
+            });
+            updateDashboard();
         }
 
         setInterval(updateDashboard, 3000);
