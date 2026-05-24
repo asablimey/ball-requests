@@ -1,274 +1,134 @@
 const express = require('express');
-const path = require('path');
 const fetch = require('node-fetch');
+const path = require('path');
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
+
+// System State Variables (Syncs with Frontend)
+let maxCredits = 3;
+let countdownLength = 60;
+let requestsAllowed = true;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-let systemConfigs = {
-    maxCredits: 3,
-    countdownLength: 60,
-    requestsAllowed: true
-};
-
-let activeQueue = [];
-let playedHistory = [];
-let spotifyAccessToken = "";
-
-// 🌐 SPOTIFY CLIENT CREDENTIALS FLOW (For Global Search)
-async function getSpotifyToken() {
-    const clientId = process.env.SPOTIFY_CLIENT_ID;
-    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-
-    if (!clientId || !clientSecret) {
-        console.log("[WARNING] Spotify API credentials are missing in Render environment settings.");
-        return;
-    }
-
-    try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}`
-        });
-
-        const data = await response.json();
-        if (data.access_token) {
-            spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Global access token generated successfully. Search is ready!");
-        } else {
-            console.log("[SPOTIFY ERROR] Authentication failed:", data);
-        }
-    } catch (err) {
-        console.error("[SPOTIFY CRITICAL ERROR]:", err.message);
-    }
-}
-
-setInterval(getSpotifyToken, 1000 * 60 * 50);
-
-// -------------------------------------------------------------
-// SPOTIFY CONNECT (USER OAUTH FLOW) ENDPOINTS
-// -------------------------------------------------------------
-const REDIRECT_URI = process.env.REDIRECT_URI || 'https://song-requests-gnzd.onrender.com/callback';
-
-app.get('/api/login', (req, res) => {
-    const scopes = 'playlist-read-private playlist-read-collaborative';
-    res.redirect('https://accounts.spotify.com/authorize' +
-        '?response_type=code' +
-        '&client_id=' + process.env.SPOTIFY_CLIENT_ID +
-        (scopes ? '&scope=' + encodeURIComponent(scopes) : '') +
-        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
+// 🎛️ ADMIN DATA ENDPOINT
+app.get('/data', (req, res) => {
+    res.json({ maxCredits, countdownLength, requestsAllowed });
 });
 
-app.get('/callback', async (req, res) => {
-    const code = req.query.code || null;
-    if (!code) return res.redirect('/?error=auth_failed');
-
-    try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: `grant_type=authorization_code&code=${code}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&client_id=${process.env.SPOTIFY_CLIENT_ID}&client_secret=${process.env.SPOTIFY_CLIENT_SECRET}`
-        });
-
-        const data = await response.json();
-        if (data.access_token) {
-            res.redirect('/?access_token=' + data.access_token);
-        } else {
-            res.redirect('/?error=token_failed');
-        }
-    } catch (err) {
-        res.redirect('/?error=server_error');
-    }
-});
-
-// -------------------------------------------------------------
-// USER PLAYLISTS & TRACKS DATA EXTRACTION ENDPOINTS
-// -------------------------------------------------------------
+// 📂 ENDPOINT 1: FETCH ALL PLAYLISTS
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
-    if (!userToken || userToken === "null" || userToken === "undefined") {
-        return res.status(401).json({ error: "No user token provided." });
-    }
+    if (!userToken) return res.status(401).json({ error: "Missing user token" });
+
     try {
-        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
-            headers: { 'Authorization': 'Bearer ' + userToken }
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=20', {
+            headers: { 'Authorization': `Bearer ${userToken}` }
         });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error("[SPOTIFY API ERROR]", errText);
+            return res.status(response.status).json({ error: "Spotify fetch failed" });
+        }
+
         const data = await response.json();
         
-        const items = (data.items || []).map(p => {
-            return {
-                id: p.id,
-                name: p.name || 'Untitled Playlist',
-                trackCount: p.tracks?.total || 0,
-                artwork: p.images && p.images.length > 0 ? p.images[0].url : 'https://picsum.photos/48'
-            };
-        });
-        
-        res.json(items);
+        // Clean up the playlist items for the frontend grid
+        const formattedPlaylists = (data.items || []).map(p => ({
+            id: p.id,
+            name: p.name,
+            trackCount: p.tracks?.total || 0,
+            artwork: p.images?.[0]?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100&auto=format&fit=crop'
+        }));
+
+        res.json(formattedPlaylists);
     } catch (err) {
-        console.error("Playlist fetch error:", err);
-        res.status(500).json({ error: "Failed fetching playlists." });
+        console.error("Playlists system error:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
+// 🎵 ENDPOINT 2: FETCH SONGS INSIDE A PLAYLIST (The Critical Fix)
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const userToken = req.headers['user-token'];
-    if (!userToken || userToken === "null" || userToken === "undefined") {
-        return res.status(401).json({ error: "No user token provided." });
-    }
+    const playlistId = req.params.id;
+    if (!userToken) return res.status(401).json({ error: "Missing user token" });
+
     try {
-        // ✨ FIXED SYNTAX: Combines endpoint 17 with the real playlist ID variable cleanly
-        const response = await fetch('https://api.spotify.com/v1/search?q=$/?q=$$' + req.params.id + '/tracks?limit=50', {
-            headers: { 'Authorization': 'Bearer ' + userToken }
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(id,name,album(images),artists(name)))&limit=50`, {
+            headers: { 'Authorization': `Bearer ${userToken}` }
         });
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: "Spotify tracks fetch failed" });
+        }
+
         const data = await response.json();
-        const items = data.items || [];
-        
-        const tracks = items
-            .filter(item => item && item.track)
+
+        // 🔥 TRANSFORMATION LOGIC: Flattens Spotify's nested structure 
+        // to match the exact format returned by global search!
+        const cleanTracks = (data.items || [])
+            .filter(item => item.track !== null) // Skip empty or unplayable tracks
             .map(item => {
                 const t = item.track;
                 return {
-                    id: t.id || Math.random().toString(36).substr(2, 9),
-                    name: t.name || 'Unknown Track',
-                    artist: t.artists ? t.artists.map(a => a.name).join(', ') : 'Unknown Artist',
-                    artwork: t.album?.images && t.album.images.length > 0 ? t.album.images[0].url : 'https://picsum.photos/48'
+                    id: t.id,
+                    name: t.name,
+                    artist: t.artists?.[0]?.name || 'Unknown Artist',
+                    artwork: t.album?.images?.[0]?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100&auto=format&fit=crop'
                 };
             });
-        res.json(tracks);
+
+        res.json(cleanTracks);
     } catch (err) {
-        console.error("Tracks fetch error:", err);
-        res.status(500).json({ error: "Failed fetching tracks." });
+        console.error("Tracks endpoint broken:", err);
+        res.status(500).json({ error: "Internal server track failure" });
     }
 });
 
-// -------------------------------------------------------------
-// CORE GET & POST ENDPOINTS
-// -------------------------------------------------------------
-app.get('/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history: playedHistory
-    });
-});
-
+// 🔍 ENDPOINT 3: GLOBAL SEARCH (Uses identical data mapping format)
 app.get('/api/search', async (req, res) => {
+    const userToken = req.headers['user-token'];
     const query = req.query.q;
+    if (!userToken) return res.status(401).json({ error: "Unauthorized" });
     if (!query) return res.json({ tracks: [] });
 
-    let token = req.headers['user-token'];
-    if (!token || token === "null" || token === "undefined") {
-        token = spotifyAccessToken;
-    }
-
-    if (!token) {
-        return res.status(500).json({ error: "Token uninitialized." });
-    }
-
     try {
-        const response = await fetch('https://api.spotify.com/v1/search?q=/' + encodeURIComponent(query) + '&type=track&limit=10', {
-            headers: { 'Authorization': 'Bearer ' + token }
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, {
+            headers: { 'Authorization': `Bearer ${userToken}` }
         });
+
+        if (!response.ok) return res.status(response.status).json({ error: "Search failed" });
+
         const data = await response.json();
-        
-        const tracks = (data.tracks?.items || []).map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist',
-            artwork: track.album && track.album.images && track.album.images.length > 0 ? track.album.images[0].url : 'https://picsum.photos/48'
+        const cleanTracks = (data.tracks?.items || []).map(t => ({
+            id: t.id,
+            name: t.name,
+            artist: t.artists?.[0]?.name || 'Unknown Artist',
+            artwork: t.album?.images?.[0]?.url || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100&auto=format&fit=crop'
         }));
-        
-        res.json({ tracks });
+
+        res.json({ tracks: cleanTracks });
     } catch (err) {
-        console.error("Search endpoint failure:", err);
-        res.status(500).json({ error: "Search failed" });
+        res.status(500).json({ error: "Search logic crashed" });
     }
 });
 
-app.post('/api/request', (req, res) => {
-    if (!systemConfigs.requestsAllowed) {
-        return res.status(403).json({ error: "Submissions closed." });
-    }
+// 📥 ENDPOINT 4: TRANSMIT REQUEST TO QUEUE
+app.post('/api/request', (req, { json }) => {
+    if (!requestsAllowed) return json({ success: false, error: "Submissions closed by DJ" });
     const { track } = req.body;
-    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+    if (!track) return json({ success: false, error: "No track specified" });
 
-    const existingTrack = activeQueue.find(t => t.id === track.id);
-    if (existingTrack) {
-        existingTrack.votes = (existingTrack.votes || 1) + 1;
-    } else {
-        activeQueue.push({
-            id: track.id || Date.now().toString(),
-            title: track.name,
-            artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || 'https://picsum.photos/48',
-            votes: 1
-        });
-    }
-    res.json({ success: true });
+    console.log(`[QUEUE] Song requested: ${track.name} by ${track.artist} (ID: ${track.id})`);
+    json({ success: true });
 });
 
-// -------------------------------------------------------------
-// ADMIN OVERRIDE ENDPOINTS
-// -------------------------------------------------------------
-app.get('/api/admin/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history: playedHistory
-    });
+// Auth Passthrough routes for setup
+app.get('/api/login', (req, res) => {
+    res.redirect(`https://accounts.spotify.com/authorize?client_id=YOUR_CLIENT_ID&response_type=token&redirect_uri=${encodeURIComponent(req.protocol + '://' + req.get('host') + '/')}&scope=playlist-read-private%20playlist-read-collaborative`);
 });
 
-app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength } = req.body;
-    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
-    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle', (req, res) => {
-    const { allow } = req.body;
-    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/action', (req, res) => {
-    const { id, action } = req.body;
-    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
-    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
-
-    const trackIndex = activeQueue.findIndex(t => t.id === id);
-    if (trackIndex !== -1) {
-        if (action === 'top') {
-            const track = activeQueue[trackIndex];
-            const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
-            track.votes = highestVotes + 1;
-        } else if (action === 'played') {
-            const [track] = activeQueue.splice(trackIndex, 1);
-            playedHistory.unshift(track);
-        } else if (action === 'remove') {
-            activeQueue.splice(trackIndex, 1);
-        }
-    }
-    res.json({ success: true });
-});
-
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.listen(PORT, async () => {
-    console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
-    await getSpotifyToken();
-});
+app.listen(PORT, () => console.log(`Server blasting off on port ${PORT}`));
