@@ -32,16 +32,11 @@ async function getClientCredentialsToken() {
             body: new URLSearchParams({ grant_type: 'client_credentials' })
         });
         const authData = await authRes.json();
-        return authData.access_token;
+        return authData.access_token || null;
     } catch (err) {
-        console.error("[AUTH ERROR]", err.message);
         return null;
     }
 }
-
-// -------------------------------------------------------------
-// SPOTIFY USER OAUTH HANDLERS
-// -------------------------------------------------------------
 
 app.get('/api/login', (req, res) => {
     const scopes = 'playlist-read-private playlist-read-collaborative';
@@ -81,7 +76,6 @@ app.get('/callback', async (req, res) => {
     }
 });
 
-// Fetch user playlists
 app.get('/api/playlists', async (req, res) => {
     const userToken = req.headers['user-token'];
     if (!userToken || userToken === "null" || userToken === "undefined") {
@@ -93,14 +87,13 @@ app.get('/api/playlists', async (req, res) => {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
-        res.json(data.items || []);
+        const playlists = Array.isArray(data) ? data : (data.items || []);
+        res.json(playlists);
     } catch (err) {
         res.status(500).json({ error: "Failed fetching playlists." });
     }
 });
 
-// Fetch tracks from a specific playlist
-// 🟢 FIXED: Using standard target endpoint structure to load playlist items properly
 app.get('/api/playlists/:id/tracks', async (req, res) => {
     const playlistId = req.params.id;
     const userToken = req.headers['user-token'];
@@ -109,19 +102,21 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 
     try {
-        const response = await fetch('https://api.spotify.com/v1/playlists/$$?playlist_id=' + playlistId + '&limit=50', {
+        const response = await fetch('https://api.spotify.com/v1/playlists/$$/' + playlistId + '/tracks?limit=50', {
             headers: { 'Authorization': 'Bearer ' + userToken }
         });
         const data = await response.json();
+        const rawItems = Array.isArray(data) ? data : (data.items || []);
         
-        const tracks = (data.items || [])
-            .filter(item => item.track)
-            .map(item => ({
-                id: item.track.id,
-                name: item.track.name,
-                artist: item.track.artists.map(a => a.name).join(', '),
-                artwork: item.track.album?.images[0]?.url || 'https://picsum.photos/48'
-            }));
+        const tracks = rawItems.map(item => {
+            const track = item.track || item;
+            return {
+                id: track.id || Math.random().toString(),
+                name: track.name || 'Unknown Track',
+                artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
+                artwork: track.artwork || (track.album?.images?.[0]?.url) || 'https://picsum.photos/48'
+            };
+        });
 
         res.json(tracks);
     } catch (err) {
@@ -129,18 +124,12 @@ app.get('/api/playlists/:id/tracks', async (req, res) => {
     }
 });
 
-// -------------------------------------------------------------
-// CHANNELS: GLOBAL ANONYMOUS SEARCH
-// -------------------------------------------------------------
-
-// 🟢 FIXED: Restored explicit search parameter pairing '?q=' to allow public query lookups to return items
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
     try {
         let token = req.headers['user-token'];
-        
         if (!token || token === "null" || token === "undefined") {
             token = await getClientCredentialsToken();
         }
@@ -149,16 +138,17 @@ app.get('/api/search', async (req, res) => {
             return res.status(500).json({ error: "Could not authorize search request." });
         }
 
-        const response = await fetch('https://api.spotify.com/v1/...?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
+        const response = await fetch('https://api.spotify.com/v1/search?q=$$?q=' + encodeURIComponent(query) + '&type=track&limit=15', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         const data = await response.json();
+        const items = Array.isArray(data) ? data : (data.tracks?.items || data.items || []);
         
-        const tracks = (data.tracks?.items || []).map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48'
+        const tracks = items.map(track => ({
+            id: track.id || Math.random().toString(),
+            name: track.name || 'Unknown Track',
+            artist: track.artist || (track.artists ? track.artists.map(a => a.name).join(', ') : 'Unknown Artist'),
+            artwork: track.artwork || (track.album?.images?.[0]?.url) || 'https://picsum.photos/48'
         }));
         
         res.json({ tracks });
@@ -196,10 +186,6 @@ app.post('/api/request', (req, res) => {
     }
     res.json({ success: true });
 });
-
-// -------------------------------------------------------------
-// ADMINISTRATIVE MASTER CONTROL
-// -------------------------------------------------------------
 
 app.get('/api/admin/data', (req, res) => {
     if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
@@ -254,5 +240,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[SERVER] Live diagnostic dashboard online on port ${PORT}`);
+    console.log(`[SERVER] Ready on port ${PORT}`);
 });
