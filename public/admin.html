@@ -6,14 +6,14 @@
     <title>DJ Admin Dashboard</title>
     <link rel="stylesheet" href="style.css">
 
-    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #111111; color: #ffffff; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
-        <h2 style="font-size: 28px; margin-bottom: 5px; color: #ffffff; border: none; padding: 0;">DJ Control Panel Locked</h2>
-        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
+    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #121212; color: #ffffff; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: 'Segoe UI', sans-serif;">
+        <h2 style="font-size: 28px; margin-bottom: 5px; color: #1DB954;">DJ Control Panel Locked</h2>
+        <p style="color: #b3b3b3; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
         <div style="display: flex; gap: 10px;">
-            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: #222; color: white; font-size: 16px; outline: none; width: 200px;">
+            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #404040; background: #282828; color: white; font-size: 16px; outline: none; width: 200px;">
             <button onclick="checkAdminPassword()" style="padding: 12px 24px; border-radius: 6px; border: none; background: #1DB954; color: white; font-weight: bold; cursor: pointer; font-size: 16px;">Unlock</button>
         </div>
-        <p id="gate-error" style="color: #ff4d4d; margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
+        <p id="gate-error" style="color: #e91429; margin-top: 15px; display: none; font-weight: bold;">Incorrect password! Access Denied.</p>
     </div>
 
     <script>
@@ -22,7 +22,7 @@
             const errorMsg = document.getElementById('gate-error');
             
             if (input === "ballDJ2026") {
-                // Instantly remove the gate overlay to reveal your exact original UI underneath
+                // Remove the layer completely to reveal your original working dashboard UI
                 document.getElementById('password-gate').remove();
             } else {
                 errorMsg.style.display = 'block';
