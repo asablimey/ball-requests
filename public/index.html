@@ -136,7 +136,7 @@
         }
 
         .track-details { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
-        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; flex-shrink: 0; flex-shrink: 0; }
+        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
         .track-meta-text { min-width: 0; overflow: hidden; }
         .track-title { font-weight: 700; margin: 0; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -324,7 +324,14 @@
                     const plId = pl.id || '';
                     const plName = pl.name || 'Untitled Playlist';
                     const imgUrl = pl.artwork || pl.images?.[0]?.url || 'https://picsum.photos/150';
-                    const totalTracks = pl.tracks?.total || pl.total || 0;
+                    
+                    // Fixed check 1: Look through all options to find total track numbers
+                    let totalTracks = 0;
+                    if (pl.tracks) {
+                        totalTracks = typeof pl.tracks === 'object' ? (pl.tracks.total || pl.tracks.length || 0) : pl.tracks;
+                    } else if (pl.total) {
+                        totalTracks = pl.total;
+                    }
                     
                     return `
                         <div class="playlist-row-item" onclick="loadPlaylistTracks('${plId}', '${plName.replace(/'/g, "\\'")}')">
@@ -393,13 +400,16 @@
                     });
                     const data = await res.json();
                     if (document.getElementById('search-input').value.trim() !== "") {
-                        document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(data.tracks || data || []);
+                        // Fixed check 2: Render tracks perfectly regardless of structure format
+                        const trackList = data.tracks || data || [];
+                        document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(trackList);
                     }
                 } catch (e) { console.log("Search error."); }
             }, 300);
         }
 
         function generateTrackRowsHTML(tracks) {
+            if (!Array.isArray(tracks)) return '<p style="color:#666; text-align:center; padding:20px;">No tracks found matching layout.</p>';
             return tracks.map(track => `
                 <div class="track-row">
                     <div class="track-details">
@@ -409,7 +419,7 @@
                             <p class="track-artist">${track.artist}</p>
                         </div>
                     </div>
-                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick="submitRequest(${JSON.stringify(track).replace(/"/g, '"')})">Request</button>
+                    <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''} onclick='submitRequest(${JSON.stringify(track)})'>Request</button>
                 </div>
             `).join('');
         }
