@@ -325,12 +325,14 @@
                     const plName = pl.name || 'Untitled Playlist';
                     const imgUrl = pl.artwork || pl.images?.[0]?.url || 'https://picsum.photos/150';
                     
-                    // Fixed check 1: Look through all options to find total track numbers
+                    // Reads track list metadata counts flexibly
                     let totalTracks = 0;
                     if (pl.tracks) {
                         totalTracks = typeof pl.tracks === 'object' ? (pl.tracks.total || pl.tracks.length || 0) : pl.tracks;
                     } else if (pl.total) {
                         totalTracks = pl.total;
+                    } else if (Array.isArray(pl)) {
+                        totalTracks = pl.length;
                     }
                     
                     return `
@@ -400,7 +402,6 @@
                     });
                     const data = await res.json();
                     if (document.getElementById('search-input').value.trim() !== "") {
-                        // Fixed check 2: Render tracks perfectly regardless of structure format
                         const trackList = data.tracks || data || [];
                         document.getElementById('content-target-list').innerHTML = generateTrackRowsHTML(trackList);
                     }
@@ -409,8 +410,10 @@
         }
 
         function generateTrackRowsHTML(tracks) {
-            if (!Array.isArray(tracks)) return '<p style="color:#666; text-align:center; padding:20px;">No tracks found matching layout.</p>';
-            return tracks.map(track => `
+            const list = Array.isArray(tracks) ? tracks : (tracks.tracks || []);
+            if (list.length === 0) return '<p style="color:#666; text-align:center; padding:20px;">No tracks found.</p>';
+            
+            return list.map(track => `
                 <div class="track-row">
                     <div class="track-details">
                         <img src="${track.artwork}">
