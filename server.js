@@ -7,8 +7,10 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 🔒 Static Administrative Password
 const ADMIN_PASSWORD = "ballDJ2026";
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+const REDIRECT_URI = process.env.REDIRECT_URI || `http://localhost:${PORT}/callback`;
 
 let systemConfigs = {
     maxCredits: 3,
@@ -18,66 +20,120 @@ let systemConfigs = {
 
 let activeQueue = [];
 let playedHistory = [];
-let spotifyAccessToken = "";
 
-async function getSpotifyToken() {
-    const clientId = process.env.SPOTIFY_CLIENT_ID;
-    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+// -------------------------------------------------------------
+// SPOTIFY USER OAUTH HANDLERS (Corrected standard Spotify URI)
+// -------------------------------------------------------------
 
-    if (!clientId || !clientSecret) {
-        console.log("[WARNING] Spotify API credentials are missing in Render environment settings.");
-        return;
-    }
+// Kicks off the official Spotify login redirect
+app.get('/api/login', (req, res) => {
+    const scopes = 'playlist-read-private playlist-read-collaborative';
+    res.redirect('https://accounts.spotify.com/authorize' +
+        '?response_type=code' +
+        '&client_id=' + CLIENT_ID +
+        (scopes ? '&scope=' + encodeURIComponent(scopes) : '') +
+        '&redirect_uri=' + encodeURIComponent(REDIRECT_URI));
+});
+
+// Exchanges auth code for an access token and passes it back to the client
+app.get('/callback', async (req, res) => {
+    const code = req.query.code || null;
+    if (!code) return res.redirect('/?error=auth_failed');
 
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
-                'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: 'grant_type=client_credentials'
+            body: new URLSearchParams({
+                code: code,
+                redirect_uri: REDIRECT_URI,
+                grant_type: 'authorization_code'
+            })
         });
 
         const data = await response.json();
         if (data.access_token) {
-            spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Successfully fetched live access token.");
+            res.redirect(`/?access_token=${data.access_token}`);
         } else {
-            console.log("[SPOTIFY ERROR] Authentication failed:", data);
+            res.redirect('/?error=token_failed');
         }
     } catch (err) {
-        console.error("[SPOTIFY CRITICAL ERROR]:", err.message);
+        res.redirect('/?error=server_error');
     }
-}
-
-setInterval(getSpotifyToken, 1000 * 60 * 50);
-
-// -------------------------------------------------------------
-// GET & POST ENDPOINTS
-// -------------------------------------------------------------
-
-app.get('/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
-        history: playedHistory
-    });
 });
+
+// Fetches the logged-in guest's personal playlists
+app.get('/api/playlists', async (req, res) => {
+    const userToken = req.headers['user-token'];
+    if (!userToken) return res.status(401).json({ error: "No user token provided." });
+
+    try {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists', {
+            headers: { 'Authorization': `Bearer ${userToken}` }
+        });
+        const data = await response.json();
+        res.json(data.items || []);
+    } catch (err) {
+        res.status(500).json({ error: "Failed fetching playlists." });
+    }
+});
+
+// Fetches tracks inside a specific user playlist
+app.get('/api/playlists/:id/tracks', async (req, res) => {
+    const playlistId = req.params.id;
+    const userToken = req.headers['user-token'];
+    if (!userToken) return res.status(401).json({ error: "No user token provided." });
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
+            headers: { 'Authorization': `Bearer ${userToken}` }
+        });
+        const data = await response.json();
+        
+        const tracks = (data.items || [])
+            .filter(item => item.track)
+            .map(item => ({
+                id: item.track.id,
+                name: item.track.name,
+                artist: item.track.artists.map(a => a.name).join(', '),
+                artwork: item.track.album?.images[0]?.url || 'https://picsum.photos/48'
+            }));
+
+        res.json(tracks);
+    } catch (err) {
+        res.status(500).json({ error: "Failed fetching tracks." });
+    }
+});
+
+// -------------------------------------------------------------
+// CHANNELS: GLOBAL ANONYMOUS SEARCH & APP RULES
+// -------------------------------------------------------------
 
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
-    if (!spotifyAccessToken) {
-        return res.status(500).json({ error: "Token uninitialized." });
-    }
-
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        let token = req.headers['user-token'];
+        
+        if (!token || token === "null" || token === "undefined") {
+            const authRes = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({ grant_type: 'client_credentials' })
+            });
+            const authData = await authRes.json();
+            token = authData.access_token;
+        }
+
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=15`, {
+            headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
         
@@ -94,10 +150,18 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+app.get('/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
+    });
+});
+
 app.post('/api/request', (req, res) => {
-    if (!systemConfigs.requestsAllowed) {
-        return res.status(403).json({ error: "Submissions closed." });
-    }
+    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
@@ -116,7 +180,10 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
-// 🔒 Admin Endpoint Password Checks
+// -------------------------------------------------------------
+// MASTER ADMINISTRATIVE ENDPOINTS (Untouched)
+// -------------------------------------------------------------
+
 app.get('/api/admin/data', (req, res) => {
     if (req.headers['authorization'] !== ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized." });
     res.json({
@@ -169,7 +236,6 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`[SERVER] Request dashboard streaming live on port ${PORT}`);
-    await getSpotifyToken();
 });
