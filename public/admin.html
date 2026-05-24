@@ -110,30 +110,147 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
     </style>
-
-    <script>
-        function checkAdminPassword() {
-            const input = document.getElementById('admin-pass-input').value;
-            const errorMsg = document.getElementById('gate-error');
-            if (input === "ballDJ2026") {
-                document.getElementById('password-gate').style.display = 'none';
-            } else {
-                errorMsg.style.display = 'block';
-                document.getElementById('admin-pass-input').value = '';
-            }
-        }
-        document.addEventListener("DOMContentLoaded", () => {
-            document.getElementById('admin-pass-input').focus();
-            document.getElementById('admin-pass-input').addEventListener("keypress", (e) => {
-                if (e.key === "Enter") checkAdminPassword();
-            });
-        });
-    </script>
 </head>
 <body>
 
-    <div id="password-gate" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #121212; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 999999; font-family: sans-serif;">
-        <h2 style="font-size: 28px; margin-bottom: 5px;">DJ Control Panel Locked</h2>
-        <p style="color: #aaa; margin-bottom: 20px;">Enter the secret key to manage song requests</p>
-        <div style="display: flex; gap: 10px;">
-            <input type="password" id="admin-pass-input" placeholder="Password..." style="padding: 12px; border-radius: 6px; border: 1px solid #333; background: #242424;
+    <div class="header">
+        <h1>DJ Master Control</h1>
+        <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+    </div>
+
+    <div class="config-dashboard">
+        <div class="input-group">
+            <label>Max Credit Bank</label>
+            <input type="number" id="input-max-credits" min="1">
+        </div>
+        <div class="input-group">
+            <label>Regen Timer (Secs)</label>
+            <input type="number" id="input-countdown" min="5">
+        </div>
+        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+    </div>
+
+    <div class="control-bar">
+        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+    </div>
+
+    <div class="lists-container">
+        <div class="panel">
+            <h2>Current Queue</h2>
+            <div id="queue-list"></div>
+        </div>
+        <div class="panel">
+            <h2>Song History (Played)</h2>
+            <div id="history-list"></div>
+        </div>
+    </div>
+
+    <script>
+        let requestsAllowed = true;
+
+        async function updateDashboard() {
+            try {
+                const res = await fetch('/api/queue');
+                const data = await res.json();
+
+                if(document.activeElement !== document.getElementById('input-max-credits')) {
+                    document.getElementById('input-max-credits').value = data.configs.maxCredits;
+                }
+                if(document.activeElement !== document.getElementById('input-countdown')) {
+                    document.getElementById('input-countdown').value = data.configs.countdownLength;
+                }
+
+                const toggleBtn = document.getElementById('toggle-requests');
+                requestsAllowed = data.configs.requestsAllowed;
+                toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
+                toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                const queueList = document.getElementById('queue-list');
+                queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
+                    <div class="song-row">
+                        <div class="song-details">
+                            <img src="${song.artwork || song.albumArt || ''}">
+                            <div><p class="song-title">${song.title || song.name}</p><p class="song-artist">${song.artist}</p></div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
+                            <button class="btn btn-played" onclick="removeTrack('${song.id}', true)">✔ Played</button>
+                            <button class="btn btn-remove" onclick="removeTrack('${song.id}', false)">✖ Drop</button>
+                        </div>
+                    </div>
+                `).join('');
+
+                const historyList = document.getElementById('history-list');
+                historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
+                    <div class="song-row history-row">
+                        <div class="song-details">
+                            <img src="${song.artwork || song.albumArt || ''}">
+                            <div><p class="song-title">${song.title || song.name}</p><p class="song-artist">${song.artist}</p></div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) { 
+                console.log("Sync error."); 
+            }
+        }
+
+        async function saveSystemRules() {
+            const maxVal = document.getElementById('input-max-credits').value;
+            const downVal = document.getElementById('input-countdown').value;
+            
+            await fetch('/api/admin/update-configs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: "ballDJ2026", configs: { maxCredits: maxVal, countdownLength: downVal, requestsAllowed } })
+            });
+            alert("System parameters updated successfully.");
+            updateDashboard();
+        }
+
+        async function removeTrack(trackId, played) {
+            await fetch('/api/admin/remove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: "ballDJ2026", trackId, played })
+            });
+            updateDashboard();
+        }
+
+        async function triggerAction(id, action) {
+            await fetch('/api/admin/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': "ballDJ2026" },
+                body: JSON.stringify({ id, action })
+            });
+            updateDashboard();
+        }
+
+        async function clearSystem(actionType, message) {
+            if (confirm(message)) {
+                const endpoint = actionType === 'clearQueue' ? '/api/admin/clear-queue' : '/api/admin/clear-history';
+                await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: "ballDJ2026" })
+                });
+                updateDashboard();
+            }
+        }
+
+        async function toggleRequests() {
+            const maxVal = document.getElementById('input-max-credits').value;
+            const downVal = document.getElementById('input-countdown').value;
+            await fetch('/api/admin/update-configs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: "ballDJ2026", configs: { maxCredits: maxVal, countdownLength: downVal, requestsAllowed: !requestsAllowed } })
+            });
+            updateDashboard();
+        }
+
+        setInterval(updateDashboard, 3000);
+        updateDashboard();
+    </script>
+</body>
+</html>
