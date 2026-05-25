@@ -56,7 +56,32 @@
             font-weight: 700;
             border: 1px solid #282828;
             white-space: nowrap;
+            box-sizing: border-box;
+            height: 41px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
+
+        .msg-dj-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            border: none;
+            white-space: nowrap;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-family: inherit;
+            box-sizing: border-box;
+            height: 41px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s ease;
+        }
+        .msg-dj-btn:active { transform: scale(0.95); }
 
         .countdown-display {
             font-size: 0.85rem;
@@ -232,7 +257,7 @@
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
-            .credits-container { align-items: center; width: 100%; }
+            .credits-container { align-items: center; width: 100%; justify-content: center; }
         }
     </style>
 </head>
@@ -242,10 +267,8 @@
         <div class="header">
             <h1>Song Requests</h1>
             <div class="credits-container">
-                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
-                    <button id="custom-action-btn" class="credits-display" style="cursor: pointer; padding: 10px 15px; font-size: 0.85rem; outline: none; display: inline-block;">Button</button>
-                </div>
-                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                <button id="custom-action-btn" class="msg-dj-btn" onclick="alert('Message feature coming soon!')">Message the DJ</button>
+                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
                     <div id="credits-status" class="credits-display">Credits: -- / --</div>
                     <div id="countdown-status" class="countdown-display">Regen in: --s</div>
                 </div>
@@ -265,7 +288,7 @@
         let timeRemaining = 60;
         let countdownTimer = null;
         let currentServerDuration = 60;
-        let globalSearchResults = []; // Stores search rows securely across character additions
+        let globalSearchResults = [];
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -423,7 +446,6 @@
                         return;
                     }
 
-                    // Store raw reference results cleanly
                     globalSearchResults = data.tracks;
 
                     display.innerHTML = data.tracks.map((track, index) => `
@@ -469,7 +491,6 @@
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     manageCountdownVisibility();
                     
-                    // Clear search input and transition directly back to live view immediately without requiring refresh
                     document.getElementById('search-input').value = "";
                     await fetchSystemState();
                     alert("Song successfully added to the queue!");
