@@ -74,7 +74,6 @@
             margin-bottom: 20px;
         }
         .search-box:focus { border-color: var(--spotify-green); }
-        .search-box:disabled { background-color: #1a1a1a; color: #555; cursor: not-allowed; }
 
         .section-title {
             font-size: 1.2rem;
@@ -83,6 +82,30 @@
             letter-spacing: 0.5px;
             margin-bottom: 15px;
         }
+
+        /* Dedicated Layout View for Playlists Grid */
+        .playlist-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .playlist-card {
+            background: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 8px;
+            padding: 14px;
+            cursor: pointer;
+            transition: transform 0.2s, border-color 0.2s;
+            text-align: left;
+        }
+        .playlist-card:hover {
+            transform: scale(1.02);
+            border-color: var(--spotify-green);
+        }
+        .playlist-card h4 { margin: 0 0 6px 0; font-size: 1rem; font-weight: 700; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .playlist-card p { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
 
         .track-row {
             display: flex;
@@ -109,11 +132,10 @@
             border-radius: 3px;
             margin-left: 6px;
             display: inline-block;
-            vertical-align: middle;
         }
 
         .action-container { display: flex; align-items: center; gap: 12px; }
-        .duration-label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+        .duration-label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
 
         .req-btn {
             background-color: var(--spotify-green);
@@ -135,10 +157,11 @@
             width: 100%;
         }
 
+        /* Explicitly styled green matching requirements */
         .spotify-ctrl-btn {
             width: 100%;
-            background-color: var(--spotify-green);
-            color: white;
+            background-color: var(--spotify-green) !important;
+            color: white !important;
             border: none;
             padding: 16px;
             border-radius: 8px;
@@ -146,72 +169,66 @@
             font-weight: 700;
             cursor: pointer;
             text-align: center;
-            transition: background-color 0.2s ease, filter 0.2s ease;
             box-sizing: border-box;
         }
-        .spotify-ctrl-btn:hover { filter: brightness(1.1); }
         
-        .spotify-ctrl-btn.connected-mode {
-            background-color: #242424;
-            border: 1px solid #333;
-            color: white;
-        }
-        .spotify-ctrl-btn.connected-mode:hover {
-            border-color: var(--spotify-green);
-            background-color: #1c1c1c;
-        }
-
-        .playlist-view-container {
-            background: var(--panel-bg);
-            border: 1px solid #222;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 20px;
-            display: none;
-        }
-        .playlist-select-dropdown {
-            width: 100%;
-            background: var(--card-bg);
+        .back-btn {
+            background: #242424;
             color: white;
             border: 1px solid #444;
-            padding: 12px;
+            padding: 8px 14px;
             border-radius: 6px;
-            font-size: 1rem;
-            outline: none;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 15px;
+            font-size: 0.85rem;
         }
-        .playlist-select-dropdown:focus { border-color: var(--spotify-green); }
+        .back-btn:hover { border-color: var(--spotify-green); }
+
+        /* Conditional Rendering Views */
+        .page-view { display: none; }
+        .page-view.active { display: block; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <div class="content-wrap">
-            <h2>Request a Song</h2>
             
-            <div class="status-card">
-                <div class="status-info">
-                    <h3>Your Credits</h3>
-                    <p id="credits-display">3 / 3</p>
+            <div id="home-view" class="page-view active">
+                <h2>Request a Song</h2>
+                <div class="status-card">
+                    <div class="status-info">
+                        <h3>Your Credits</h3>
+                        <p id="credits-display">3 / 3</p>
+                    </div>
+                    <div class="status-info" style="text-align: right;">
+                        <h3>Next Credit In</h3>
+                        <p id="timer-display">MAX</p>
+                    </div>
                 </div>
-                <div class="status-info" style="text-align: right;">
-                    <h3>Next Credit In</h3>
-                    <p id="timer-display">MAX</p>
+
+                <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
+                <h3 class="section-title">Search Results</h3>
+                <div id="results-list">
+                    <p class="placeholder-text">Type in the box above to discover tracks.</p>
                 </div>
             </div>
 
-            <div id="playlist-panel" class="playlist-view-container">
-                <h3 class="section-title" style="font-size: 1rem; margin-top: 0;">Select From Your Playlists</h3>
-                <select id="playlist-dropdown" class="playlist-select-dropdown" onchange="loadPlaylistTracks()">
-                    <option value="">-- Choose a Playlist --</option>
-                </select>
+            <div id="playlists-view" class="page-view">
+                <button class="back-btn" onclick="navigateTo('home')">← Back to Search</button>
+                <h2>Your Custom Playlists</h2>
+                <div id="playlists-grid-container" class="playlist-grid">
+                    </div>
             </div>
 
-            <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
-            
-            <h3 id="results-header" class="section-title">Search Results</h3>
-            <div id="results-list">
-                <p class="placeholder-text">Type in the box above to discover tracks.</p>
+            <div id="playlist-tracks-view" class="page-view">
+                <button class="back-btn" onclick="navigateTo('playlists')">← Back to Playlists</button>
+                <h2 id="current-playlist-title">Playlist Songs</h2>
+                <div id="playlist-tracks-list">
+                    </div>
             </div>
+
         </div>
 
         <div class="spotify-auth-container">
@@ -221,18 +238,11 @@
 
     <script>
         let maxCredits = 3;
-        let localCredits = parseInt(localStorage.getItem('dj_user_credits'));
-        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
+        let localCredits = parseInt(localStorage.getItem('dj_user_credits')) || maxCredits;
+        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen')) || Date.now();
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
         let isUserConnectedToSpotify = false;
-
-        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
-            localCredits = maxCredits;
-            lastRegenTime = Date.now();
-            localStorage.setItem('dj_user_credits', localCredits);
-            localStorage.setItem('dj_last_regen', lastRegenTime);
-        }
 
         async function checkUserLoginStatus() {
             try {
@@ -243,9 +253,6 @@
                         isUserConnectedToSpotify = true;
                         const btn = document.getElementById('spotify-connect-btn');
                         btn.innerText = "My Playlists";
-                        btn.className = "spotify-ctrl-btn connected-mode";
-                        document.getElementById('playlist-panel').style.display = 'block';
-                        fetchUserPlaylists();
                     }
                 }
             } catch(e) {}
@@ -255,80 +262,90 @@
             if (!isUserConnectedToSpotify) {
                 window.location.href = "/api/auth/login";
             } else {
-                const panel = document.getElementById('playlist-panel');
-                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                navigateTo('playlists');
+                fetchUserPlaylists();
             }
         }
 
-        async function fetchUserPlaylists() {
-            try {
-                const res = await fetch('/api/user/playlists');
-                if (!res.ok) return;
-                const playlists = await res.json();
-                const dropdown = document.getElementById('playlist-dropdown');
-                dropdown.innerHTML = '<option value="">-- Choose a Playlist --</option>';
-                playlists.forEach(p => {
-                    const opt = document.createElement('option');
-                    opt.value = p.id;
-                    opt.innerText = `${p.name} (${p.tracksCount} songs)`;
-                    dropdown.appendChild(opt);
-                });
-            } catch(e) {}
+        function navigateTo(pageId) {
+            document.querySelectorAll('.page-view').forEach(view => view.classList.remove('active'));
+            if (pageId === 'home') document.getElementById('home-view').classList.add('active');
+            if (pageId === 'playlists') document.getElementById('playlists-view').classList.add('active');
+            if (pageId === 'tracks') document.getElementById('playlist-tracks-view').classList.add('active');
         }
 
-        async function loadPlaylistTracks() {
-            const playlistId = document.getElementById('playlist-dropdown').value;
-            const container = document.getElementById('results-list');
-            const header = document.getElementById('results-header');
-            if (!playlistId) return;
-            
-            document.getElementById('search-input').value = "";
-            header.innerText = "Playlist Tracks";
-            container.innerHTML = "<p class='placeholder-text'>Loading tracks from your Spotify playlist...</p>";
+        async function fetchUserPlaylists() {
+            const container = document.getElementById('playlists-grid-container');
+            container.innerHTML = "<p class='placeholder-text'>Fetching your playlists...</p>";
+            try {
+                const res = await fetch('/api/user/playlists');
+                if (!res.ok) {
+                    container.innerHTML = "<p class='placeholder-text'>Failed to load playlists. Confirm your profile email is added under 'Users and Access' inside the Spotify Developer Dashboard.</p>";
+                    return;
+                }
+                const playlists = await res.json();
+                if(playlists.length === 0) {
+                    container.innerHTML = "<p class='placeholder-text'>No public playlists discovered on this account profile.</p>";
+                    return;
+                }
+                container.innerHTML = "";
+                playlists.forEach(p => {
+                    const card = document.createElement('div');
+                    card.className = 'playlist-card';
+                    card.innerHTML = `
+                        <h4>${escapeHtml(p.name)}</h4>
+                        <p>${p.tracksCount} tracks</p>
+                    `;
+                    card.onclick = () => loadPlaylistTracks(p.id, p.name);
+                    container.appendChild(card);
+                });
+            } catch(e) {
+                container.innerHTML = "<p class='placeholder-text'>Connection exception occurred.</p>";
+            }
+        }
+
+        async function loadPlaylistTracks(id, name) {
+            document.getElementById('current-playlist-title').innerText = name;
+            const container = document.getElementById('playlist-tracks-list');
+            container.innerHTML = "<p class='placeholder-text'>Opening track contents...</p>";
+            navigateTo('tracks');
 
             try {
-                const res = await fetch(`/api/user/playlist-tracks?id=${playlistId}`);
+                const res = await fetch(`/api/user/playlist-tracks?id=${id}`);
                 if (!res.ok) {
-                    container.innerHTML = "<p class='placeholder-text'>Could not pull songs from this tracklist.</p>";
+                    container.innerHTML = "<p class='placeholder-text'>Could not parse playlist tracks.</p>";
                     return;
                 }
                 const data = await res.json();
-                renderTrackRows(data.tracks);
+                renderTracksInContainer(data.tracks, container);
             } catch(e) {
-                container.innerHTML = "<p class='placeholder-text'>Error synchronizing playlist tracks.</p>";
+                container.innerHTML = "<p class='placeholder-text'>Error synchronizing array indices.</p>";
             }
         }
 
         function searchSongs() {
             const query = document.getElementById('search-input').value.trim();
             const container = document.getElementById('results-list');
-            const header = document.getElementById('results-header');
-            
             if (!query) { 
-                header.innerText = "Search Results";
                 container.innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`; 
                 return; 
             }
-
-            header.innerText = "Search Results";
             fetch(`/api/search?q=${encodeURIComponent(query)}`)
             .then(res => res.json())
             .then(data => {
                 if(!data.tracks || data.tracks.length === 0) {
-                    container.innerHTML = "<p class='placeholder-text'>No results matched your query.</p>";
+                    container.innerHTML = "<p class='placeholder-text'>No matched tracks found.</p>";
                     return;
                 }
-                renderTrackRows(data.tracks);
+                renderTracksInContainer(data.tracks, container);
             })
             .catch(() => {
-                container.innerHTML = "<p class='placeholder-text'>Search error encountered.</p>";
+                container.innerHTML = "<p class='placeholder-text'>Search query error.</p>";
             });
         }
 
-        function renderTrackRows(tracks) {
-            const container = document.getElementById('results-list');
-            container.innerHTML = ''; 
-
+        function renderTracksInContainer(tracks, container) {
+            container.innerHTML = '';
             tracks.forEach(track => {
                 const row = document.createElement('div');
                 row.className = 'track-row';
@@ -336,10 +353,7 @@
                     <div class="track-details">
                         <img src="${track.artwork}">
                         <div>
-                            <p class="track-title">
-                                ${escapeHtml(track.name)}
-                                ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                            </p>
+                            <p class="track-title">${escapeHtml(track.name)} ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}</p>
                             <p class="track-artist">${escapeHtml(track.artist)}</p>
                         </div>
                     </div>
@@ -360,27 +374,20 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ track })
             });
-
             if (res.ok) {
                 localCredits--;
-                if (localCredits === maxCredits - 1) {
-                    lastRegenTime = Date.now();
-                    localStorage.setItem('dj_last_regen', lastRegenTime);
-                }
                 localStorage.setItem('dj_user_credits', localCredits);
-                alert(`"${track.name}" submitted successfully!`);
+                alert(`"${track.name}" sent to queue!`);
+                navigateTo('home');
                 document.getElementById('search-input').value = "";
-                document.getElementById('playlist-dropdown').value = "";
-                document.getElementById('playlist-panel').style.display = 'none';
-                document.getElementById('results-header').innerText = "Search Results";
-                document.getElementById('results-list').innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`;
+                searchSongs();
             } else {
                 const errData = await res.json();
-                alert(errData.error || "Submission failed.");
+                alert(errData.error || "Submission error.");
             }
         }
 
-        function escapeHtml(str) { return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
+        function escapeHtml(str) { return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
         
         async function syncWithServer() {
             try {
@@ -389,49 +396,11 @@
                 maxCredits = data.maxCredits;
                 regenIntervalLength = data.countdownLength;
                 systemRequestsOpen = data.requestsAllowed;
-                if (localCredits > maxCredits) {
-                    localCredits = maxCredits;
-                    localStorage.setItem('dj_user_credits', localCredits);
-                }
                 document.getElementById('credits-display').innerText = `${localCredits} / ${maxCredits}`;
-                updateUI();
             } catch (e) {}
         }
 
-        function handleCreditCalculations() {
-            if (localCredits >= maxCredits) {
-                document.getElementById('timer-display').innerText = "MAX";
-                return;
-            }
-            const elapsedSeconds = Math.floor((Date.now() - lastRegenTime) / 1000);
-            if (elapsedSeconds >= regenIntervalLength) {
-                const gained = Math.floor(elapsedSeconds / regenIntervalLength);
-                localCredits = Math.min(maxCredits, localCredits + gained);
-                lastRegenTime += gained * regenIntervalLength * 1000;
-                localStorage.setItem('dj_user_credits', localCredits);
-                localStorage.setItem('dj_last_regen', lastRegenTime);
-            }
-            const remaining = regenIntervalLength - (Math.floor((Date.now() - lastRegenTime) / 1000) % regenIntervalLength);
-            document.getElementById('timer-display').innerText = `${Math.floor(remaining / 60)}:${(remaining % 60) < 10 ? '0' : ''}${remaining % 60}`;
-        }
-
-        function updateUI() {
-            const inputs = document.getElementById('search-input');
-            const btns = document.querySelectorAll('.req-btn');
-            if (!systemRequestsOpen) {
-                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
-                btns.forEach(b => b.disabled = true);
-            } else if (localCredits <= 0) {
-                btns.forEach(b => b.disabled = true);
-            } else {
-                inputs.placeholder = "Search tracks, artists...";
-                btns.forEach(b => b.disabled = false);
-            }
-        }
-
-        setInterval(handleCreditCalculations, 1000);
-        setInterval(syncWithServer, 4000);
-        
+        setInterval(syncWithServer, 5000);
         checkUserLoginStatus();
         syncWithServer();
     </script>
