@@ -86,7 +86,6 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        /* 🟢 CLEANED AUTO-ALIGNING CORE LAYOUT */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -154,7 +153,6 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
-        /* 📐 DYNAMIC CONTAINER GRID (FLIPS SPLIT/STACK ON ROTATION) */
         .lists-container { 
             display: flex; 
             gap: 30px; 
@@ -164,7 +162,7 @@
         
         .panel { 
             flex: 1; 
-            min-width: 320px; /* Forces stack columns cleanly on small vertical layouts */
+            min-width: 320px; 
             background: var(--panel-bg); 
             padding: 25px; 
             border-radius: 16px; 
@@ -174,7 +172,6 @@
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
-        /* UNIFORM COMPONENT ROW ALIGNMENT */
         .song-row { 
             display: flex; 
             justify-content: space-between; 
@@ -210,6 +207,13 @@
             min-width: 0;
         }
 
+        .title-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
         .song-title { 
             font-weight: 700; 
             margin: 0; 
@@ -217,6 +221,21 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+
+        .explicit-badge {
+            background-color: #7f7f7f;
+            color: var(--spotify-black);
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 1;
         }
         
         .song-artist { 
@@ -232,7 +251,7 @@
             display: flex; 
             gap: 10px; 
             flex-shrink: 0;
-            flex-wrap: wrap; /* Wraps administrative buttons gracefully if column gets skinny */
+            flex-wrap: wrap; 
             justify-content: flex-end;
         }
         
@@ -246,7 +265,6 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
-        /* Media adjustments to fix line spacing on small rotated viewpoints */
         @media (max-width: 600px) {
             body { padding: 15px; }
             h1 { font-size: 1.8rem; }
@@ -345,7 +363,10 @@
                         <div class="song-details">
                             <img src="${song.artwork}">
                             <div class="text-container">
-                                <p class="song-title">${song.title}</p>
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
                                 <p class="song-artist">${song.artist}</p>
                                 <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
                             </div>
@@ -364,7 +385,10 @@
                         <div class="song-details">
                             <img src="${song.artwork}">
                             <div class="text-container">
-                                <p class="song-title">${song.title}</p>
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
                                 <p class="song-artist">${song.artist}</p>
                                 <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
                             </div>
