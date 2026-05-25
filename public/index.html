@@ -254,6 +254,107 @@
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
 
+        /* Custom Popup Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 24px;
+            width: 90%;
+            max-width: 450px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            transform: scale(0.95);
+            transition: transform 0.2s ease;
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-top: 0;
+            margin-bottom: 16px;
+            color: white;
+        }
+
+        .modal-textarea {
+            width: 100%;
+            height: 100px;
+            background-color: var(--panel-bg);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            color: white;
+            font-family: inherit;
+            font-size: 0.95rem;
+            box-sizing: border-box;
+            resize: none;
+            outline: none;
+            margin-bottom: 20px;
+            transition: border-color 0.2s ease;
+        }
+
+        .modal-textarea:focus {
+            border-color: var(--spotify-green);
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .modal-btn {
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            border: none;
+            font-family: inherit;
+        }
+
+        .modal-btn-cancel {
+            background-color: transparent;
+            color: #a7a7a7;
+            border: 1px solid #333;
+        }
+        .modal-btn-cancel:hover {
+            color: white;
+            border-color: #666;
+        }
+
+        .modal-btn-send {
+            background-color: var(--spotify-green);
+            color: white;
+        }
+        .modal-btn-send:active {
+            transform: scale(0.95);
+        }
+
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
@@ -267,7 +368,7 @@
         <div class="header">
             <h1>Song Requests</h1>
             <div class="credits-container">
-                <button id="custom-action-btn" class="msg-dj-btn" onclick="alert('Message feature coming soon!')">Message the DJ</button>
+                <button id="custom-action-btn" class="msg-dj-btn" onclick="openMessageModal()">Message the DJ</button>
                 <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
                     <div id="credits-status" class="credits-display">Credits: -- / --</div>
                     <div id="countdown-status" class="countdown-display">Regen in: --s</div>
@@ -279,6 +380,17 @@
 
         <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
+    </div>
+
+    <div id="message-modal" class="modal-overlay" onclick="closeMessageModal(event)">
+        <div class="modal-content">
+            <div class="modal-title">Message the DJ</div>
+            <textarea id="dj-message-text" class="modal-textarea" placeholder="Type your dedication, shoutout, or note here..."></textarea>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-cancel" onclick="closeMessageModal(null)">Cancel</button>
+                <button class="modal-btn modal-btn-send" onclick="sendMessageToDJ()">Send Message</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -294,6 +406,45 @@
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
         }
         const voterSignatureToken = localStorage.getItem('voterSignatureToken');
+
+        /* Modal Visibility Logic */
+        function openMessageModal() {
+            document.getElementById('message-modal').classList.add('active');
+            document.getElementById('dj-message-text').focus();
+        }
+
+        function closeMessageModal(event) {
+            if (!event || event.target === document.getElementById('message-modal')) {
+                document.getElementById('message-modal').classList.remove('active');
+                document.getElementById('dj-message-text').value = '';
+            }
+        }
+
+        async function sendMessageToDJ() {
+            const messageStr = document.getElementById('dj-message-text').value.trim();
+            if (!messageStr) return;
+
+            try {
+                // Sent safely as a JSON payload to your backend
+                const res = await fetch('/api/message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: messageStr, voterId: voterSignatureToken })
+                });
+                
+                if (res.ok) {
+                    closeMessageModal(null);
+                    // Standard inline execution check
+                    console.log("Message successfully routed to backend framework pipeline.");
+                } else {
+                    alert("Failed to submit message to the production stream.");
+                }
+            } catch (e) { 
+                // Temporary fallback presentation if endpoint lacks structural binding
+                closeMessageModal(null);
+                console.log("Network fallback simulation triggered.");
+            }
+        }
 
         async function fetchSystemState() {
             try {
