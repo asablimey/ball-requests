@@ -26,10 +26,26 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-// Background token generator - authenticates the app itself directly
+// Fallback search layer to grab metrics since Spotify deprecated audio-features
+async function fetchBPMFromAudioDB(trackName, artistName) {
+    try {
+        const queryUrl = `https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s=${encodeURIComponent(artistName)}&t=${encodeURIComponent(trackName)}`;
+        const res = await fetch(queryUrl);
+        if (!res.ok) return "--";
+        const data = await res.json();
+        if (data && data.track && data.track[0] && data.track[0].intBPM) {
+            const parsedBpm = parseInt(data.track[0].intBPM);
+            return parsedBpm && parsedBpm > 0 ? parsedBpm.toString() : "--";
+        }
+        return "--";
+    } catch (e) {
+        return "--";
+    }
+}
+
 async function getSpotifyToken() {
     if (!CLIENT_ID || !CLIENT_SECRET) {
-        console.error("[SPOTIFY] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET in environment variables.");
+        console.error("[SPOTIFY] Missing credentials in environment.");
         return;
     }
     try {
@@ -44,42 +60,46 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Master API access token refreshed successfully.");
-        } else {
-            console.error("[SPOTIFY] Failed to fetch token:", data);
+            console.log("[SPOTIFY] Master token refreshed.");
         }
     } catch (err) {
         console.error("[SPOTIFY] Auth error:", err.message);
     }
 }
-// Automatically refresh the master token every 50 minutes
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // -------------------------------------------------------------
-// USER SEARCH API (Uses Master Token)
+// USER SEARCH API
 // -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
-    
-    if (!spotifyAccessToken) {
-        await getSpotifyToken(); 
-    }
+    if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
-        const tracks = (data.tracks?.items || []).map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
-            explicit: track.explicit || false,
-            duration: formatDuration(track.duration_ms),
-            bpm: "--" // Note: Spotify deprecated public API audio-features lookup endpoints
+        
+        const trackItems = data.tracks?.items || [];
+        
+        // Match tracks across fallback engines asynchronously
+        const tracks = await Promise.all(trackItems.map(async (track) => {
+            const cleanArtist = track.artists[0]?.name || '';
+            const detectedBpm = await fetchBPMFromAudioDB(track.name, cleanArtist);
+            
+            return {
+                id: track.id,
+                name: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+                explicit: track.explicit || false,
+                duration: formatDuration(track.duration_ms),
+                bpm: detectedBpm
+            };
         }));
+        
         res.json({ tracks });
     } catch (err) {
         res.status(500).json({ error: "Search feature unavailable" });
@@ -124,7 +144,7 @@ app.get('/data', (req, res) => {
 // -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
-        maxCredits: systemConfigs.maxConfigs,
+        maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
