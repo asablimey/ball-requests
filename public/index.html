@@ -10,6 +10,7 @@
             --spotify-black: #121212;
             --panel-bg: #181818;
             --card-bg: #242424;
+            --red-action: #e91429;
         }
 
         body {
@@ -62,6 +63,7 @@
             color: #a7a7a7;
             font-weight: 600;
             margin-right: 10px;
+            display: none;
         }
 
         .search-box {
@@ -137,7 +139,6 @@
             text-overflow: ellipsis;
         }
 
-        /* 🅱️ EXPLICIT TAG STYLES */
         .explicit-badge {
             background-color: #7f7f7f;
             color: var(--spotify-black);
@@ -162,10 +163,50 @@
             text-overflow: ellipsis;
         }
 
+        /* 📊 UNIFORM VOTE WRAPPER CONTEXT ELEMENTS */
         .actions {
             display: flex;
             align-items: center;
+            gap: 14px;
             flex-shrink: 0;
+        }
+
+        .vote-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 32px;
+        }
+
+        .vote-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s ease;
+        }
+        .vote-btn:active { transform: scale(0.8); }
+
+        .vote-btn svg {
+            width: 22px;
+            height: 22px;
+            fill: none;
+            stroke-width: 2;
+        }
+
+        .vote-btn-up svg { stroke: var(--spotify-green); }
+        .vote-btn-down svg { stroke: var(--red-action); }
+
+        .vote-count {
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin-top: 2px;
+            color: #e5e5e5;
+            text-align: center;
         }
 
         .btn-request {
@@ -180,7 +221,6 @@
             transition: transform 0.1s ease;
         }
         .btn-request:active { transform: scale(0.95); }
-        .btn-request:disabled { background-color: #555; cursor: not-allowed; }
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
 
@@ -198,7 +238,7 @@
             <h1>Song Requests</h1>
             <div class="credits-container">
                 <div id="credits-status" class="credits-display">Credits: -- / --</div>
-                <div id="countdown-status" class="countdown-display">Regen: --s</div>
+                <div id="countdown-status" class="countdown-display">Regen in: --s</div>
             </div>
         </div>
 
@@ -214,6 +254,7 @@
         let searchTimeout = null;
         let timeRemaining = 60;
         let countdownTimer = null;
+        let currentServerDuration = 60;
 
         async function fetchSystemState() {
             try {
@@ -222,8 +263,10 @@
                 const data = await res.json();
                 
                 maxCredits = data.maxCredits;
+                currentServerDuration = data.countdownLength;
+                
                 setupLocalCredits();
-                startLocalCountdown(data.countdownLength);
+                manageCountdownVisibility();
 
                 if (document.getElementById('search-input').value.trim() === "") {
                     document.getElementById('list-title').innerText = "Live Queue";
@@ -237,24 +280,55 @@
                 localStorage.setItem('userCredits', maxCredits);
             }
             availableCredits = parseInt(localStorage.getItem('userCredits'));
+            
+            if (availableCredits > maxCredits) {
+                availableCredits = maxCredits;
+                localStorage.setItem('userCredits', availableCredits);
+            }
+            
             document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
         }
 
-        function startLocalCountdown(serverDuration) {
-            if (countdownTimer) return; // Prevent overlapping loops
-            timeRemaining = serverDuration;
+        function manageCountdownVisibility() {
+            const countdownEl = document.getElementById('countdown-status');
+            
+            if (availableCredits >= maxCredits) {
+                countdownEl.style.display = 'none';
+                if (countdownTimer) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                }
+            } else {
+                countdownEl.style.display = 'inline-block';
+                startLocalCountdown();
+            }
+        }
+
+        function startLocalCountdown() {
+            if (countdownTimer) return;
+            
+            timeRemaining = currentServerDuration;
+            document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
             
             countdownTimer = setInterval(() => {
                 timeRemaining--;
+                
                 if (timeRemaining <= 0) {
-                    timeRemaining = serverDuration;
+                    timeRemaining = currentServerDuration;
                     if (availableCredits < maxCredits) {
-                        availableCredits = Math.min(maxCredits, availableCredits + 1);
+                        availableCredits++;
                         localStorage.setItem('userCredits', availableCredits);
                         document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     }
                 }
-                document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
+                
+                if (availableCredits >= maxCredits) {
+                    document.getElementById('countdown-status').style.display = 'none';
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                } else {
+                    document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
+                }
             }, 1000);
         }
 
@@ -277,10 +351,32 @@
                         </div>
                     </div>
                     <div class="actions">
-                        <span style="color: var(--spotify-green); font-weight:700; font-size:0.9rem;">${song.votes} 👍</span>
+                        <div class="vote-node">
+                            <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
+                                <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                            </button>
+                            <span class="vote-count">${song.ups || 0}</span>
+                        </div>
+                        <div class="vote-node">
+                            <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
+                                <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                            </button>
+                            <span class="vote-count">${song.downs || 0}</span>
+                        </div>
                     </div>
                 </div>
             `).join('');
+        }
+
+        async function castVote(id, type) {
+            try {
+                const res = await fetch('/api/vote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, type })
+                });
+                if (res.ok) fetchSystemState();
+            } catch (e) { console.log("Voting registration error"); }
         }
 
         function executeSearch() {
@@ -318,7 +414,7 @@
                                 </div>
                             </div>
                             <div class="actions">
-                                <button class="btn-request" onclick='submitRequest(${JSON.stringify(track).replace(/'/g, "&apos;")})'>Request</button>
+                                <button class="btn-request" onclick='submitRequest(${JSON.stringify(track).replace(/'/g, "'")})'>Request</button>
                             </div>
                         </div>
                     `).join('');
@@ -343,6 +439,7 @@
                     availableCredits--;
                     localStorage.setItem('userCredits', availableCredits);
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+                    manageCountdownVisibility();
                     document.getElementById('search-input').value = "";
                     fetchSystemState();
                     alert("Song successfully added to the queue!");
