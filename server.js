@@ -51,9 +51,6 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// -------------------------------------------------------------
-// USER SEARCH API
-// -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
@@ -67,12 +64,10 @@ app.get('/api/search', async (req, res) => {
         const trackItems = data.tracks?.items || [];
         
         const tracks = trackItems.map(track => {
-            const rawArtistString = track.artists.map(a => a.name).join(', ');
-            
             return {
                 id: track.id,
                 name: track.name,
-                artist: rawArtistString,
+                artist: track.artists.map(a => a.name).join(', '),
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms)
@@ -92,7 +87,7 @@ app.post('/api/request', (req, res) => {
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
-        existingTrack.votes = (existingTrack.votes || 1) + 1;
+        existingTrack.ups = (existingTrack.ups || 0) + 1;
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
@@ -101,8 +96,25 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
-            votes: 1
+            ups: 1,
+            downs: 0
         });
+    }
+    res.json({ success: true });
+});
+
+// -------------------------------------------------------------
+// VOTE ROUTE INTERACTION
+// -------------------------------------------------------------
+app.post('/api/vote', (req, res) => {
+    const { id, type } = req.body;
+    const track = activeQueue.find(t => t.id === id);
+    if (!track) return res.status(404).json({ error: "Track not found in queue." });
+
+    if (type === 'up') {
+        track.ups = (track.ups || 0) + 1;
+    } else if (type === 'down') {
+        track.downs = (track.downs || 0) + 1;
     }
     res.json({ success: true });
 });
@@ -112,20 +124,17 @@ app.get('/data', (req, res) => {
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        queue: activeQueue.sort((a, b) => ((b.ups || 0) - (b.downs || 0)) - ((a.ups || 0) - (a.downs || 0))),
         history: playedHistory
     });
 });
 
-// -------------------------------------------------------------
-// CONTROL LAYER (ADMIN)
-// -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        queue: activeQueue.sort((a, b) => ((b.ups || 0) - (b.downs || 0)) - ((a.ups || 0) - (a.downs || 0))),
         history: playedHistory
     });
 });
@@ -152,8 +161,8 @@ app.post('/api/admin/action', (req, res) => {
     if (trackIndex !== -1) {
         if (action === 'top') {
             const track = activeQueue[trackIndex];
-            const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
-            track.votes = highestVotes + 1;
+            const highestNet = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => (t.ups || 0) - (t.downs || 0))) : 0;
+            track.ups = highestNet + (track.downs || 0) + 1;
         } else if (action === 'played') {
             const [track] = activeQueue.splice(trackIndex, 1);
             playedHistory.unshift(track);
