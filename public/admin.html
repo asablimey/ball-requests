@@ -20,6 +20,7 @@
             font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
             padding: 25px; 
             margin: 0; 
+            box-sizing: border-box;
         }
 
         /* 🔒 PASSWORD LOCK OVERLAY STYLES */
@@ -46,6 +47,7 @@
             box-shadow: 0 8px 24px rgba(0,0,0,0.5);
             max-width: 320px;
             width: 100%;
+            box-sizing: border-box;
         }
 
         .lock-container h2 {
@@ -53,8 +55,6 @@
             color: white;
             font-size: 1.6rem;
             margin-bottom: 20px;
-            border-bottom: none;
-            padding-bottom: 0;
         }
 
         .lock-input {
@@ -86,7 +86,7 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
+        /* 🟢 CLEANED AUTO-ALIGNING CORE LAYOUT */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -94,6 +94,8 @@
             border-bottom: 1px solid #282828; 
             padding-bottom: 20px; 
             margin-bottom: 20px; 
+            flex-wrap: wrap;
+            gap: 15px;
         }
 
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
@@ -152,19 +154,89 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
-        .lists-container { display: flex; gap: 30px; flex-wrap: wrap; }
-        .panel { flex: 1; min-width: 340px; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; }
+        /* 📐 DYNAMIC CONTAINER GRID (FLIPS SPLIT/STACK ON ROTATION) */
+        .lists-container { 
+            display: flex; 
+            gap: 30px; 
+            flex-wrap: wrap; 
+            width: 100%;
+        }
+        
+        .panel { 
+            flex: 1; 
+            min-width: 320px; /* Forces stack columns cleanly on small vertical layouts */
+            background: var(--panel-bg); 
+            padding: 25px; 
+            border-radius: 16px; 
+            border: 1px solid #222; 
+            box-sizing: border-box;
+        }
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
-        .song-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c; }
-        .song-details { display: flex; align-items: center; gap: 16px; }
-        .song-details img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
-        .song-title { font-weight: 700; margin: 0; font-size: 1.1rem; }
-        .song-artist { color: #a7a7a7; margin: 4px 0 0 0; font-size: 0.9rem; }
+        /* UNIFORM COMPONENT ROW ALIGNMENT */
+        .song-row { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 14px; 
+            background: var(--card-bg); 
+            margin-bottom: 12px; 
+            border-radius: 10px; 
+            border: 1px solid #2c2c2c; 
+            gap: 15px;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        
+        .song-details { 
+            display: flex; 
+            align-items: center; 
+            gap: 16px; 
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .song-details img { 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 6px; 
+            object-fit: cover; 
+            flex-shrink: 0;
+        }
+        
+        .text-container {
+            flex: 1;
+            min-width: 0;
+        }
 
-        .actions { display: flex; gap: 10px; }
-        .btn { padding: 12px 16px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.9rem; }
+        .song-title { 
+            font-weight: 700; 
+            margin: 0; 
+            font-size: 1.1rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .song-artist { 
+            color: #a7a7a7; 
+            margin: 4px 0 0 0; 
+            font-size: 0.9rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .actions { 
+            display: flex; 
+            gap: 10px; 
+            flex-shrink: 0;
+            flex-wrap: wrap; /* Wraps administrative buttons gracefully if column gets skinny */
+            justify-content: flex-end;
+        }
+        
+        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
         .btn:hover { filter: brightness(1.1); }
         .btn-top { background-color: var(--blue-action); }
         .btn-played { background-color: var(--spotify-green); }
@@ -173,6 +245,14 @@
 
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
+
+        /* Media adjustments to fix line spacing on small rotated viewpoints */
+        @media (max-width: 600px) {
+            body { padding: 15px; }
+            h1 { font-size: 1.8rem; }
+            .song-row { flex-direction: column; align-items: flex-start; }
+            .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
+        }
     </style>
 </head>
 <body>
@@ -264,7 +344,7 @@
                     <div class="song-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div>
+                            <div class="text-container">
                                 <p class="song-title">${song.title}</p>
                                 <p class="song-artist">${song.artist}</p>
                                 <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
@@ -283,7 +363,7 @@
                     <div class="song-row history-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div>
+                            <div class="text-container">
                                 <p class="song-title">${song.title}</p>
                                 <p class="song-artist">${song.artist}</p>
                                 <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
