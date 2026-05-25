@@ -20,9 +20,9 @@
             font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
             padding: 25px; 
             margin: 0; 
+            box-sizing: border-box;
         }
 
-        /* 🔒 PASSWORD LOCK OVERLAY STYLES */
         #admin-lock-screen {
             position: fixed;
             top: 0;
@@ -46,6 +46,7 @@
             box-shadow: 0 8px 24px rgba(0,0,0,0.5);
             max-width: 320px;
             width: 100%;
+            box-sizing: border-box;
         }
 
         .lock-container h2 {
@@ -53,8 +54,6 @@
             color: white;
             font-size: 1.6rem;
             margin-bottom: 20px;
-            border-bottom: none;
-            padding-bottom: 0;
         }
 
         .lock-input {
@@ -86,7 +85,6 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -94,6 +92,8 @@
             border-bottom: 1px solid #282828; 
             padding-bottom: 20px; 
             margin-bottom: 20px; 
+            flex-wrap: wrap;
+            gap: 15px;
         }
 
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
@@ -152,19 +152,196 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
-        .lists-container { display: flex; gap: 30px; flex-wrap: wrap; }
-        .panel { flex: 1; min-width: 340px; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; }
+        /* TAB NAVIGATION STYLES */
+        .tab-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #282828;
+            padding-bottom: 10px;
+        }
+
+        .tab-button {
+            background-color: transparent;
+            color: #a7a7a7;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .tab-button:hover { color: white; background-color: var(--card-bg); }
+        .tab-button.active-tab {
+            color: white;
+            background-color: var(--spotify-green);
+        }
+
+        .tab-content {
+            display: none; /* Hidden by default */
+            width: 100%;
+        }
+        .tab-content.active-content {
+            display: block; /* Visible when tab is selected */
+        }
+        
+        .panel { 
+            width: 100%;
+            background: var(--panel-bg); 
+            padding: 25px; 
+            border-radius: 16px; 
+            border: 1px solid #222; 
+            box-sizing: border-box;
+        }
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
-        .song-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c; }
-        .song-details { display: flex; align-items: center; gap: 16px; }
-        .song-details img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
-        .song-title { font-weight: 700; margin: 0; font-size: 1.1rem; }
-        .song-artist { color: #a7a7a7; margin: 4px 0 0 0; font-size: 0.9rem; }
+        .song-row { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 14px; 
+            background: var(--card-bg); 
+            margin-bottom: 12px; 
+            border-radius: 10px; 
+            border: 1px solid #2c2c2c; 
+            gap: 15px;
+            box-sizing: border-box;
+            width: 100%;
+        }
 
-        .actions { display: flex; gap: 10px; }
-        .btn { padding: 12px 16px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.9rem; }
+        /* Message Note Row Layout */
+        .msg-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: var(--card-bg);
+            margin-bottom: 12px;
+            border-radius: 10px;
+            border: 1px solid #2c2c2c;
+            border-left: 4px solid var(--spotify-green);
+            gap: 20px;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        .msg-text {
+            font-size: 1.05rem;
+            font-weight: 500;
+            margin: 0;
+            color: #ffffff;
+            word-break: break-word;
+        }
+        .msg-time {
+            font-size: 0.8rem;
+            color: #a7a7a7;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        
+        .song-details { 
+            display: flex; 
+            align-items: center; 
+            gap: 16px; 
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .song-details img { 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 6px; 
+            object-fit: cover; 
+            flex-shrink: 0;
+        }
+        
+        .text-container {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .title-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .song-title { 
+            font-weight: 700; 
+            margin: 0; 
+            font-size: 1.1rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .explicit-badge {
+            background-color: #7f7f7f;
+            color: var(--spotify-black);
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        
+        .song-artist { 
+            color: #a7a7a7; 
+            margin: 4px 0 0 0; 
+            font-size: 0.9rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .admin-vote-block {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-right: 10px;
+        }
+
+        .vote-display-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 28px;
+        }
+
+        .vote-display-node svg {
+            width: 18px;
+            height: 18px;
+            stroke-width: 2.5;
+        }
+        .node-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
+        .node-down svg { stroke: var(--red-action); fill: var(--red-action); }
+
+        .vote-display-count {
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin-top: 4px;
+            color: #a7a7a7;
+        }
+        .node-up .vote-display-count { color: var(--spotify-green); }
+        .node-down .vote-display-count { color: var(--red-action); }
+
+        .actions { 
+            display: flex; 
+            gap: 10px; 
+            align-items: center;
+            flex-shrink: 0;
+            flex-wrap: wrap; 
+            justify-content: flex-end;
+        }
+        
+        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
         .btn:hover { filter: brightness(1.1); }
         .btn-top { background-color: var(--blue-action); }
         .btn-played { background-color: var(--spotify-green); }
@@ -173,6 +350,13 @@
 
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
+
+        @media (max-width: 600px) {
+            body { padding: 15px; }
+            h1 { font-size: 1.8rem; }
+            .song-row, .msg-row { flex-direction: column; align-items: flex-start; }
+            .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
+        }
     </style>
 </head>
 <body>
@@ -205,14 +389,31 @@
 
     <div class="control-bar">
         <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearMessages', 'Are you sure you want to clear your guest notes log?')">🗑 Clear Guest Notes</button>
         <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
-    <div class="lists-container">
+    <div class="tab-bar">
+        <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
+        <button id="tab-btn-messages" class="tab-button" onclick="switchTab('messages')">Messages</button>
+        <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
+    </div>
+
+    <div id="tab-panel-queue" class="tab-content active-content">
         <div class="panel">
             <h2>Current Queue</h2>
             <div id="queue-list"></div>
         </div>
+    </div>
+
+    <div id="tab-panel-messages" class="tab-content">
+        <div class="panel">
+            <h2>Guest Notes & Shoutouts</h2>
+            <div id="messages-list"></div>
+        </div>
+    </div>
+
+    <div id="tab-panel-history" class="tab-content">
         <div class="panel">
             <h2>Song History (Played)</h2>
             <div id="history-list"></div>
@@ -221,20 +422,48 @@
 
     <script>
         let requestsAllowed = true;
-        let isAuthorized = false; // Prevents background fetch before checking pass
+        let isAuthorized = false; 
 
-        // 🔒 PASSWORD SECURITY CHECK
+        // Tab selection switching algorithm
+        function switchTab(targetTab) {
+            const queueBtn = document.getElementById('tab-btn-queue');
+            const messagesBtn = document.getElementById('tab-btn-messages');
+            const historyBtn = document.getElementById('tab-btn-history');
+            
+            const queuePanel = document.getElementById('tab-panel-queue');
+            const messagesPanel = document.getElementById('tab-panel-messages');
+            const historyPanel = document.getElementById('tab-panel-history');
+
+            // Reset active states
+            queueBtn.classList.remove('active-tab');
+            messagesBtn.classList.remove('active-tab');
+            historyBtn.classList.remove('active-tab');
+            
+            queuePanel.classList.remove('active-content');
+            messagesPanel.classList.remove('active-content');
+            historyPanel.classList.remove('active-content');
+
+            if (targetTab === 'queue') {
+                queueBtn.classList.add('active-tab');
+                queuePanel.classList.add('active-content');
+            } else if (targetTab === 'messages') {
+                messagesBtn.classList.add('active-tab');
+                messagesPanel.classList.add('active-content');
+            } else {
+                historyBtn.classList.add('active-tab');
+                historyPanel.classList.add('active-content');
+            }
+        }
+
         function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
-            
-            // 🔑 Confirmed System Password
             const masterPassword = "ballDJ2026"; 
 
             if (inputField.value === masterPassword) {
                 isAuthorized = true;
                 document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard(); // Run immediately upon validation
+                updateDashboard(); 
             } else {
                 errorMsg.style.display = 'block';
                 inputField.value = '';
@@ -243,7 +472,7 @@
         }
 
         async function updateDashboard() {
-            if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+            if (!isAuthorized) return; 
             
             try {
                 const res = await fetch('/api/admin/data');
@@ -267,9 +496,26 @@
                     <div class="song-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+                            <div class="text-container">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
+                                <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
+                            </div>
                         </div>
                         <div class="actions">
+                            <div class="admin-vote-block">
+                                <div class="vote-display-node node-up">
+                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                                    <span class="vote-display-count">${song.ups || 0}</span>
+                                </div>
+                                <div class="vote-display-node node-down">
+                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                                    <span class="vote-display-count">${song.downs || 0}</span>
+                                </div>
+                            </div>
                             <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
                             <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
                             <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
@@ -277,12 +523,27 @@
                     </div>
                 `).join('');
 
+                const messagesList = document.getElementById('messages-list');
+                messagesList.innerHTML = !data.messages || data.messages.length === 0 ? '<p class="empty-placeholder">No messages from the crowd yet.</p>' : data.messages.map(msg => `
+                    <div class="msg-row">
+                        <p class="msg-text">${msg.text}</p>
+                        <span class="msg-time">${msg.timestamp}</span>
+                    </div>
+                `).reverse().join('');
+
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
                     <div class="song-row history-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+                            <div class="text-container">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
+                                <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
+                            </div>
                         </div>
                     </div>
                 `).join('');
@@ -335,7 +596,6 @@
             updateDashboard();
         }
 
-        // Lock screen focus on setup load
         window.onload = () => {
             document.getElementById('password-input').focus();
         };
