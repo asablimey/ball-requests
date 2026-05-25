@@ -152,16 +152,42 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
-        .lists-container { 
-            display: flex; 
-            gap: 30px; 
-            flex-wrap: wrap; 
+        /* TAB NAVIGATION STYLES */
+        .tab-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #282828;
+            padding-bottom: 10px;
+        }
+
+        .tab-button {
+            background-color: transparent;
+            color: #a7a7a7;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .tab-button:hover { color: white; background-color: var(--card-bg); }
+        .tab-button.active-tab {
+            color: white;
+            background-color: var(--spotify-green);
+        }
+
+        .tab-content {
+            display: none; /* Hidden by default */
             width: 100%;
+        }
+        .tab-content.active-content {
+            display: block; /* Visible when tab is selected */
         }
         
         .panel { 
-            flex: 1; 
-            min-width: 320px; 
+            width: 100%;
             background: var(--panel-bg); 
             padding: 25px; 
             border-radius: 16px; 
@@ -337,11 +363,19 @@
         <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
-    <div class="lists-container">
+    <div class="tab-bar">
+        <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
+        <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
+    </div>
+
+    <div id="tab-panel-queue" class="tab-content active-content">
         <div class="panel">
             <h2>Current Queue</h2>
             <div id="queue-list"></div>
         </div>
+    </div>
+
+    <div id="tab-panel-history" class="tab-content">
         <div class="panel">
             <h2>Song History (Played)</h2>
             <div id="history-list"></div>
@@ -351,6 +385,26 @@
     <script>
         let requestsAllowed = true;
         let isAuthorized = false; 
+
+        // Tab selection switching algorithm
+        function switchTab(targetTab) {
+            const queueBtn = document.getElementById('tab-btn-queue');
+            const historyBtn = document.getElementById('tab-btn-history');
+            const queuePanel = document.getElementById('tab-panel-queue');
+            const historyPanel = document.getElementById('tab-panel-history');
+
+            if (targetTab === 'queue') {
+                queueBtn.classList.add('active-tab');
+                historyBtn.classList.remove('active-tab');
+                queuePanel.classList.add('active-content');
+                historyPanel.classList.remove('active-content');
+            } else {
+                historyBtn.classList.add('active-tab');
+                queueBtn.classList.remove('active-tab');
+                historyPanel.classList.add('active-content');
+                queuePanel.classList.remove('active-content');
+            }
+        }
 
         function verifyPassword() {
             const inputField = document.getElementById('password-input');
