@@ -26,12 +26,20 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-// Fallback search layer to grab metrics since Spotify deprecated audio-features
-async function fetchBPMFromAudioDB(trackName, artistName) {
+// Optimized fallback database fetcher with strict string sanitization
+async function fetchBPMFromAudioDB(trackName, rawArtistName) {
     try {
-        const queryUrl = `https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s=${encodeURIComponent(artistName)}&t=${encodeURIComponent(trackName)}`;
+        // 1. Isolate the primary artist (Take everything before the first comma or "feat")
+        let cleanArtist = rawArtistName.split(',')[0].split('feat')[0].trim();
+        
+        // 2. Clean up common collaborative syntax from the song title
+        let cleanTrack = trackName.split('(with')[0].split('(feat')[0].split('-')[0].trim();
+
+        const queryUrl = `https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s=${encodeURIComponent(cleanArtist)}&t=${encodeURIComponent(cleanTrack)}`;
+        
         const res = await fetch(queryUrl);
         if (!res.ok) return "--";
+        
         const data = await res.json();
         if (data && data.track && data.track[0] && data.track[0].intBPM) {
             const parsedBpm = parseInt(data.track[0].intBPM);
@@ -77,22 +85,22 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
         
         const trackItems = data.tracks?.items || [];
         
-        // Match tracks across fallback engines asynchronously
+        // Process tracks sequentially or concurrently with our string cleaning rule
         const tracks = await Promise.all(trackItems.map(async (track) => {
-            const cleanArtist = track.artists[0]?.name || '';
-            const detectedBpm = await fetchBPMFromAudioDB(track.name, cleanArtist);
+            const rawArtistString = track.artists.map(a => a.name).join(', ');
+            const detectedBpm = await fetchBPMFromAudioDB(track.name, rawArtistString);
             
             return {
                 id: track.id,
                 name: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
+                artist: rawArtistString,
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms),
