@@ -1,146 +1,223 @@
 const express = require('express');
 const path = require('path');
+const fetch = require('node-fetch');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Middleware configuration
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Serve all general assets from the public folder automatically
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Local state storage variables
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+
+let systemConfigs = {
+    maxCredits: 3,
+    countdownLength: 60,
+    requestsAllowed: true
+};
+
 let activeQueue = [];
 let playedHistory = [];
-let maxCredits = 3;
-let countdownLength = 60;
-let spotifyToken = "";
+let spotifyAccessToken = "";
 
-// Mock/Placeholder functions for structural safety
-async function getSpotifyToken() {
-    console.log("[SPOTIFY] Initializing authorization token generation sequence...");
-    spotifyToken = "sample_token_data_stream";
-    return spotifyToken;
+function formatDuration(ms) {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(0);
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-// --- API ENDPOINTS ---
+async function getSpotifyToken() {
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+        console.error("[SPOTIFY] Missing credentials in environment.");
+        return;
+    }
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials'
+        });
+        const data = await response.json();
+        if (data.access_token) {
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Master token refreshed.");
+        }
+    } catch (err) {
+        console.error("[SPOTIFY] Auth error:", err.message);
+    }
+}
+setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// Fetch current state data channel
-app.get('/data', (req, res) => {
-    res.json({
-        queue: activeQueue,
-        history: playedHistory,
-        maxCredits: maxCredits,
-        countdownLength: countdownLength
-    });
-});
-
-// Search API processing node
+// SEARCH ROUTE - strictly blocked if DJ turns off requests
 app.get('/api/search', async (req, res) => {
-    const query = req.query.q || "";
-    console.log(`[SEARCH] Query received: "${query}"`);
-    
-    // Fallback static array matching the 5 tracks structure from your dashboard view
-    const mockTracks = [
-        { name: "Stay", artist: "Rihanna, Mikky Ekko", artwork: "https://via.placeholder.com/48", explicit: false },
-        { name: "STAY HERE 4 LIFE (feat. Brent Faiyaz)", artist: "A$AP Rocky, Brent Faiyaz", artwork: "https://via.placeholder.com/48", explicit: true },
-        { name: "Staying Still", artist: "Noah Kahan", artwork: "https://via.placeholder.com/48", explicit: false },
-        { name: "STAY (with Justin Bieber)", artist: "The Kid LAROI, Justin Bieber", artwork: "https://via.placeholder.com/48", explicit: true },
-        { name: "Stayin' Alive - From \"Saturday Night Fever\" Soundtrack", artist: "Bee Gees", artwork: "https://via.placeholder.com/48", explicit: false }
-    ];
+    if (!systemConfigs.requestsAllowed) {
+        return res.json({ tracks: [] }); 
+    }
 
-    res.json({ tracks: mockTracks });
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [] });
+    if (!spotifyAccessToken) await getSpotifyToken();
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await response.json();
+        const trackItems = data.tracks?.items || [];
+        
+        const tracks = trackItems.map(track => {
+            return {
+                id: track.id,
+                name: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+                explicit: track.explicit || false,
+                duration: formatDuration(track.duration_ms)
+            };
+        });
+        
+        res.json({ tracks });
+    } catch (err) {
+        res.status(500).json({ error: "Search feature unavailable" });
+    }
 });
 
-// Request submission processing node
 app.post('/api/request', (req, res) => {
+    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
-    if (!track) return res.status(400).json({ error: "Missing track context framework." });
+    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
-    const newRequest = {
-        id: 'track_' + Math.random().toString(36).substr(2, 9),
-        title: track.name || track.title,
-        artist: track.artist,
-        artwork: track.artwork || "https://via.placeholder.com/48",
-        explicit: track.explicit || false,
-        ups: 0,
-        downs: 0,
-        upvoters: [],
-        downvoters: []
-    };
-
-    activeQueue.push(newRequest);
-    res.json({ success: true, track: newRequest });
+    const existingTrack = activeQueue.find(t => t.id === track.id);
+    if (existingTrack) {
+        if (!existingTrack.upvoters.includes('system-generated')) {
+            existingTrack.upvoters.push('system-generated');
+        }
+    } else {
+        activeQueue.push({
+            id: track.id || Date.now().toString(),
+            title: track.name,
+            artist: track.artist || 'Unknown Artist',
+            artwork: track.artwork || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: track.duration || '--:--',
+            upvoters: [],
+            downvoters: []
+        });
+    }
+    res.json({ success: true });
 });
 
-// Vote balancing array parser
 app.post('/api/vote', (req, res) => {
     const { id, type, voterId } = req.body;
-    const track = activeQueue.find(s => s.id === id);
-    
-    if (!track) return res.status(404).json({ error: "Target track reference missing." });
+    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+
+    const track = activeQueue.find(t => t.id === id);
+    if (!track) return res.status(404).json({ error: "Track missing from live pool." });
 
     if (!track.upvoters) track.upvoters = [];
     if (!track.downvoters) track.downvoters = [];
 
+    const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
+    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
+
     if (type === 'up') {
         if (track.upvoters.includes(voterId)) {
-            track.upvoters = track.upvoters.filter(v => v !== voterId);
-            track.ups--;
+            clearUp();
         } else {
+            clearDown();
             track.upvoters.push(voterId);
-            track.ups++;
-            if (track.downvoters.includes(voterId)) {
-                track.downvoters = track.downvoters.filter(v => v !== voterId);
-                track.downs--;
-            }
         }
     } else if (type === 'down') {
         if (track.downvoters.includes(voterId)) {
-            track.downvoters = track.downvoters.filter(v => v !== voterId);
-            track.downs--;
+            clearDown();
         } else {
+            clearUp();
             track.downvoters.push(voterId);
-            track.downs++;
-            if (track.upvoters.includes(voterId)) {
-                track.upvoters = track.upvoters.filter(v => v !== voterId);
-                track.ups--;
-            }
         }
     }
 
     res.json({ success: true });
 });
 
-// Dedicated DJ text messaging interface endpoint
+// NEW MESSAGE FEATURE ROUTE - Safely receives on-site popup submissions
 app.post('/api/message', (req, res) => {
     const { message, voterId } = req.body;
-    console.log(`[DJ MESSAGE] Incoming message from [${voterId}]: ${message}`);
+    console.log(`[DJ MESSAGE] Received from client ${voterId || 'Anonymous'}: "${message}"`);
     res.json({ success: true });
 });
 
-// Admin Queue Modification endpoint
+function buildSortedQueue() {
+    return activeQueue.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork,
+        explicit: t.explicit,
+        duration: t.duration,
+        ups: t.upvoters?.length || 0,
+        downs: t.downvoters?.length || 0,
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || []
+    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+app.get('/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: buildSortedQueue(),
+        history: playedHistory
+    });
+});
+
+app.get('/api/admin/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: buildSortedQueue(),
+        history: playedHistory
+    });
+});
+
+app.post('/api/admin/config', (req, res) => {
+    const { maxCredits, countdownLength } = req.body;
+    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
+    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
 app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
-    const trackIndex = activeQueue.findIndex(s => s.id === id);
+    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
+    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
 
+    const trackIndex = activeQueue.findIndex(t => t.id === id);
     if (trackIndex !== -1) {
-        const track = activeQueue[trackIndex];
-        
-        if (action === 'boost') {
-            const highestNet = activeQueue.reduce((max, t) => Math.max(max, (t.ups || 0) - (t.downs || 0)), 0);
-            track.ups = highestNet + 1;
-            track.downs = 0;
+        if (action === 'top') {
+            const track = activeQueue[trackIndex];
+            const sorted = buildSortedQueue();
+            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
             track.downvoters = [];
             track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
         } else if (action === 'played') {
-            const [removedTrack] = activeQueue.splice(trackIndex, 1);
+            const [track] = activeQueue.splice(trackIndex, 1);
             playedHistory.unshift({
-                title: removedTrack.title,
-                artist: removedTrack.artist,
-                artwork: removedTrack.artwork,
-                explicit: removedTrack.explicit
+                title: track.title,
+                artist: track.artist,
+                artwork: track.artwork,
+                explicit: track.explicit,
+                duration: track.duration
             });
         } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
@@ -149,19 +226,16 @@ app.post('/api/admin/action', (req, res) => {
     res.json({ success: true });
 });
 
-// --- ROUTING LOGIC BLOCK ---
-
-// 1. Explicitly serve the admin file when its specific URL is called
+// ADMIN PROTECTION ROUTE - Tells Express exactly what to do when looking for admin file
 app.get('/admin.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// 2. Wildcard fallback: Redirect all unmapped regular paths to the guest home page
+// WILDCARD FALLBACK - Keeps guests strictly locked on index.html
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// --- SERVER EXECUTION LINK ---
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
     await getSpotifyToken();
