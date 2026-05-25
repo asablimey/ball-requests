@@ -26,31 +26,6 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-// Optimized fallback database fetcher with strict string sanitization
-async function fetchBPMFromAudioDB(trackName, rawArtistName) {
-    try {
-        // 1. Isolate the primary artist (Take everything before the first comma or "feat")
-        let cleanArtist = rawArtistName.split(',')[0].split('feat')[0].trim();
-        
-        // 2. Clean up common collaborative syntax from the song title
-        let cleanTrack = trackName.split('(with')[0].split('(feat')[0].split('-')[0].trim();
-
-        const queryUrl = `https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s=${encodeURIComponent(cleanArtist)}&t=${encodeURIComponent(cleanTrack)}`;
-        
-        const res = await fetch(queryUrl);
-        if (!res.ok) return "--";
-        
-        const data = await res.json();
-        if (data && data.track && data.track[0] && data.track[0].intBPM) {
-            const parsedBpm = parseInt(data.track[0].intBPM);
-            return parsedBpm && parsedBpm > 0 ? parsedBpm.toString() : "--";
-        }
-        return "--";
-    } catch (e) {
-        return "--";
-    }
-}
-
 async function getSpotifyToken() {
     if (!CLIENT_ID || !CLIENT_SECRET) {
         console.error("[SPOTIFY] Missing credentials in environment.");
@@ -89,13 +64,10 @@ app.get('/api/search', async (req, res) => {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
-        
         const trackItems = data.tracks?.items || [];
         
-        // Process tracks sequentially or concurrently with our string cleaning rule
-        const tracks = await Promise.all(trackItems.map(async (track) => {
+        const tracks = trackItems.map(track => {
             const rawArtistString = track.artists.map(a => a.name).join(', ');
-            const detectedBpm = await fetchBPMFromAudioDB(track.name, rawArtistString);
             
             return {
                 id: track.id,
@@ -103,10 +75,9 @@ app.get('/api/search', async (req, res) => {
                 artist: rawArtistString,
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms),
-                bpm: detectedBpm
+                duration: formatDuration(track.duration_ms)
             };
-        }));
+        });
         
         res.json({ tracks });
     } catch (err) {
@@ -130,7 +101,6 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
-            bpm: track.bpm || '--',
             votes: 1
         });
     }
