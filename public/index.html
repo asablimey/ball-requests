@@ -41,6 +41,13 @@
 
         h1 { margin: 0; font-size: 1.8rem; font-weight: 800; }
 
+        .credits-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+        }
+
         .credits-display {
             background-color: var(--panel-bg);
             padding: 10px 20px;
@@ -48,6 +55,13 @@
             font-weight: 700;
             border: 1px solid #282828;
             white-space: nowrap;
+        }
+
+        .countdown-display {
+            font-size: 0.85rem;
+            color: #a7a7a7;
+            font-weight: 600;
+            margin-right: 10px;
         }
 
         .search-box {
@@ -72,11 +86,10 @@
             font-weight: 700;
         }
 
-        /* 📱 AUTO-ALIGNING RESPONSIVE ROW ENGINE */
         .song-row {
             display: flex;
             justify-content: space-between;
-            align-items: center; /* Keeps items perfectly centered vertically */
+            align-items: center;
             padding: 12px 16px;
             background: var(--card-bg);
             margin-bottom: 12px;
@@ -92,7 +105,7 @@
             align-items: center;
             gap: 16px;
             flex: 1;
-            min-width: 0; /* Prevents text overflow breaking alignment */
+            min-width: 0;
         }
 
         .song-details img {
@@ -100,12 +113,19 @@
             height: 48px;
             border-radius: 4px;
             object-fit: cover;
-            flex-shrink: 0; /* Prevents image from squishing on rotation */
+            flex-shrink: 0;
         }
 
         .text-block {
             flex: 1;
             min-width: 0;
+        }
+
+        .title-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
         }
 
         .song-title {
@@ -115,6 +135,22 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+
+        /* 🅱️ EXPLICIT TAG STYLES */
+        .explicit-badge {
+            background-color: #7f7f7f;
+            color: var(--spotify-black);
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 1;
         }
 
         .song-artist {
@@ -148,10 +184,10 @@
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
 
-        /* Handle extra slim portrait phone windows smoothly */
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
+            .credits-container { align-items: center; width: 100%; }
         }
     </style>
 </head>
@@ -160,7 +196,10 @@
     <div class="container">
         <div class="header">
             <h1>Song Requests</h1>
-            <div id="credits-status" class="credits-display">Credits: -- / --</div>
+            <div class="credits-container">
+                <div id="credits-status" class="credits-display">Credits: -- / --</div>
+                <div id="countdown-status" class="countdown-display">Regen: --s</div>
+            </div>
         </div>
 
         <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
@@ -173,6 +212,8 @@
         let availableCredits = 3;
         let maxCredits = 3;
         let searchTimeout = null;
+        let timeRemaining = 60;
+        let countdownTimer = null;
 
         async function fetchSystemState() {
             try {
@@ -182,8 +223,8 @@
                 
                 maxCredits = data.maxCredits;
                 setupLocalCredits();
+                startLocalCountdown(data.countdownLength);
 
-                // Only render active queue if search field is empty
                 if (document.getElementById('search-input').value.trim() === "") {
                     document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
@@ -199,6 +240,24 @@
             document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
         }
 
+        function startLocalCountdown(serverDuration) {
+            if (countdownTimer) return; // Prevent overlapping loops
+            timeRemaining = serverDuration;
+            
+            countdownTimer = setInterval(() => {
+                timeRemaining--;
+                if (timeRemaining <= 0) {
+                    timeRemaining = serverDuration;
+                    if (availableCredits < maxCredits) {
+                        availableCredits = Math.min(maxCredits, availableCredits + 1);
+                        localStorage.setItem('userCredits', availableCredits);
+                        document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+                    }
+                }
+                document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
+            }, 1000);
+        }
+
         function renderQueue(queue) {
             const display = document.getElementById('main-display-list');
             if (queue.length === 0) {
@@ -210,7 +269,10 @@
                     <div class="song-details">
                         <img src="${song.artwork}">
                         <div class="text-block">
-                            <p class="song-title">${song.title}</p>
+                            <div class="title-wrapper">
+                                <p class="song-title">${song.title}</p>
+                                ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                            </div>
                             <p class="song-artist">${song.artist}</p>
                         </div>
                     </div>
@@ -248,7 +310,10 @@
                             <div class="song-details">
                                 <img src="${track.artwork}">
                                 <div class="text-block">
-                                    <p class="song-title">${track.name}</p>
+                                    <div class="title-wrapper">
+                                        <p class="song-title">${track.name}</p>
+                                        ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                    </div>
                                     <p class="song-artist">${track.artist}</p>
                                 </div>
                             </div>
@@ -288,7 +353,6 @@
             } catch (e) { alert("Failed to connect to request server."); }
         }
 
-        // Initialize and start live cycle tracking
         fetchSystemState();
         setInterval(fetchSystemState, 4000);
     </script>
