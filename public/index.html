@@ -3,657 +3,280 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DJ Request Station</title>
+    <title>Submit a Request</title>
     <style>
         :root {
             --spotify-green: #1DB954;
             --spotify-black: #121212;
             --panel-bg: #181818;
             --card-bg: #242424;
+            --text-muted: #a7a7a7;
             --red-action: #e91429;
         }
 
         body {
             background-color: var(--spotify-black);
             color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
             padding: 20px;
-            box-sizing: border-box;
-            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            width: 100%;
+        .container { width: 100%; max-width: 480px; }
+        
+        h2 { 
+            font-weight: 800; 
+            letter-spacing: -0.5px; 
+            margin-bottom: 15px; 
+            border-left: 4px solid var(--spotify-green); 
+            padding-left: 10px;
         }
 
-        .header {
+        .status-card {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-top: 3px solid var(--spotify-green);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #282828;
-            padding-bottom: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-            gap: 15px;
         }
 
-        h1 { margin: 0; font-size: 1.8rem; font-weight: 800; }
-
-        .credits-container {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .credits-display {
-            background-color: var(--panel-bg);
-            padding: 10px 20px;
-            border-radius: 50px;
-            font-weight: 700;
-            border: 1px solid #282828;
-            white-space: nowrap;
-            box-sizing: border-box;
-            height: 41px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .msg-dj-btn {
-            background-color: var(--spotify-green);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 50px;
-            font-weight: 700;
-            border: none;
-            white-space: nowrap;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-family: inherit;
-            box-sizing: border-box;
-            height: 41px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.1s ease;
-        }
-        .msg-dj-btn:active { transform: scale(0.95); }
-
-        .countdown-display {
-            font-size: 0.85rem;
-            color: #a7a7a7;
-            font-weight: 600;
-            margin-right: 10px;
-            display: none;
-        }
+        .status-info h3 { margin: 0; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; }
+        .status-info p { margin: 4px 0 0 0; font-size: 1.4rem; font-weight: 800; color: var(--spotify-green); }
 
         .search-box {
             width: 100%;
             background-color: var(--panel-bg);
-            border: 1px solid #333;
-            padding: 14px 20px;
+            border: 1px solid #282828;
+            padding: 14px;
             color: white;
-            border-radius: 50px;
+            border-radius: 8px;
             font-size: 1rem;
             box-sizing: border-box;
             outline: none;
-            margin-bottom: 25px;
-            transition: border-color 0.2s ease;
+            margin-bottom: 20px;
         }
         .search-box:focus { border-color: var(--spotify-green); }
+        .search-box:disabled { background-color: #1a1a1a; color: #555; cursor: not-allowed; }
 
         .section-title {
             font-size: 1.2rem;
-            color: var(--spotify-green);
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             margin-bottom: 15px;
-            font-weight: 700;
         }
 
-        .song-row {
+        .track-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 16px;
-            background: var(--card-bg);
-            margin-bottom: 12px;
+            padding: 12px;
+            background: var(--panel-bg);
+            margin-bottom: 8px;
             border-radius: 8px;
-            border: 1px solid #2c2c2c;
-            gap: 16px;
-            box-sizing: border-box;
-            width: 100%;
+            border: 1px solid #222;
         }
 
-        .song-details {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex: 1;
-            min-width: 0;
-        }
-
-        .song-details img {
-            width: 48px;
-            height: 48px;
-            border-radius: 4px;
-            object-fit: cover;
-            flex-shrink: 0;
-        }
-
-        .text-block {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .title-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-
-        .song-title {
-            font-weight: 700;
-            margin: 0;
-            font-size: 1rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+        .track-details { display: flex; align-items: center; gap: 12px; }
+        .track-details img { width: 42px; height: 42px; border-radius: 4px; object-fit: cover; }
+        .track-title { font-weight: 700; margin: 0; font-size: 1rem; }
+        .track-artist { color: var(--text-muted); margin: 2px 0 0 0; font-size: 0.85rem; }
 
         .explicit-badge {
-            background-color: #7f7f7f;
-            color: var(--spotify-black);
+            background-color: var(--red-action);
+            color: white;
             font-size: 0.65rem;
-            font-weight: 700;
-            padding: 1px 4px;
-            border-radius: 2px;
-            text-transform: uppercase;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            line-height: 1;
+            font-weight: 900;
+            padding: 2px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            display: inline-block;
+            vertical-align: middle;
         }
 
-        .song-artist {
-            color: #a7a7a7;
-            margin: 4px 0 0 0;
+        .action-container { display: flex; align-items: center; gap: 12px; }
+        .duration-label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+        .req-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            cursor: pointer;
             font-size: 0.85rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
         }
-
-        .actions {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            flex-shrink: 0;
-        }
-
-        .vote-node {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-width: 34px;
-        }
-
-        .vote-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.1s ease;
-        }
-        .vote-btn:active { transform: scale(0.8); }
-
-        .vote-btn svg {
-            width: 22px;
-            height: 22px;
-            fill: none;
-            stroke-width: 2;
-            transition: fill 0.2s ease, stroke 0.2s ease;
-        }
-
-        .vote-btn-up svg { stroke: #666; }
-        .vote-btn-down svg { stroke: #666; }
-
-        .vote-node.user-voted-up .vote-btn-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
-        .vote-node.user-voted-down .vote-btn-down svg { stroke: var(--red-action); fill: var(--red-action); }
-
-        .vote-count {
-            font-size: 0.8rem;
-            font-weight: 700;
-            margin-top: 4px;
-            color: #a7a7a7;
-            text-align: center;
-        }
-        .user-voted-up .vote-count { color: var(--spotify-green); }
-        .user-voted-down .vote-count { color: var(--red-action); }
-
-        .btn-request {
-            background-color: var(--spotify-green);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 50px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: transform 0.1s ease;
-        }
-        .btn-request:active { transform: scale(0.95); }
-
-        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
-
-        /* Custom Popup Modal Styles */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.75);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-        }
-
-        .modal-overlay.active {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        .modal-content {
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            border-radius: 12px;
-            padding: 24px;
-            width: 90%;
-            max-width: 450px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            transform: scale(0.95);
-            transition: transform 0.2s ease;
-        }
-
-        .modal-overlay.active .modal-content {
-            transform: scale(1);
-        }
-
-        .modal-title {
-            font-size: 1.3rem;
-            font-weight: 700;
-            margin-top: 0;
-            margin-bottom: 16px;
-            color: white;
-        }
-
-        .modal-textarea {
-            width: 100%;
-            height: 100px;
-            background-color: var(--panel-bg);
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 12px;
-            color: white;
-            font-family: inherit;
-            font-size: 0.95rem;
-            box-sizing: border-box;
-            resize: none;
-            outline: none;
-            margin-bottom: 20px;
-            transition: border-color 0.2s ease;
-        }
-
-        .modal-textarea:focus {
-            border-color: var(--spotify-green);
-        }
-
-        .modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-        }
-
-        .modal-btn {
-            padding: 10px 20px;
-            border-radius: 50px;
-            font-weight: 700;
-            font-size: 0.9rem;
-            cursor: pointer;
-            border: none;
-            font-family: inherit;
-        }
-
-        .modal-btn-cancel {
-            background-color: transparent;
-            color: #a7a7a7;
-            border: 1px solid #333;
-        }
-        .modal-btn-cancel:hover {
-            color: white;
-            border-color: #666;
-        }
-
-        .modal-btn-send {
-            background-color: var(--spotify-green);
-            color: white;
-        }
-        .modal-btn-send:active {
-            transform: scale(0.95);
-        }
-
-        @media (max-width: 400px) {
-            .song-row { padding: 10px; gap: 10px; }
-            .btn-request { padding: 8px 14px; font-size: 0.8rem; }
-            .credits-container { align-items: center; width: 100%; justify-content: center; }
-        }
+        .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
+        
+        .placeholder-text { color: var(--text-muted); font-style: italic; font-size: 0.95rem; }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <div class="header">
-            <h1>Song Requests</h1>
-            <div class="credits-container">
-                <button id="custom-action-btn" class="msg-dj-btn" onclick="openMessageModal()">Message the DJ</button>
-                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
-                    <div id="credits-status" class="credits-display">Credits: -- / --</div>
-                    <div id="countdown-status" class="countdown-display">Regen in: --s</div>
-                </div>
+        <h2>Request a Song</h2>
+        
+        <div class="status-card">
+            <div class="status-info">
+                <h3>Your Credits</h3>
+                <p id="credits-display">3 / 3</p>
+            </div>
+            <div class="status-info" style="text-align: right;">
+                <h3>Next Credit In</h3>
+                <p id="timer-display">MAX</p>
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
-
-        <div class="section-title" id="list-title">Live Queue</div>
-        <div id="main-display-list"></div>
-    </div>
-
-    <div id="message-modal" class="modal-overlay" onclick="closeMessageModal(event)">
-        <div class="modal-content">
-            <div class="modal-title">Message the DJ</div>
-            <textarea id="dj-message-text" class="modal-textarea" placeholder="Type your dedication, shoutout, or note here..."></textarea>
-            <div class="modal-actions">
-                <button class="modal-btn modal-btn-cancel" onclick="closeMessageModal(null)">Cancel</button>
-                <button class="modal-btn modal-btn-send" onclick="sendMessageToDJ()">Send Message</button>
-            </div>
+        <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
+        
+        <h3 class="section-title">Search Results</h3>
+        <div id="results-list">
+            <p class="placeholder-text">Type in the box above to discover tracks.</p>
         </div>
     </div>
 
     <script>
-        let availableCredits = 3;
         let maxCredits = 3;
-        let searchTimeout = null;
-        let timeRemaining = 60;
-        let countdownTimer = null;
-        let currentServerDuration = 60;
-        let globalSearchResults = [];
+        let localCredits = parseInt(localStorage.getItem('dj_user_credits'));
+        let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
+        let regenIntervalLength = 60; 
+        let systemRequestsOpen = true;
 
-        if (!localStorage.getItem('voterSignatureToken')) {
-            localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
-        }
-        const voterSignatureToken = localStorage.getItem('voterSignatureToken');
-
-        /* Modal Visibility Logic */
-        function openMessageModal() {
-            document.getElementById('message-modal').classList.add('active');
-            document.getElementById('dj-message-text').focus();
+        if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
+            localCredits = maxCredits;
+            lastRegenTime = Date.now();
+            localStorage.setItem('dj_user_credits', localCredits);
+            localStorage.setItem('dj_last_regen', lastRegenTime);
         }
 
-        function closeMessageModal(event) {
-            if (!event || event.target === document.getElementById('message-modal')) {
-                document.getElementById('message-modal').classList.remove('active');
-                document.getElementById('dj-message-text').value = '';
+        function searchSongs() {
+            const query = document.getElementById('search-input').value.trim();
+            const container = document.getElementById('results-list');
+            
+            if (!query) { 
+                container.innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`; 
+                return; 
             }
-        }
 
-        async function sendMessageToDJ() {
-            const messageStr = document.getElementById('dj-message-text').value.trim();
-            if (!messageStr) return;
+            fetch(`/api/search?q=${encodeURIComponent(query)}`)
+            .then(res => res.json())
+            .then(data => {
+                container.innerHTML = ''; 
 
-            try {
-                // Sent safely as a JSON payload to your backend
-                const res = await fetch('/api/message', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: messageStr, voterId: voterSignatureToken })
-                });
-                
-                if (res.ok) {
-                    closeMessageModal(null);
-                    // Standard inline execution check
-                    console.log("Message successfully routed to backend framework pipeline.");
-                } else {
-                    alert("Failed to submit message to the production stream.");
+                if(!data.tracks || data.tracks.length === 0) {
+                    container.innerHTML = "<p class='placeholder-text'>No results matched your query.</p>";
+                    return;
                 }
-            } catch (e) { 
-                // Temporary fallback presentation if endpoint lacks structural binding
-                closeMessageModal(null);
-                console.log("Network fallback simulation triggered.");
+
+                data.tracks.forEach(track => {
+                    const row = document.createElement('div');
+                    row.className = 'track-row';
+                    row.innerHTML = `
+                        <div class="track-details">
+                            <img src="${track.artwork}">
+                            <div>
+                                <p class="track-title">
+                                    ${escapeHtml(track.name)}
+                                    ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </p>
+                                <p class="track-artist">${escapeHtml(track.artist)}</p>
+                            </div>
+                        </div>
+                        <div class="action-container">
+                            <span class="duration-label">${track.duration}</span>
+                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''}>Request</button>
+                        </div>
+                    `;
+                    row.querySelector('.req-btn').addEventListener('click', () => submitRequest(track));
+                    container.appendChild(row);
+                });
+            });
+        }
+
+        async function submitRequest(track) {
+            if (localCredits <= 0 || !systemRequestsOpen) return;
+            const res = await fetch('/api/request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ track })
+            });
+
+            if (res.ok) {
+                localCredits--;
+                if (localCredits === maxCredits - 1) {
+                    lastRegenTime = Date.now();
+                    localStorage.setItem('dj_last_regen', lastRegenTime);
+                }
+                localStorage.setItem('dj_user_credits', localCredits);
+                alert(`"${track.name}" submitted successfully!`);
+                document.getElementById('search-input').value = "";
+                searchSongs();
+            } else {
+                const errData = await res.json();
+                alert(errData.error || "Submission failed.");
             }
         }
 
-        async function fetchSystemState() {
+        function escapeHtml(str) { return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
+        
+        async function syncWithServer() {
             try {
                 const res = await fetch('/data');
-                if (!res.ok) return;
                 const data = await res.json();
-                
                 maxCredits = data.maxCredits;
-                currentServerDuration = data.countdownLength;
-                
-                setupLocalCredits();
-                manageCountdownVisibility();
-
-                if (document.getElementById('search-input').value.trim() === "") {
-                    document.getElementById('list-title').innerText = "Live Queue";
-                    renderQueue(data.queue);
+                regenIntervalLength = data.countdownLength;
+                systemRequestsOpen = data.requestsAllowed;
+                if (localCredits > maxCredits) {
+                    localCredits = maxCredits;
+                    localStorage.setItem('dj_user_credits', localCredits);
                 }
-            } catch (e) { console.log("State sync failure."); }
+                document.getElementById('credits-display').innerText = `${localCredits} / ${maxCredits}`;
+                updateUI();
+            } catch (e) {}
         }
 
-        function setupLocalCredits() {
-            if (localStorage.getItem('userCredits') === null) {
-                localStorage.setItem('userCredits', maxCredits);
+        function handleCreditCalculations() {
+            if (localCredits >= maxCredits) {
+                document.getElementById('timer-display').innerText = "MAX";
+                return;
             }
-            availableCredits = parseInt(localStorage.getItem('userCredits'));
-            
-            if (availableCredits > maxCredits) {
-                availableCredits = maxCredits;
-                localStorage.setItem('userCredits', availableCredits);
+            const elapsedSeconds = Math.floor((Date.now() - lastRegenTime) / 1000);
+            if (elapsedSeconds >= regenIntervalLength) {
+                const gained = Math.floor(elapsedSeconds / regenIntervalLength);
+                localCredits = Math.min(maxCredits, localCredits + gained);
+                lastRegenTime += gained * regenIntervalLength * 1000;
+                localStorage.setItem('dj_user_credits', localCredits);
+                localStorage.setItem('dj_last_regen', lastRegenTime);
             }
-            
-            document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+            const remaining = regenIntervalLength - (Math.floor((Date.now() - lastRegenTime) / 1000) % regenIntervalLength);
+            document.getElementById('timer-display').innerText = `${Math.floor(remaining / 60)}:${(remaining % 60) < 10 ? '0' : ''}${remaining % 60}`;
         }
 
-        function manageCountdownVisibility() {
-            const countdownEl = document.getElementById('countdown-status');
-            
-            if (availableCredits >= maxCredits) {
-                countdownEl.style.display = 'none';
-                if (countdownTimer) {
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                }
+        function updateUI() {
+            const inputs = document.getElementById('search-input');
+            const btns = document.querySelectorAll('.req-btn');
+            if (!systemRequestsOpen) {
+                inputs.placeholder = "Submissions are currently CLOSED by the DJ";
+                btns.forEach(b => b.disabled = true);
+            } else if (localCredits <= 0) {
+                btns.forEach(b => b.disabled = true);
             } else {
-                countdownEl.style.display = 'inline-block';
-                startLocalCountdown();
+                inputs.placeholder = "Search tracks, artists...";
+                btns.forEach(b => b.disabled = false);
             }
         }
 
-        function startLocalCountdown() {
-            if (countdownTimer) return;
-            
-            timeRemaining = currentServerDuration;
-            document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
-            
-            countdownTimer = setInterval(() => {
-                timeRemaining--;
-                
-                if (timeRemaining <= 0) {
-                    timeRemaining = currentServerDuration;
-                    if (availableCredits < maxCredits) {
-                        availableCredits++;
-                        localStorage.setItem('userCredits', availableCredits);
-                        document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-                    }
-                }
-                
-                if (availableCredits >= maxCredits) {
-                    document.getElementById('countdown-status').style.display = 'none';
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                } else {
-                    document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
-                }
-            }, 1000);
-        }
-
-        function renderQueue(queue) {
-            const display = document.getElementById('main-display-list');
-            if (queue.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
-                return;
-            }
-            display.innerHTML = queue.map(song => {
-                const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
-                const isDownvoted = song.downvoters && song.downvoters.includes(voterSignatureToken);
-
-                return `
-                    <div class="song-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div class="text-block">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${song.title}</p>
-                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </div>
-                                <p class="song-artist">${song.artist}</p>
-                            </div>
-                        </div>
-                        <div class="actions">
-                            <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
-                                <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
-                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                                </button>
-                                <span class="vote-count">${song.ups || 0}</span>
-                            </div>
-                            <div class="vote-node ${isDownvoted ? 'user-voted-down' : ''}">
-                                <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
-                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                                </button>
-                                <span class="vote-count">${song.downs || 0}</span>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        async function castVote(id, type) {
-            try {
-                const res = await fetch('/api/vote', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, type, voterId: voterSignatureToken })
-                });
-                if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting registration network exception."); }
-        }
-
-        function executeSearch() {
-            clearTimeout(searchTimeout);
-            const query = document.getElementById('search-input').value.trim();
-            
-            if (query === "") {
-                fetchSystemState();
-                return;
-            }
-
-            searchTimeout = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-                    const data = await res.json();
-                    
-                    document.getElementById('list-title').innerText = "Search Results";
-                    const display = document.getElementById('main-display-list');
-                    
-                    if (!data.tracks || data.tracks.length === 0) {
-                        globalSearchResults = [];
-                        display.innerHTML = '<p class="empty-placeholder">No matching songs found.</p>';
-                        return;
-                    }
-
-                    globalSearchResults = data.tracks;
-
-                    display.innerHTML = data.tracks.map((track, index) => `
-                        <div class="song-row">
-                            <div class="song-details">
-                                <img src="${track.artwork}">
-                                <div class="text-block">
-                                    <div class="title-wrapper">
-                                        <p class="song-title">${track.name}</p>
-                                        ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    </div>
-                                    <p class="song-artist">${track.artist}</p>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="btn-request" onclick="submitRequestAtIndex(${index})">Request</button>
-                            </div>
-                        </div>
-                    `).join('');
-                } catch (e) { console.log("Search extraction error"); }
-            }, 300);
-        }
-
-        async function submitRequestAtIndex(index) {
-            const track = globalSearchResults[index];
-            if (!track) return;
-
-            if (availableCredits <= 0) {
-                alert("You are out of credits! Wait for the regeneration cycle.");
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/request', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track })
-                });
-                
-                if (res.ok) {
-                    availableCredits--;
-                    localStorage.setItem('userCredits', availableCredits);
-                    document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-                    manageCountdownVisibility();
-                    
-                    document.getElementById('search-input').value = "";
-                    await fetchSystemState();
-                    alert("Song successfully added to the queue!");
-                } else {
-                    const errorData = await res.json();
-                    alert(errorData.error || "Submission rejected.");
-                }
-            } catch (e) { alert("Failed to connect to request server."); }
-        }
-
-        fetchSystemState();
-        setInterval(fetchSystemState, 4000);
+        setInterval(handleCreditCalculations, 1000);
+        setInterval(syncWithServer, 4000);
+        syncWithServer();
     </script>
 </body>
 </html>
