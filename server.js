@@ -18,6 +18,7 @@ let systemConfigs = {
 
 let activeQueue = [];
 let playedHistory = [];
+let djMessages = []; // <--- NEW: Stores messages for the DJ
 let spotifyAccessToken = "";
 
 function formatDuration(ms) {
@@ -51,7 +52,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
+// SEARCH ROUTE
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -62,7 +63,7 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -157,6 +158,19 @@ function buildSortedQueue() {
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
 }
 
+// NEW endpoint: Let guests send messages to the DJ
+app.post('/api/message', (req, res) => {
+    const { text } = req.body;
+    if (!text || text.trim() === "") return res.status(400).json({ error: "Message cannot be empty." });
+    
+    djMessages.push({
+        id: Date.now().toString(),
+        text: text.trim(),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+    res.json({ success: true });
+});
+
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
@@ -173,7 +187,8 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         queue: buildSortedQueue(),
-        history: playedHistory
+        history: playedHistory,
+        messages: djMessages // <--- NEW: Include messages in the admin feed
     });
 });
 
@@ -194,6 +209,7 @@ app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
     if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
     if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
+    if (action === 'clearMessages') { djMessages = []; return res.json({ success: true }); } // <--- NEW Action
 
     const trackIndex = activeQueue.findIndex(t => t.id === id);
     if (trackIndex !== -1) {
