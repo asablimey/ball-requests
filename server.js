@@ -67,7 +67,7 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -77,7 +77,8 @@ app.get('/api/search', async (req, res) => {
             artist: track.artists.map(a => a.name).join(', '),
             artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
             explicit: track.explicit || false,
-            duration: formatDuration(track.duration_ms)
+            duration: formatDuration(track.duration_ms),
+            bpm: "--" // Note: Spotify deprecated public API audio-features lookup endpoints
         }));
         res.json({ tracks });
     } catch (err) {
@@ -101,6 +102,7 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
+            bpm: track.bpm || '--',
             votes: 1
         });
     }
@@ -122,7 +124,7 @@ app.get('/data', (req, res) => {
 // -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
-        maxCredits: systemConfigs.maxCredits,
+        maxCredits: systemConfigs.maxConfigs,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
