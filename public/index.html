@@ -25,7 +25,18 @@
             align-items: center;
         }
 
-        .container { width: 100%; max-width: 480px; }
+        .container { 
+            width: 100%; 
+            max-width: 480px; 
+            display: flex;
+            flex-direction: column;
+            min-height: calc(100vh - 40px);
+            box-sizing: border-box;
+        }
+        
+        .content-wrap {
+            flex: 1;
+        }
         
         h2 { 
             font-weight: 800; 
@@ -117,29 +128,99 @@
         .req-btn:disabled { background-color: #333; color: #666; cursor: not-allowed; }
         
         .placeholder-text { color: var(--text-muted); font-style: italic; font-size: 0.95rem; }
+
+        /* 🟢 CONNECTOR BUTTONS AT BOTTOM */
+        .spotify-auth-container {
+            margin-top: 30px;
+            margin-bottom: 10px;
+            width: 100%;
+        }
+
+        .spotify-ctrl-btn {
+            width: 100%;
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            text-align: center;
+            transition: background-color 0.2s ease, filter 0.2s ease;
+            box-sizing: border-box;
+        }
+        .spotify-ctrl-btn:hover {
+            filter: brightness(1.1);
+        }
+        
+        .spotify-ctrl-btn.connected-mode {
+            background-color: #242424;
+            border: 1px solid #333;
+            color: white;
+        }
+        .spotify-ctrl-btn.connected-mode:hover {
+            border-color: var(--spotify-green);
+            background-color: #1c1c1c;
+        }
+
+        .playlist-view-container {
+            background: var(--panel-bg);
+            border: 1px solid #222;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .playlist-select-dropdown {
+            width: 100%;
+            background: var(--card-bg);
+            color: white;
+            border: 1px solid #444;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 1rem;
+            outline: none;
+        }
+        .playlist-select-dropdown:focus {
+            border-color: var(--spotify-green);
+        }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h2>Request a Song</h2>
-        
-        <div class="status-card">
-            <div class="status-info">
-                <h3>Your Credits</h3>
-                <p id="credits-display">3 / 3</p>
+        <div class="content-wrap">
+            <h2>Request a Song</h2>
+            
+            <div class="status-card">
+                <div class="status-info">
+                    <h3>Your Credits</h3>
+                    <p id="credits-display">3 / 3</p>
+                </div>
+                <div class="status-info" style="text-align: right;">
+                    <h3>Next Credit In</h3>
+                    <p id="timer-display">MAX</p>
+                </div>
             </div>
-            <div class="status-info" style="text-align: right;">
-                <h3>Next Credit In</h3>
-                <p id="timer-display">MAX</p>
+
+            <div id="playlist-panel" class="playlist-view-container">
+                <h3 class="section-title" style="font-size: 1rem; margin-top: 0;">Select From Your Playlists</h3>
+                <select id="playlist-dropdown" class="playlist-select-dropdown" onchange="loadPlaylistTracks()">
+                    <option value="">-- Choose a Playlist --</option>
+                </select>
+            </div>
+
+            <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
+            
+            <h3 id="results-header" class="section-title">Search Results</h3>
+            <div id="results-list">
+                <p class="placeholder-text">Connect your Spotify account at the bottom to perform searches.</p>
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search tracks, artists..." oninput="searchSongs()">
-        
-        <h3 class="section-title">Search Results</h3>
-        <div id="results-list">
-            <p class="placeholder-text">Type in the box above to discover tracks.</p>
+        <div class="spotify-auth-container">
+            <button id="spotify-connect-btn" class="spotify-ctrl-btn" onclick="handleSpotifyAuthAction()">Connect Spotify</button>
         </div>
     </div>
 
@@ -149,6 +230,7 @@
         let lastRegenTime = parseInt(localStorage.getItem('dj_last_regen'));
         let regenIntervalLength = 60; 
         let systemRequestsOpen = true;
+        let isUserConnectedToSpotify = false;
 
         if (isNaN(localCredits) || isNaN(lastRegenTime) || localCredits === null || lastRegenTime === null) {
             localCredits = maxCredits;
@@ -157,47 +239,130 @@
             localStorage.setItem('dj_last_regen', lastRegenTime);
         }
 
+        async function checkUserLoginStatus() {
+            try {
+                const res = await fetch('/api/user/me');
+                if (res.ok) {
+                    const status = await res.json();
+                    if (status.authenticated) {
+                        isUserConnectedToSpotify = true;
+                        const btn = document.getElementById('spotify-connect-btn');
+                        btn.innerText = "My Playlists";
+                        btn.className = "spotify-ctrl-btn connected-mode";
+                        document.getElementById('playlist-panel').style.display = 'block';
+                        document.getElementById('results-list').innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`;
+                        fetchUserPlaylists();
+                    }
+                }
+            } catch(e) {}
+        }
+
+        function handleSpotifyAuthAction() {
+            if (!isUserConnectedToSpotify) {
+                window.location.href = "/api/auth/login";
+            } else {
+                const panel = document.getElementById('playlist-panel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        async function fetchUserPlaylists() {
+            try {
+                const res = await fetch('/api/user/playlists');
+                if (!res.ok) return;
+                const playlists = await res.json();
+                const dropdown = document.getElementById('playlist-dropdown');
+                
+                dropdown.innerHTML = '<option value="">-- Choose a Playlist --</option>';
+                
+                playlists.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.innerText = `${p.name} (${p.tracksCount} songs)`;
+                    dropdown.appendChild(opt);
+                });
+            } catch(e) {}
+        }
+
+        async function loadPlaylistTracks() {
+            const playlistId = document.getElementById('playlist-dropdown').value;
+            const container = document.getElementById('results-list');
+            const header = document.getElementById('results-header');
+            
+            if (!playlistId) return;
+            
+            document.getElementById('search-input').value = "";
+            header.innerText = "Playlist Tracks";
+            container.innerHTML = "<p class='placeholder-text'>Loading tracks from your Spotify playlist...</p>";
+
+            try {
+                const res = await fetch(`/api/user/playlist-tracks?id=${playlistId}`);
+                if (!res.ok) {
+                    container.innerHTML = "<p class='placeholder-text'>Could not pull songs from this tracklist.</p>";
+                    return;
+                }
+                const data = await res.json();
+                renderTrackRows(data.tracks);
+            } catch(e) {
+                container.innerHTML = "<p class='placeholder-text'>Error synchronizing playlist tracks.</p>";
+            }
+        }
+
         function searchSongs() {
             const query = document.getElementById('search-input').value.trim();
             const container = document.getElementById('results-list');
+            const header = document.getElementById('results-header');
             
             if (!query) { 
+                header.innerText = "Search Results";
                 container.innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`; 
                 return; 
             }
 
+            header.innerText = "Search Results";
             fetch(`/api/search?q=${encodeURIComponent(query)}`)
             .then(res => res.json())
             .then(data => {
-                container.innerHTML = ''; 
-
+                if (data.error) {
+                    container.innerHTML = `<p class='placeholder-text'>${data.error}</p>`;
+                    return;
+                }
                 if(!data.tracks || data.tracks.length === 0) {
                     container.innerHTML = "<p class='placeholder-text'>No results matched your query.</p>";
                     return;
                 }
+                renderTrackRows(data.tracks);
+            })
+            .catch(() => {
+                container.innerHTML = "<p class='placeholder-text'>Search failed. Make sure you are logged in.</p>";
+            });
+        }
 
-                data.tracks.forEach(track => {
-                    const row = document.createElement('div');
-                    row.className = 'track-row';
-                    row.innerHTML = `
-                        <div class="track-details">
-                            <img src="${track.artwork}">
-                            <div>
-                                <p class="track-title">
-                                    ${escapeHtml(track.name)}
-                                    ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </p>
-                                <p class="track-artist">${escapeHtml(track.artist)}</p>
-                            </div>
+        function renderTrackRows(tracks) {
+            const container = document.getElementById('results-list');
+            container.innerHTML = ''; 
+
+            tracks.forEach(track => {
+                const row = document.createElement('div');
+                row.className = 'track-row';
+                row.innerHTML = `
+                    <div class="track-details">
+                        <img src="${track.artwork}">
+                        <div>
+                            <p class="track-title">
+                                ${escapeHtml(track.name)}
+                                ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                            </p>
+                            <p class="track-artist">${escapeHtml(track.artist)}</p>
                         </div>
-                        <div class="action-container">
-                            <span class="duration-label">${track.duration}</span>
-                            <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''}>Request</button>
-                        </div>
-                    `;
-                    row.querySelector('.req-btn').addEventListener('click', () => submitRequest(track));
-                    container.appendChild(row);
-                });
+                    </div>
+                    <div class="action-container">
+                        <span class="duration-label">${track.duration}</span>
+                        <button class="req-btn" ${localCredits <= 0 || !systemRequestsOpen ? 'disabled' : ''}>Request</button>
+                    </div>
+                `;
+                row.querySelector('.req-btn').addEventListener('click', () => submitRequest(track));
+                container.appendChild(row);
             });
         }
 
@@ -218,7 +383,10 @@
                 localStorage.setItem('dj_user_credits', localCredits);
                 alert(`"${track.name}" submitted successfully!`);
                 document.getElementById('search-input').value = "";
-                searchSongs();
+                document.getElementById('playlist-dropdown').value = "";
+                document.getElementById('playlist-panel').style.display = 'none';
+                document.getElementById('results-header').innerText = "Search Results";
+                document.getElementById('results-list').innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`;
             } else {
                 const errData = await res.json();
                 alert(errData.error || "Submission failed.");
@@ -269,13 +437,15 @@
             } else if (localCredits <= 0) {
                 btns.forEach(b => b.disabled = true);
             } else {
-                inputs.placeholder = "Search tracks, artists...";
+                inputs.placeholder = isUserConnectedToSpotify ? "Search tracks, artists..." : "Connect your Spotify account below to unlock searching";
                 btns.forEach(b => b.disabled = false);
             }
         }
 
         setInterval(handleCreditCalculations, 1000);
         setInterval(syncWithServer, 4000);
+        
+        checkUserLoginStatus();
         syncWithServer();
     </script>
 </body>
