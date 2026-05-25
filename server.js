@@ -16,7 +16,7 @@ app.use(session({
 }));
 
 // -------------------------------------------------------------
-// MEMORY STORAGE & ANONYMOUS APIS
+// CREDENTIALS & SYSTEM CONFIGS
 // -------------------------------------------------------------
 let activeQueue = [];
 let playedHistory = [];
@@ -27,15 +27,16 @@ const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "YOUR_CLIENT_ID";
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "YOUR_CLIENT_SECRET";
 const REDIRECT_URI = process.env.REDIRECT_URI || "https://song-requests-gnzd.onrender.com/api/auth/callback";
 
-// Background variables to hold the anonymous server token
+// Background variables to handle the anonymous server-to-server token
 let anonymousAccessToken = null;
 let anonymousTokenExpiresAt = 0;
 
-// Helper to get an anonymous token for general public searches
+// Helper function to generate/refresh a server token for open public searches
 async function getAnonymousServerToken() {
     if (anonymousAccessToken && Date.now() < anonymousTokenExpiresAt) {
         return anonymousAccessToken;
     }
+    
     const authBuffer = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -46,14 +47,18 @@ async function getAnonymousServerToken() {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
+        
         if (response.ok) {
             const data = await response.json();
             anonymousAccessToken = data.access_token;
             anonymousTokenExpiresAt = Date.now() + (data.expires_in * 1000);
             return anonymousAccessToken;
+        } else {
+            const errDetails = await response.text();
+            console.error("Spotify Auth Token rejection details:", errDetails);
         }
     } catch (e) {
-        console.error("Failed fetching anonymous token:", e);
+        console.error("Failed fetching background anonymous token:", e);
     }
     return null;
 }
@@ -192,22 +197,20 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
-    // 1. Check if the specific user has an active token first
+    // 1. Fallback order: Use the logged-in user's token first if available, otherwise fetch the background server token
     let token = req.session ? req.session.userAccessToken : null;
-    
-    // 2. If they aren't logged in, instantly fall back to our background system token
     if (!token) {
         token = await getAnonymousServerToken();
     }
 
     if (!token) {
-        return res.status(500).json({ error: "Spotify connectivity offline. Try again later." });
+        return res.status(500).json({ error: "Spotify connectivity offline. Credentials might be incorrect." });
     }
 
     try {
         const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`;
         const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-        if (!response.ok) return res.status(response.status).json({ error: "Search failed." });
+        if (!response.ok) return res.status(response.status).json({ error: "Search request failed." });
 
         const data = await response.json();
         const formattedTracks = (data.tracks?.items || []).map(track => {
@@ -224,7 +227,7 @@ app.get('/api/search', async (req, res) => {
         });
         res.json({ tracks: formattedTracks });
     } catch (err) {
-        res.status(500).json({ error: "Internal Context Search Error" });
+        res.status(500).json({ error: "Internal Search Error Exception" });
     }
 });
 
