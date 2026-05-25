@@ -201,7 +201,6 @@
         .vote-btn-up svg { stroke: #666; }
         .vote-btn-down svg { stroke: #666; }
 
-        /* 🟢 HIGHLIGHT ACTIVE STATE CODES IN SOLID COLOR FILL FOR FEEDBACK */
         .vote-node.user-voted-up .vote-btn-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
         .vote-node.user-voted-down .vote-btn-down svg { stroke: var(--red-action); fill: var(--red-action); }
 
@@ -261,8 +260,8 @@
         let timeRemaining = 60;
         let countdownTimer = null;
         let currentServerDuration = 60;
+        let globalSearchResults = []; // Stores search rows securely across character additions
 
-        // Establish an unalterable tracking token for this visitor
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
         }
@@ -393,7 +392,7 @@
                     body: JSON.stringify({ id, type, voterId: voterSignatureToken })
                 });
                 if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting entry injection drop dropped."); }
+            } catch (e) { console.log("Voting registration network exception."); }
         }
 
         function executeSearch() {
@@ -414,11 +413,15 @@
                     const display = document.getElementById('main-display-list');
                     
                     if (!data.tracks || data.tracks.length === 0) {
+                        globalSearchResults = [];
                         display.innerHTML = '<p class="empty-placeholder">No matching songs found.</p>';
                         return;
                     }
 
-                    display.innerHTML = data.tracks.map(track => `
+                    // Store raw reference results cleanly
+                    globalSearchResults = data.tracks;
+
+                    display.innerHTML = data.tracks.map((track, index) => `
                         <div class="song-row">
                             <div class="song-details">
                                 <img src="${track.artwork}">
@@ -431,15 +434,18 @@
                                 </div>
                             </div>
                             <div class="actions">
-                                <button class="btn-request" onclick='submitRequest(${JSON.stringify(track).replace(/'/g, "'")})'>Request</button>
+                                <button class="btn-request" onclick="submitRequestAtIndex(${index})">Request</button>
                             </div>
                         </div>
                     `).join('');
-                } catch (e) { console.log("Search error"); }
+                } catch (e) { console.log("Search extraction error"); }
             }, 300);
         }
 
-        async function submitRequest(track) {
+        async function submitRequestAtIndex(index) {
+            const track = globalSearchResults[index];
+            if (!track) return;
+
             if (availableCredits <= 0) {
                 alert("You are out of credits! Wait for the regeneration cycle.");
                 return;
@@ -457,8 +463,10 @@
                     localStorage.setItem('userCredits', availableCredits);
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     manageCountdownVisibility();
+                    
+                    // Clear search input and transition directly back to live view immediately without requiring refresh
                     document.getElementById('search-input').value = "";
-                    fetchSystemState();
+                    await fetchSystemState();
                     alert("Song successfully added to the queue!");
                 } else {
                     const errorData = await res.json();
