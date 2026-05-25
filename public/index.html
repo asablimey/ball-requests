@@ -163,7 +163,6 @@
             text-overflow: ellipsis;
         }
 
-        /* 📊 UNIFORM VOTE WRAPPER CONTEXT ELEMENTS */
         .actions {
             display: flex;
             align-items: center;
@@ -176,7 +175,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-width: 32px;
+            min-width: 34px;
         }
 
         .vote-btn {
@@ -196,18 +195,25 @@
             height: 22px;
             fill: none;
             stroke-width: 2;
+            transition: fill 0.2s ease, stroke 0.2s ease;
         }
 
-        .vote-btn-up svg { stroke: var(--spotify-green); }
-        .vote-btn-down svg { stroke: var(--red-action); }
+        .vote-btn-up svg { stroke: #666; }
+        .vote-btn-down svg { stroke: #666; }
+
+        /* 🟢 HIGHLIGHT ACTIVE STATE CODES IN SOLID COLOR FILL FOR FEEDBACK */
+        .vote-node.user-voted-up .vote-btn-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
+        .vote-node.user-voted-down .vote-btn-down svg { stroke: var(--red-action); fill: var(--red-action); }
 
         .vote-count {
             font-size: 0.8rem;
             font-weight: 700;
-            margin-top: 2px;
-            color: #e5e5e5;
+            margin-top: 4px;
+            color: #a7a7a7;
             text-align: center;
         }
+        .user-voted-up .vote-count { color: var(--spotify-green); }
+        .user-voted-down .vote-count { color: var(--red-action); }
 
         .btn-request {
             background-color: var(--spotify-green);
@@ -255,6 +261,12 @@
         let timeRemaining = 60;
         let countdownTimer = null;
         let currentServerDuration = 60;
+
+        // Establish an unalterable tracking token for this visitor
+        if (!localStorage.getItem('voterSignatureToken')) {
+            localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
+        }
+        const voterSignatureToken = localStorage.getItem('voterSignatureToken');
 
         async function fetchSystemState() {
             try {
@@ -338,34 +350,39 @@
                 display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
                 return;
             }
-            display.innerHTML = queue.map(song => `
-                <div class="song-row">
-                    <div class="song-details">
-                        <img src="${song.artwork}">
-                        <div class="text-block">
-                            <div class="title-wrapper">
-                                <p class="song-title">${song.title}</p>
-                                ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+            display.innerHTML = queue.map(song => {
+                const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
+                const isDownvoted = song.downvoters && song.downvoters.includes(voterSignatureToken);
+
+                return `
+                    <div class="song-row">
+                        <div class="song-details">
+                            <img src="${song.artwork}">
+                            <div class="text-block">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
+                                <p class="song-artist">${song.artist}</p>
                             </div>
-                            <p class="song-artist">${song.artist}</p>
+                        </div>
+                        <div class="actions">
+                            <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
+                                <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
+                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                                </button>
+                                <span class="vote-count">${song.ups || 0}</span>
+                            </div>
+                            <div class="vote-node ${isDownvoted ? 'user-voted-down' : ''}">
+                                <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
+                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                                </button>
+                                <span class="vote-count">${song.downs || 0}</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="actions">
-                        <div class="vote-node">
-                            <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
-                                <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                            </button>
-                            <span class="vote-count">${song.ups || 0}</span>
-                        </div>
-                        <div class="vote-node">
-                            <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
-                                <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                            </button>
-                            <span class="vote-count">${song.downs || 0}</span>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
         async function castVote(id, type) {
@@ -373,10 +390,10 @@
                 const res = await fetch('/api/vote', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, type })
+                    body: JSON.stringify({ id, type, voterId: voterSignatureToken })
                 });
                 if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting registration error"); }
+            } catch (e) { console.log("Voting entry injection drop dropped."); }
         }
 
         function executeSearch() {
