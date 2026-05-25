@@ -66,6 +66,38 @@
             display: none;
         }
 
+        /* Message DJ Action Bar */
+        .message-dj-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(90deg, #181818, #202020);
+            border: 1px solid #282828;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .message-label {
+            font-size: 0.9rem;
+            color: #b3b3b3;
+            font-weight: 500;
+        }
+        .btn-message-dj {
+            background-color: transparent;
+            color: white;
+            border: 1px solid #727272;
+            padding: 6px 16px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+        .btn-message-dj:hover {
+            border-color: white;
+            transform: scale(1.03);
+        }
+
         .search-box {
             width: 100%;
             background-color: var(--panel-bg);
@@ -81,7 +113,6 @@
         }
         .search-box:focus { border-color: var(--spotify-green); }
         
-        /* Disabled search state styling */
         .search-box:disabled {
             background-color: #111;
             border-color: #222;
@@ -242,6 +273,7 @@
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
             .credits-container { align-items: center; width: 100%; }
+            .message-dj-bar { flex-direction: column; gap: 10px; text-align: center; }
         }
     </style>
 </head>
@@ -254,6 +286,11 @@
                 <div id="credits-status" class="credits-display">Credits: -- / --</div>
                 <div id="countdown-status" class="countdown-display">Regen in: --s</div>
             </div>
+        </div>
+
+        <div class="message-dj-bar">
+            <span class="message-label">Have a shoutout or special instruction?</span>
+            <button class="btn-message-dj" onclick="promptDJMessage()">Message the DJ</button>
         </div>
 
         <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
@@ -270,7 +307,7 @@
         let countdownTimer = null;
         let currentServerDuration = 60;
         let globalSearchResults = [];
-        let systemRequestsAllowed = true; // Local tracker for global toggling
+        let systemRequestsAllowed = true;
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -290,7 +327,6 @@
                 setupLocalCredits();
                 manageCountdownVisibility();
 
-                // Live lock/unlock layout handling
                 const searchInput = document.getElementById('search-input');
                 if (!systemRequestsAllowed) {
                     searchInput.disabled = true;
@@ -418,11 +454,11 @@
                     body: JSON.stringify({ id, type, voterId: voterSignatureToken })
                 });
                 if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting entry exception dropped."); }
+            } catch (e) { console.log("Voting submission failed."); }
         }
 
         function executeSearch() {
-            if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
+            if (!systemRequestsAllowed) return;
             
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
@@ -465,7 +501,7 @@
                             </div>
                         </div>
                     `).join('');
-                } catch (e) { console.log("Search extraction error"); }
+                } catch (e) { console.log("Search error occurred."); }
             }, 300);
         }
 
@@ -504,6 +540,25 @@
                     alert(errorData.error || "Submission rejected.");
                 }
             } catch (e) { alert("Failed to connect to request server."); }
+        }
+
+        // Handles prompt presentation and posting message payloads to server backend
+        async function promptDJMessage() {
+            const userText = prompt("Type your note or shoutout to the DJ here:");
+            if (!userText || userText.trim() === "") return;
+
+            try {
+                const res = await fetch('/api/message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: userText })
+                });
+                if (res.ok) {
+                    alert("Message forwarded to the DJ dashboard!");
+                } else {
+                    alert("Could not send message.");
+                }
+            } catch (e) { alert("Server connectivity issues."); }
         }
 
         fetchSystemState();
