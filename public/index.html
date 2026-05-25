@@ -3,511 +3,297 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DJ Request Station</title>
+    <title>Song Requests</title>
     <style>
-        :root {
-            --spotify-green: #1DB954;
-            --spotify-black: #121212;
-            --panel-bg: #181818;
-            --card-bg: #242424;
-            --red-action: #e91429;
-        }
-
+        /* Base Spotify Dark Theme Styling */
         body {
-            background-color: var(--spotify-black);
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             margin: 0;
             padding: 20px;
-            box-sizing: border-box;
-            min-height: 100vh;
+            display: flex;
+            justify-content: center;
         }
 
         .container {
-            max-width: 800px;
-            margin: 0 auto;
             width: 100%;
+            max-width: 600px;
+            margin-top: 20px;
         }
 
-        .header {
+        /* Header Layout */
+        .header-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #282828;
-            padding-bottom: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-            gap: 15px;
+            margin-bottom: 24px;
         }
 
-        h1 { margin: 0; font-size: 1.8rem; font-weight: 800; }
-
-        .credits-container {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 6px;
-        }
-
-        .credits-display {
-            background-color: var(--panel-bg);
-            padding: 10px 20px;
-            border-radius: 50px;
-            font-weight: 700;
-            border: 1px solid #282828;
-            white-space: nowrap;
-        }
-
-        .countdown-display {
-            font-size: 0.85rem;
-            color: #a7a7a7;
-            font-weight: 600;
-            margin-right: 10px;
-            display: none;
-        }
-
-        .search-box {
-            width: 100%;
-            background-color: var(--panel-bg);
-            border: 1px solid #333;
-            padding: 14px 20px;
-            color: white;
-            border-radius: 50px;
-            font-size: 1rem;
-            box-sizing: border-box;
-            outline: none;
-            margin-bottom: 25px;
-            transition: all 0.2s ease;
-        }
-        .search-box:focus { border-color: var(--spotify-green); }
-        
-        /* Disabled search state styling */
-        .search-box:disabled {
-            background-color: #111;
-            border-color: #222;
-            color: #555;
-            cursor: not-allowed;
-            opacity: 0.6;
-        }
-
-        .section-title {
-            font-size: 1.2rem;
-            color: var(--spotify-green);
-            margin-bottom: 15px;
-            font-weight: 700;
-        }
-
-        .song-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            background: var(--card-bg);
-            margin-bottom: 12px;
-            border-radius: 8px;
-            border: 1px solid #2c2c2c;
-            gap: 16px;
-            box-sizing: border-box;
-            width: 100%;
-        }
-
-        .song-details {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex: 1;
-            min-width: 0;
-        }
-
-        .song-details img {
-            width: 48px;
-            height: 48px;
-            border-radius: 4px;
-            object-fit: cover;
-            flex-shrink: 0;
-        }
-
-        .text-block {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .title-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-
-        .song-title {
-            font-weight: 700;
+        h1 {
+            font-size: 32px;
+            font-weight: 800;
             margin: 0;
-            font-size: 1rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            letter-spacing: -0.5px;
         }
 
-        .explicit-badge {
-            background-color: #7f7f7f;
-            color: var(--spotify-black);
-            font-size: 0.65rem;
-            font-weight: 700;
-            padding: 1px 4px;
-            border-radius: 2px;
-            text-transform: uppercase;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            line-height: 1;
-        }
-
-        .song-artist {
-            color: #a7a7a7;
-            margin: 4px 0 0 0;
-            font-size: 0.85rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .actions {
+        .header-actions {
             display: flex;
+            gap: 10px;
             align-items: center;
-            gap: 14px;
-            flex-shrink: 0;
         }
 
-        .vote-node {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-width: 34px;
-        }
-
-        .vote-btn {
-            background: none;
+        /* Action Buttons */
+        .btn-message {
+            background-color: #1db954;
+            color: #ffffff;
             border: none;
-            cursor: pointer;
-            padding: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.1s ease;
-        }
-        .vote-btn:active { transform: scale(0.8); }
-
-        .vote-btn svg {
-            width: 22px;
-            height: 22px;
-            fill: none;
-            stroke-width: 2;
-            transition: fill 0.2s ease, stroke 0.2s ease;
-        }
-
-        .vote-btn-up svg { stroke: #666; }
-        .vote-btn-down svg { stroke: #666; }
-
-        .vote-node.user-voted-up .vote-btn-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
-        .vote-node.user-voted-down .vote-btn-down svg { stroke: var(--red-action); fill: var(--red-action); }
-
-        .vote-count {
-            font-size: 0.8rem;
+            padding: 10px 18px;
+            border-radius: 20px;
+            font-size: 14px;
             font-weight: 700;
-            margin-top: 4px;
-            color: #a7a7a7;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .btn-message:hover {
+            background-color: #1ed760;
+        }
+
+        .btn-message:active {
+            transform: scale(0.97);
+        }
+
+        .credits-tag {
+            background-color: #181818;
+            border: 1px solid #282828;
+            padding: 10px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        /* Search Box styling */
+        .search-container {
+            margin-bottom: 30px;
+        }
+
+        .search-bar {
+            width: 100%;
+            background-color: #181818;
+            border: 1px solid #282828;
+            border-radius: 24px;
+            padding: 14px 20px;
+            font-size: 16px;
+            color: #ffffff;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .search-bar:focus {
+            border-color: #535353;
+        }
+
+        /* Section Headings */
+        .section-title {
+            color: #1db954;
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        /* Queue / Results Placeholder Status text */
+        .status-text {
+            color: #727272;
             text-align: center;
+            margin-top: 40px;
+            font-style: italic;
+            font-size: 15px;
         }
-        .user-voted-up .vote-count { color: var(--spotify-green); }
-        .user-voted-down .vote-count { color: var(--red-action); }
 
-        .btn-request {
-            background-color: var(--spotify-green);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 50px;
+        /* --- Message the DJ Modal Backdrop --- */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        /* Modal Content Box */
+        .modal-content {
+            background-color: #181818;
+            border: 1px solid #282828;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 440px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-content h2 {
+            color: #ffffff;
+            font-size: 22px;
+            margin-top: 0;
+            margin-bottom: 16px;
             font-weight: 700;
+        }
+
+        /* Textarea input styled matching screenshot */
+        .modal-content textarea {
+            width: 100%;
+            height: 120px;
+            background-color: #121212;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            color: #ffffff;
+            padding: 14px;
+            font-size: 15px;
+            resize: none;
+            outline: none;
+            box-sizing: border-box;
+            margin-bottom: 20px;
+            font-family: inherit;
+        }
+
+        .modal-content textarea:focus {
+            border-color: #1db954;
+        }
+
+        /* Modal Buttons Layout */
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .modal-actions button {
+            font-size: 14px;
+            font-weight: 700;
+            padding: 10px 20px;
+            border-radius: 20px;
+            border: none;
             cursor: pointer;
-            font-size: 0.9rem;
             transition: transform 0.1s ease;
         }
-        .btn-request:active { transform: scale(0.95); }
 
-        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
+        .modal-actions button:active {
+            transform: scale(0.97);
+        }
 
-        @media (max-width: 400px) {
-            .song-row { padding: 10px; gap: 10px; }
-            .btn-request { padding: 8px 14px; font-size: 0.8rem; }
-            .credits-container { align-items: center; width: 100%; }
+        /* Cancel Button Styles */
+        .btn-cancel {
+            background-color: #121212;
+            color: #a7a7a7;
+            border: 1px solid #2a2a2a !important;
+        }
+
+        .btn-cancel:hover {
+            color: #ffffff;
+            background-color: #1a1a1a;
+        }
+
+        /* Send Button Styles */
+        .btn-send {
+            background-color: #1db954;
+            color: #ffffff;
+        }
+
+        .btn-send:hover {
+            background-color: #1ed760;
         }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <div class="header">
+        <div class="header-row">
             <h1>Song Requests</h1>
-            <div class="credits-container">
-                <div id="credits-status" class="credits-display">Credits: -- / --</div>
-                <div id="countdown-status" class="countdown-display">Regen in: --s</div>
+            <div class="header-actions">
+                <button id="openModalBtn" class="btn-message">Message the DJ</button>
+                <div class="credits-tag">Credits: 3 / 3</div>
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
+        <div class="search-container">
+            <input type="text" class="search-bar" placeholder="Search for songs or artists...">
+        </div>
 
-        <div class="section-title" id="list-title">Live Queue</div>
-        <div id="main-display-list"></div>
+        <div class="section-title">Live Queue</div>
+        <div id="queueContainer">
+            <div class="status-text">No songs requested yet. Be the first!</div>
+        </div>
+    </div>
+
+    <div id="messageModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-content">
+            <h2>Message the DJ</h2>
+            <textarea id="messageInput" placeholder="hello"></textarea>
+            <div class="modal-actions">
+                <button id="cancelMessageBtn" class="btn-cancel">Cancel</button>
+                <button id="sendMessageBtn" class="btn-send">Send Message</button>
+            </div>
+        </div>
     </div>
 
     <script>
-        let availableCredits = 3;
-        let maxCredits = 3;
-        let searchTimeout = null;
-        let timeRemaining = 60;
-        let countdownTimer = null;
-        let currentServerDuration = 60;
-        let globalSearchResults = [];
-        let systemRequestsAllowed = true; // Local tracker for global toggling
+        // DOM Elements
+        const messageModal = document.getElementById('messageModal');
+        const openModalBtn = document.getElementById('openModalBtn');
+        const cancelMessageBtn = document.getElementById('cancelMessageBtn');
+        const sendMessageBtn = document.getElementById('sendMessageBtn');
+        const messageInput = document.getElementById('messageInput');
 
-        if (!localStorage.getItem('voterSignatureToken')) {
-            localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
-        }
-        const voterSignatureToken = localStorage.getItem('voterSignatureToken');
+        // Show Modal
+        openModalBtn.onclick = (e) => {
+            e.preventDefault();
+            messageInput.value = ''; // Clear previous input text
+            messageModal.style.display = 'flex';
+        };
 
-        async function fetchSystemState() {
+        // Close Modal via Cancel Button
+        cancelMessageBtn.onclick = () => {
+            messageModal.style.display = 'none';
+        };
+
+        // Close Modal by clicking the outer dim backdrop
+        window.onclick = (event) => {
+            if (event.target === messageModal) {
+                messageModal.style.display = 'none';
+            }
+        };
+
+        // Send message handler via REST API API
+        sendMessageBtn.onclick = async () => {
+            const text = messageInput.value.trim();
+            if (!text) return; // Do nothing if input is empty
+
             try {
-                const res = await fetch('/data');
-                if (!res.ok) return;
-                const data = await res.json();
-                
-                maxCredits = data.maxCredits;
-                currentServerDuration = data.countdownLength;
-                systemRequestsAllowed = data.requestsAllowed;
-                
-                setupLocalCredits();
-                manageCountdownVisibility();
-
-                // Live lock/unlock layout handling
-                const searchInput = document.getElementById('search-input');
-                if (!systemRequestsAllowed) {
-                    searchInput.disabled = true;
-                    searchInput.value = "";
-                    searchInput.placeholder = "Song submissions are currently paused by the DJ.";
-                    document.getElementById('list-title').innerText = "Live Queue";
-                    renderQueue(data.queue);
-                } else {
-                    if (searchInput.disabled) {
-                        searchInput.disabled = false;
-                        searchInput.placeholder = "Search for songs or artists...";
-                    }
-                    
-                    if (searchInput.value.trim() === "") {
-                        document.getElementById('list-title').innerText = "Live Queue";
-                        renderQueue(data.queue);
-                    }
-                }
-            } catch (e) { console.log("State sync failure."); }
-        }
-
-        function setupLocalCredits() {
-            if (localStorage.getItem('userCredits') === null) {
-                localStorage.setItem('userCredits', maxCredits);
-            }
-            availableCredits = parseInt(localStorage.getItem('userCredits'));
-            
-            if (availableCredits > maxCredits) {
-                availableCredits = maxCredits;
-                localStorage.setItem('userCredits', availableCredits);
-            }
-            
-            document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-        }
-
-        function manageCountdownVisibility() {
-            const countdownEl = document.getElementById('countdown-status');
-            
-            if (availableCredits >= maxCredits) {
-                countdownEl.style.display = 'none';
-                if (countdownTimer) {
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                }
-            } else {
-                countdownEl.style.display = 'inline-block';
-                startLocalCountdown();
-            }
-        }
-
-        function startLocalCountdown() {
-            if (countdownTimer) return;
-            
-            timeRemaining = currentServerDuration;
-            document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
-            
-            countdownTimer = setInterval(() => {
-                timeRemaining--;
-                
-                if (timeRemaining <= 0) {
-                    timeRemaining = currentServerDuration;
-                    if (availableCredits < maxCredits) {
-                        availableCredits++;
-                        localStorage.setItem('userCredits', availableCredits);
-                        document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-                    }
-                }
-                
-                if (availableCredits >= maxCredits) {
-                    document.getElementById('countdown-status').style.display = 'none';
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                } else {
-                    document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
-                }
-            }, 1000);
-        }
-
-        function renderQueue(queue) {
-            const display = document.getElementById('main-display-list');
-            if (queue.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
-                return;
-            }
-            display.innerHTML = queue.map(song => {
-                const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
-                const isDownvoted = song.downvoters && song.downvoters.includes(voterSignatureToken);
-
-                return `
-                    <div class="song-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div class="text-block">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${song.title}</p>
-                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </div>
-                                <p class="song-artist">${song.artist}</p>
-                            </div>
-                        </div>
-                        <div class="actions">
-                            <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
-                                <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
-                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                                </button>
-                                <span class="vote-count">${song.ups || 0}</span>
-                            </div>
-                            <div class="vote-node ${isDownvoted ? 'user-voted-down' : ''}">
-                                <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
-                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                                </button>
-                                <span class="vote-count">${song.downs || 0}</span>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        async function castVote(id, type) {
-            try {
-                const res = await fetch('/api/vote', {
+                const response = await fetch('/api/messages', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, type, voterId: voterSignatureToken })
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: text })
                 });
-                if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting entry exception dropped."); }
-        }
 
-        function executeSearch() {
-            if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
-            
-            clearTimeout(searchTimeout);
-            const query = document.getElementById('search-input').value.trim();
-            
-            if (query === "") {
-                fetchSystemState();
-                return;
-            }
-
-            searchTimeout = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-                    const data = await res.json();
-                    
-                    document.getElementById('list-title').innerText = "Search Results";
-                    const display = document.getElementById('main-display-list');
-                    
-                    if (!data.tracks || data.tracks.length === 0) {
-                        globalSearchResults = [];
-                        display.innerHTML = '<p class="empty-placeholder">No matching songs found.</p>';
-                        return;
-                    }
-
-                    globalSearchResults = data.tracks;
-
-                    display.innerHTML = data.tracks.map((track, index) => `
-                        <div class="song-row">
-                            <div class="song-details">
-                                <img src="${track.artwork}">
-                                <div class="text-block">
-                                    <div class="title-wrapper">
-                                        <p class="song-title">${track.name}</p>
-                                        ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    </div>
-                                    <p class="song-artist">${track.artist}</p>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="btn-request" onclick="submitRequestAtIndex(${index})">Request</button>
-                            </div>
-                        </div>
-                    `).join('');
-                } catch (e) { console.log("Search extraction error"); }
-            }, 300);
-        }
-
-        async function submitRequestAtIndex(index) {
-            if (!systemRequestsAllowed) {
-                alert("Submissions are currently closed.");
-                return;
-            }
-
-            const track = globalSearchResults[index];
-            if (!track) return;
-
-            if (availableCredits <= 0) {
-                alert("You are out of credits! Wait for the regeneration cycle.");
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/request', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track })
-                });
+                const data = await response.json();
                 
-                if (res.ok) {
-                    availableCredits--;
-                    localStorage.setItem('userCredits', availableCredits);
-                    document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-                    manageCountdownVisibility();
-                    
-                    document.getElementById('search-input').value = "";
-                    await fetchSystemState();
-                    alert("Song successfully added to the queue!");
+                if (data.success) {
+                    messageModal.style.display = 'none';
                 } else {
-                    const errorData = await res.json();
-                    alert(errorData.error || "Submission rejected.");
+                    alert(data.error || "Something went wrong.");
                 }
-            } catch (e) { alert("Failed to connect to request server."); }
-        }
-
-        fetchSystemState();
-        setInterval(fetchSystemState, 4000);
+            } catch (err) {
+                console.error("Error submitting message:", err);
+                alert("Failed to deliver message to the server.");
+            }
+        };
     </script>
 </body>
 </html>
