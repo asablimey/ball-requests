@@ -32,7 +32,7 @@ async function getSpotifyToken() {
         return;
     }
     try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
+        const response = await fetch('https://api.spotify.com/v1/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
@@ -57,7 +57,7 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -87,7 +87,6 @@ app.post('/api/request', (req, res) => {
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
-        // Auto upvote if requested again, ensuring unique identity tracking
         if (!existingTrack.upvoters.includes('system-generated')) {
             existingTrack.upvoters.push('system-generated');
         }
@@ -106,9 +105,6 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
-// -------------------------------------------------------------
-// SECURE ID-BASED SMART VOTING SCHEME
-// -------------------------------------------------------------
 app.post('/api/vote', (req, res) => {
     const { id, type, voterId } = req.body;
     if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
@@ -116,7 +112,6 @@ app.post('/api/vote', (req, res) => {
     const track = activeQueue.find(t => t.id === id);
     if (!track) return res.status(404).json({ error: "Track missing from live pool." });
 
-    // Ensure state collections are explicitly arrayed
     if (!track.upvoters) track.upvoters = [];
     if (!track.downvoters) track.downvoters = [];
 
@@ -125,24 +120,23 @@ app.post('/api/vote', (req, res) => {
 
     if (type === 'up') {
         if (track.upvoters.includes(voterId)) {
-            clearUp(); // Clicking upvote again clears it back to neutral
+            clearUp();
         } else {
-            clearDown(); // Clear existing dislike if any
-            track.upvoters.push(voterId); // Add upvote
+            clearDown();
+            track.upvoters.push(voterId);
         }
     } else if (type === 'down') {
         if (track.downvoters.includes(voterId)) {
-            clearDown(); // Clicking downvote again clears it back to neutral
+            clearDown();
         } else {
-            clearUp(); // Clear existing like if any
-            track.downvoters.push(voterId); // Add downvote
+            clearUp();
+            track.downvoters.push(voterId);
         }
     }
 
     res.json({ success: true });
 });
 
-// Calculate metrics sorting by net popularity tally (ups minus downs)
 function buildSortedQueue() {
     return activeQueue.map(t => ({
         id: t.id,
@@ -202,8 +196,6 @@ app.post('/api/admin/action', (req, res) => {
             const track = activeQueue[trackIndex];
             const sorted = buildSortedQueue();
             const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
-            
-            // Override vote arrays to push item directly to top position
             track.downvoters = [];
             track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
         } else if (action === 'played') {
