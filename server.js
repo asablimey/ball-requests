@@ -32,7 +32,7 @@ async function getSpotifyToken() {
         return;
     }
     try {
-        const response = await fetch('https://api.spotify.com/v1/token', {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
@@ -51,6 +51,9 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
+// -------------------------------------------------------------
+// PATCHED SEARCH ENDPOINT
+// -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
