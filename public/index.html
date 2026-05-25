@@ -77,9 +77,18 @@
             box-sizing: border-box;
             outline: none;
             margin-bottom: 25px;
-            transition: border-color 0.2s ease;
+            transition: all 0.2s ease;
         }
         .search-box:focus { border-color: var(--spotify-green); }
+        
+        /* Disabled search state styling */
+        .search-box:disabled {
+            background-color: #111;
+            border-color: #222;
+            color: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
 
         .section-title {
             font-size: 1.2rem;
@@ -260,7 +269,8 @@
         let timeRemaining = 60;
         let countdownTimer = null;
         let currentServerDuration = 60;
-        let globalSearchResults = []; // Stores search rows securely across character additions
+        let globalSearchResults = [];
+        let systemRequestsAllowed = true; // Local tracker for global toggling
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -275,13 +285,29 @@
                 
                 maxCredits = data.maxCredits;
                 currentServerDuration = data.countdownLength;
+                systemRequestsAllowed = data.requestsAllowed;
                 
                 setupLocalCredits();
                 manageCountdownVisibility();
 
-                if (document.getElementById('search-input').value.trim() === "") {
+                // Live lock/unlock layout handling
+                const searchInput = document.getElementById('search-input');
+                if (!systemRequestsAllowed) {
+                    searchInput.disabled = true;
+                    searchInput.value = "";
+                    searchInput.placeholder = "Song submissions are currently paused by the DJ.";
                     document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
+                } else {
+                    if (searchInput.disabled) {
+                        searchInput.disabled = false;
+                        searchInput.placeholder = "Search for songs or artists...";
+                    }
+                    
+                    if (searchInput.value.trim() === "") {
+                        document.getElementById('list-title').innerText = "Live Queue";
+                        renderQueue(data.queue);
+                    }
                 }
             } catch (e) { console.log("State sync failure."); }
         }
@@ -392,10 +418,12 @@
                     body: JSON.stringify({ id, type, voterId: voterSignatureToken })
                 });
                 if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting registration network exception."); }
+            } catch (e) { console.log("Voting entry exception dropped."); }
         }
 
         function executeSearch() {
+            if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
+            
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
             
@@ -418,7 +446,6 @@
                         return;
                     }
 
-                    // Store raw reference results cleanly
                     globalSearchResults = data.tracks;
 
                     display.innerHTML = data.tracks.map((track, index) => `
@@ -443,6 +470,11 @@
         }
 
         async function submitRequestAtIndex(index) {
+            if (!systemRequestsAllowed) {
+                alert("Submissions are currently closed.");
+                return;
+            }
+
             const track = globalSearchResults[index];
             if (!track) return;
 
@@ -464,7 +496,6 @@
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     manageCountdownVisibility();
                     
-                    // Clear search input and transition directly back to live view immediately without requiring refresh
                     document.getElementById('search-input').value = "";
                     await fetchSystemState();
                     alert("Song successfully added to the queue!");
