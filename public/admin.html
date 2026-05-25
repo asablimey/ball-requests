@@ -23,7 +23,6 @@
             box-sizing: border-box;
         }
 
-        /* 🔒 PASSWORD LOCK OVERLAY STYLES */
         #admin-lock-screen {
             position: fixed;
             top: 0;
@@ -247,9 +246,41 @@
             text-overflow: ellipsis;
         }
 
+        /* 📁 DISPLAY STYLES FOR VOTE INDICES IN ADMIN PANEL */
+        .admin-vote-block {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-right: 10px;
+        }
+
+        .vote-display-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 28px;
+        }
+
+        .vote-display-node svg {
+            width: 18px;
+            height: 18px;
+            fill: none;
+            stroke-width: 2.5;
+        }
+        .node-up svg { stroke: var(--spotify-green); }
+        .node-down svg { stroke: var(--red-action); }
+
+        .vote-display-count {
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin-top: 2px;
+            color: #a7a7a7;
+        }
+
         .actions { 
             display: flex; 
             gap: 10px; 
+            align-items: center;
             flex-shrink: 0;
             flex-wrap: wrap; 
             justify-content: flex-end;
@@ -372,6 +403,16 @@
                             </div>
                         </div>
                         <div class="actions">
+                            <div class="admin-vote-block">
+                                <div class="vote-display-node node-up">
+                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                                    <span class="vote-display-count">${song.ups || 0}</span>
+                                </div>
+                                <div class="vote-display-node node-down">
+                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                                    <span class="vote-display-count">${song.downs || 0}</span>
+                                </div>
+                            </div>
                             <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
                             <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
                             <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
