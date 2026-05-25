@@ -10,175 +10,253 @@
             --spotify-black: #121212;
             --panel-bg: #181818;
             --card-bg: #242424;
+            --blue-action: #007aff;
             --red-action: #e91429;
-            --border-color: #282828;
         }
 
-        body {
-            background-color: var(--spotify-black);
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
-            padding: 20px;
+        body { 
+            background-color: var(--spotify-black); 
+            color: white; 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            padding: 25px; 
+            margin: 0; 
             box-sizing: border-box;
-            min-height: 100vh;
         }
 
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            width: 100%;
-        }
-
-        .header {
+        #admin-lock-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: var(--spotify-black);
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
+            justify-content: center;
             align-items: center;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 15px;
-            margin-bottom: 25px;
+            z-index: 9999;
+        }
+
+        .lock-container {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            max-width: 320px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .lock-container h2 {
+            margin-top: 0;
+            color: white;
+            font-size: 1.6rem;
+            margin-bottom: 20px;
+        }
+
+        .lock-input {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 12px;
+            color: white;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            outline: none;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        .lock-input:focus { border-color: var(--spotify-green); }
+
+        .lock-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1rem;
+        }
+        .lock-btn:hover { filter: brightness(1.1); }
+        .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
+
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #282828; 
+            padding-bottom: 20px; 
+            margin-bottom: 20px; 
             flex-wrap: wrap;
             gap: 15px;
         }
 
-        h1 { margin: 0; font-size: 1.8rem; font-weight: 800; }
-        h2 { margin: 0 0 15px 0; font-size: 1.2rem; font-weight: 700; color: var(--spotify-green); }
+        h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
 
-        .controls-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        .config-dashboard {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 25px;
+            display: flex;
             gap: 20px;
-            margin-bottom: 30px;
+            align-items: flex-end;
+            flex-wrap: wrap;
         }
 
-        .control-panel {
-            background-color: var(--panel-bg);
-            border: 1px solid var(--border-color);
+        .input-group { display: flex; flex-direction: column; gap: 8px; }
+        .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
+        .input-group input { 
+            background-color: var(--card-bg); 
+            border: 1px solid #333; 
+            padding: 10px 14px; 
+            color: white; 
+            border-radius: 6px; 
+            font-size: 1rem; 
+            width: 140px;
+            font-weight: bold;
+        }
+
+        .save-config-btn {
+            background-color: white;
+            color: black;
+            border: none;
+            padding: 11px 22px;
+            border-radius: 6px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.95rem;
+            transition: all 0.15s ease;
+        }
+        .save-config-btn:hover { background-color: var(--spotify-green); color: white; }
+
+        .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
+
+        .toggle-btn { 
+            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
+            transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .utility-btn {
+            padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
+            background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
+        }
+        .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
+
+        .open-status { background-color: var(--spotify-green); color: white; }
+        .closed-status { background-color: var(--red-action); color: white; }
+
+        /* TAB NAVIGATION STYLES */
+        .tab-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #282828;
+            padding-bottom: 10px;
+        }
+
+        .tab-button {
+            background-color: transparent;
+            color: #a7a7a7;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
             border-radius: 8px;
-            padding: 20px;
+            transition: all 0.2s ease;
+        }
+        .tab-button:hover { color: white; background-color: var(--card-bg); }
+        .tab-button.active-tab {
+            color: white;
+            background-color: var(--spotify-green);
+        }
+
+        .tab-content {
+            display: none; /* Hidden by default */
+            width: 100%;
+        }
+        .tab-content.active-content {
+            display: block; /* Visible when tab is selected */
+        }
+        
+        .panel { 
+            width: 100%;
+            background: var(--panel-bg); 
+            padding: 25px; 
+            border-radius: 16px; 
+            border: 1px solid #222; 
             box-sizing: border-box;
         }
 
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
+        .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
-        .form-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-        }
-
-        label {
-            font-size: 0.9rem;
-            color: #a7a7a7;
-            font-weight: 600;
-        }
-
-        input[type="number"] {
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            color: white;
-            padding: 8px 12px;
-            border-radius: 4px;
-            width: 70px;
-            font-weight: 600;
-            outline: none;
-            text-align: center;
-        }
-        input[type="number"]:focus { border-color: var(--spotify-green); }
-
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 26px;
-        }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #333;
-            transition: .3s;
-            border-radius: 34px;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px; width: 18px;
-            left: 4px; bottom: 4px;
-            background-color: white;
-            transition: .3s;
-            border-radius: 50%;
-        }
-        input:checked + .slider { background-color: var(--spotify-green); }
-        input:checked + .slider:before { transform: translateX(24px); }
-
-        /* Message Log Container */
-        .message-log-container {
-            background: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 15px;
-            max-height: 200px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .msg-item {
-            background: var(--card-bg);
-            padding: 10px 14px;
-            border-radius: 6px;
-            border-left: 3px solid var(--spotify-green);
-            font-size: 0.9rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
+        .song-row { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 14px; 
+            background: var(--card-bg); 
+            margin-bottom: 12px; 
+            border-radius: 10px; 
+            border: 1px solid #2c2c2c; 
             gap: 15px;
-        }
-        .msg-timestamp {
-            font-size: 0.75rem;
-            color: #666;
-            font-weight: 700;
-            white-space: nowrap;
-        }
-
-        .song-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            background: var(--card-bg);
-            margin-bottom: 12px;
-            border-radius: 8px;
-            border: 1px solid #2c2c2c;
-            gap: 16px;
             box-sizing: border-box;
             width: 100%;
         }
 
-        .song-details {
+        /* Message Note Row Layout */
+        .msg-row {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 16px;
+            padding: 16px;
+            background: var(--card-bg);
+            margin-bottom: 12px;
+            border-radius: 10px;
+            border: 1px solid #2c2c2c;
+            border-left: 4px solid var(--spotify-green);
+            gap: 20px;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        .msg-text {
+            font-size: 1.05rem;
+            font-weight: 500;
+            margin: 0;
+            color: #ffffff;
+            word-break: break-word;
+        }
+        .msg-time {
+            font-size: 0.8rem;
+            color: #a7a7a7;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        
+        .song-details { 
+            display: flex; 
+            align-items: center; 
+            gap: 16px; 
             flex: 1;
             min-width: 0;
         }
-
-        .song-details img {
-            width: 48px;
-            height: 48px;
-            border-radius: 4px;
-            object-fit: cover;
+        
+        .song-details img { 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 6px; 
+            object-fit: cover; 
             flex-shrink: 0;
         }
-
-        .text-block {
+        
+        .text-container {
             flex: 1;
             min-width: 0;
         }
@@ -190,10 +268,10 @@
             flex-wrap: wrap;
         }
 
-        .song-title {
-            font-weight: 700;
-            margin: 0;
-            font-size: 1rem;
+        .song-title { 
+            font-weight: 700; 
+            margin: 0; 
+            font-size: 1.1rem; 
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -213,249 +291,316 @@
             flex-shrink: 0;
             line-height: 1;
         }
-
-        .song-artist {
-            color: #a7a7a7;
-            margin: 4px 0 0 0;
-            font-size: 0.85rem;
+        
+        .song-artist { 
+            color: #a7a7a7; 
+            margin: 4px 0 0 0; 
+            font-size: 0.9rem; 
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        .actions {
+        .admin-vote-block {
             display: flex;
             align-items: center;
-            gap: 10px;
-            flex-shrink: 0;
+            gap: 12px;
+            margin-right: 10px;
         }
 
-        .score-badge {
-            background-color: var(--panel-bg);
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: #a7a7a7;
-            border: 1px solid #333;
+        .vote-display-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             min-width: 28px;
-            text-align: center;
         }
-        .score-positive { color: var(--spotify-green); border-color: rgba(29, 185, 84, 0.3); }
-        .score-negative { color: var(--red-action); border-color: rgba(233, 20, 41, 0.3); }
 
-        .btn {
-            background-color: #333;
-            color: white;
-            border: none;
-            padding: 8px 14px;
-            border-radius: 4px;
+        .vote-display-node svg {
+            width: 18px;
+            height: 18px;
+            stroke-width: 2.5;
+        }
+        .node-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
+        .node-down svg { stroke: var(--red-action); fill: var(--red-action); }
+
+        .vote-display-count {
+            font-size: 0.8rem;
             font-weight: 700;
-            cursor: pointer;
-            font-size: 0.85rem;
-            transition: background-color 0.2s ease, transform 0.1s ease;
+            margin-top: 4px;
+            color: #a7a7a7;
         }
-        .btn:active { transform: scale(0.95); }
-        .btn:hover { background-color: #444; }
+        .node-up .vote-display-count { color: var(--spotify-green); }
+        .node-down .vote-display-count { color: var(--red-action); }
 
-        .btn-success { background-color: var(--spotify-green); }
-        .btn-success:hover { background-color: #1ed760; }
+        .actions { 
+            display: flex; 
+            gap: 10px; 
+            align-items: center;
+            flex-shrink: 0;
+            flex-wrap: wrap; 
+            justify-content: flex-end;
+        }
+        
+        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
+        .btn:hover { filter: brightness(1.1); }
+        .btn-top { background-color: var(--blue-action); }
+        .btn-played { background-color: var(--spotify-green); }
+        .btn-remove { background-color: #3e3e3e; }
+        .btn-remove:hover { background-color: var(--red-action); }
 
-        .btn-danger { background-color: var(--red-action); }
-        .btn-danger:hover { background-color: #b80f20; }
-
-        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 30px 0; }
+        .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
+        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
         @media (max-width: 600px) {
-            .song-row { padding: 10px; gap: 10px; flex-direction: column; align-items: flex-start; }
-            .actions { width: 100%; justify-content: flex-end; }
+            body { padding: 15px; }
+            h1 { font-size: 1.8rem; }
+            .song-row, .msg-row { flex-direction: column; align-items: flex-start; }
+            .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
         }
     </style>
 </head>
 <body>
 
-    <div class="container">
-        <div class="header">
-            <h1>DJ Dashboard</h1>
-            <div id="status-indicator" style="font-weight: 700; font-size: 0.9rem; color: #a7a7a7;">Syncing status...</div>
+    <div id="admin-lock-screen">
+        <div class="lock-container">
+            <h2>Enter DJ Password</h2>
+            <input type="password" id="password-input" class="lock-input" placeholder="••••••••" onkeydown="if(event.key === 'Enter') verifyPassword()">
+            <button class="lock-btn" onclick="verifyPassword()">Unlock Dashboard</button>
+            <div id="lock-error-msg" class="lock-error">Incorrect password. Access denied.</div>
         </div>
+    </div>
 
-        <div class="controls-grid">
-            <div class="control-panel">
-                <h2>System Settings</h2>
-                <div class="control-group">
-                    <div class="form-row">
-                        <label for="toggle-requests">Accept Submissions</label>
-                        <label class="switch">
-                            <input type="checkbox" id="toggle-requests" onchange="updateToggleState()">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="form-row" style="margin-top: 5px;">
-                        <label for="max-credits">Max User Credits</label>
-                        <input type="number" id="max-credits" min="1" value="3" onchange="updateConfigs()">
-                    </div>
-                    <div class="form-row">
-                        <label for="cooldown-duration">Regen Cooldown (s)</label>
-                        <input type="number" id="cooldown-duration" min="5" value="60" onchange="updateConfigs()">
-                    </div>
-                </div>
-            </div>
+    <div class="header">
+        <h1>DJ Master Control</h1>
+        <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+    </div>
 
-            <div class="control-panel" style="display: flex; flex-direction: column; justify-content: space-between;">
-                <div>
-                    <h2>Global Pool Management</h2>
-                    <p style="color: #a7a7a7; font-size: 0.85rem; margin: 0 0 15px 0; line-height: 1.4;">
-                        Perform absolute modifications over structural runtime arrays instantly.
-                    </p>
-                </div>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-danger" onclick="triggerGlobalAction(null, 'clearQueue')">Purge Live Queue</button>
-                    <button class="btn btn-danger" style="background-color: #83101b;" onclick="triggerGlobalAction(null, 'clearMessages')">Wipe Notes</button>
-                    <button class="btn" style="background-color: #2c2c2c;" onclick="triggerGlobalAction(null, 'clearHistory')">Reset History</button>
-                </div>
-            </div>
+    <div class="config-dashboard">
+        <div class="input-group">
+            <label>Max Credit Bank</label>
+            <input type="number" id="input-max-credits" min="1">
         </div>
+        <div class="input-group">
+            <label>Regen Timer (Secs)</label>
+            <input type="number" id="input-countdown" min="5">
+        </div>
+        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+    </div>
 
-        <div class="header" style="border-bottom: 1px solid var(--border-color); margin-bottom: 15px;">
-            <h2 style="margin: 0;">Live Guest Notes</h2>
-        </div>
-        <div id="dj-messages-container" class="message-log-container" style="margin-bottom: 30px;">
-            <p class="empty-placeholder" style="padding: 10px 0;">No messages from the crowd yet.</p>
-        </div>
+    <div class="control-bar">
+        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearMessages', 'Are you sure you want to clear your guest notes log?')">🗑 Clear Guest Notes</button>
+        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+    </div>
 
-        <div class="header" style="border-bottom: 1px solid var(--border-color); margin-bottom: 15px;">
-            <h2 style="margin: 0;">Live Request Pipeline</h2>
+    <div class="tab-bar">
+        <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
+        <button id="tab-btn-messages" class="tab-button" onclick="switchTab('messages')">Messages</button>
+        <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
+    </div>
+
+    <div id="tab-panel-queue" class="tab-content active-content">
+        <div class="panel">
+            <h2>Current Queue</h2>
+            <div id="queue-list"></div>
         </div>
-        <div id="admin-queue-list"></div>
+    </div>
+
+    <div id="tab-panel-messages" class="tab-content">
+        <div class="panel">
+            <h2>Guest Notes & Shoutouts</h2>
+            <div id="messages-list"></div>
+        </div>
+    </div>
+
+    <div id="tab-panel-history" class="tab-content">
+        <div class="panel">
+            <h2>Song History (Played)</h2>
+            <div id="history-list"></div>
+        </div>
     </div>
 
     <script>
-        let blockSyncLoop = false;
+        let requestsAllowed = true;
+        let isAuthorized = false; 
 
-        async function fetchAdminState() {
-            if (blockSyncLoop) return; 
+        // Tab selection switching algorithm
+        function switchTab(targetTab) {
+            const queueBtn = document.getElementById('tab-btn-queue');
+            const messagesBtn = document.getElementById('tab-btn-messages');
+            const historyBtn = document.getElementById('tab-btn-history');
+            
+            const queuePanel = document.getElementById('tab-panel-queue');
+            const messagesPanel = document.getElementById('tab-panel-messages');
+            const historyPanel = document.getElementById('tab-panel-history');
+
+            // Reset active states
+            queueBtn.classList.remove('active-tab');
+            messagesBtn.classList.remove('active-tab');
+            historyBtn.classList.remove('active-tab');
+            
+            queuePanel.classList.remove('active-content');
+            messagesPanel.classList.remove('active-content');
+            historyPanel.classList.remove('active-content');
+
+            if (targetTab === 'queue') {
+                queueBtn.classList.add('active-tab');
+                queuePanel.classList.add('active-content');
+            } else if (targetTab === 'messages') {
+                messagesBtn.classList.add('active-tab');
+                messagesPanel.classList.add('active-content');
+            } else {
+                historyBtn.classList.add('active-tab');
+                historyPanel.classList.add('active-content');
+            }
+        }
+
+        function verifyPassword() {
+            const inputField = document.getElementById('password-input');
+            const errorMsg = document.getElementById('lock-error-msg');
+            const masterPassword = "ballDJ2026"; 
+
+            if (inputField.value === masterPassword) {
+                isAuthorized = true;
+                document.getElementById('admin-lock-screen').style.display = 'none';
+                updateDashboard(); 
+            } else {
+                errorMsg.style.display = 'block';
+                inputField.value = '';
+                inputField.focus();
+            }
+        }
+
+        async function updateDashboard() {
+            if (!isAuthorized) return; 
+            
             try {
                 const res = await fetch('/api/admin/data');
                 if (!res.ok) return;
                 const data = await res.json();
-
-                document.getElementById('toggle-requests').checked = data.requestsAllowed;
-                document.getElementById('max-credits').value = data.maxCredits;
-                document.getElementById('cooldown-duration').value = data.countdownLength;
                 
-                document.getElementById('status-indicator').innerText = "System Operational";
-                document.getElementById('status-indicator').style.color = "var(--spotify-green)";
+                if(document.activeElement !== document.getElementById('input-max-credits')) {
+                    document.getElementById('input-max-credits').value = data.maxCredits;
+                }
+                if(document.activeElement !== document.getElementById('input-countdown')) {
+                    document.getElementById('input-countdown').value = data.countdownLength;
+                }
 
-                renderAdminQueue(data.queue);
-                renderDJMessages(data.messages);
-            } catch (e) {
-                document.getElementById('status-indicator').innerText = "Syncing Lost";
-                document.getElementById('status-indicator').style.color = "var(--red-action)";
-            }
-        }
+                const toggleBtn = document.getElementById('toggle-requests');
+                requestsAllowed = data.requestsAllowed;
+                toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
+                toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
 
-        function renderDJMessages(messages) {
-            const container = document.getElementById('dj-messages-container');
-            if (!messages || messages.length === 0) {
-                container.innerHTML = '<p class="empty-placeholder" style="padding: 10px 0;">No messages from the crowd yet.</p>';
-                return;
-            }
-            container.innerHTML = messages.map(msg => `
-                <div class="msg-item">
-                    <span>${msg.text}</span>
-                    <span class="msg-timestamp">${msg.timestamp}</span>
-                </div>
-            `).reverse().join('');
-        }
-
-        function renderAdminQueue(queue) {
-            const display = document.getElementById('admin-queue-list');
-            if (!queue || queue.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">The live queue is currently empty.</p>';
-                return;
-            }
-
-            display.innerHTML = queue.map((song) => {
-                const upvotes = song.ups || 0;
-                const downvotes = song.downs || 0;
-                const netScore = upvotes - downvotes;
-                
-                let scoreClass = '';
-                if (netScore > 0) scoreClass = 'score-positive';
-                if (netScore < 0) scoreClass = 'score-negative';
-
-                return `
+                const queueList = document.getElementById('queue-list');
+                queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
                     <div class="song-row">
                         <div class="song-details">
                             <img src="${song.artwork}">
-                            <div class="text-block">
+                            <div class="text-container">
                                 <div class="title-wrapper">
                                     <p class="song-title">${song.title}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
-                                <p class="song-artist">${song.artist} • <span style="color: #666;">${song.duration}</span></p>
+                                <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
                             </div>
                         </div>
                         <div class="actions">
-                            <div class="score-badge ${scoreClass}" title="${upvotes} Upvotes / ${downvotes} Downvotes">
-                                ${netScore > 0 ? '+' : ''}${netScore}
+                            <div class="admin-vote-block">
+                                <div class="vote-display-node node-up">
+                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                                    <span class="vote-display-count">${song.ups || 0}</span>
+                                </div>
+                                <div class="vote-display-node node-down">
+                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                                    <span class="vote-display-count">${song.downs || 0}</span>
+                                </div>
                             </div>
-                            <button class="btn btn-success" onclick="triggerGlobalAction('${song.id}', 'top')">▲ Top</button>
-                            <button class="btn" onclick="triggerGlobalAction('${song.id}', 'played')">✓ Played</button>
-                            <button class="btn btn-danger" onclick="triggerGlobalAction('${song.id}', 'remove')">Remove</button>
+                            <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
+                            <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
+                            <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
                         </div>
                     </div>
-                `;
-            }).join('');
+                `).join('');
+
+                const messagesList = document.getElementById('messages-list');
+                messagesList.innerHTML = !data.messages || data.messages.length === 0 ? '<p class="empty-placeholder">No messages from the crowd yet.</p>' : data.messages.map(msg => `
+                    <div class="msg-row">
+                        <p class="msg-text">${msg.text}</p>
+                        <span class="msg-time">${msg.timestamp}</span>
+                    </div>
+                `).reverse().join('');
+
+                const historyList = document.getElementById('history-list');
+                historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
+                    <div class="song-row history-row">
+                        <div class="song-details">
+                            <img src="${song.artwork}">
+                            <div class="text-container">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${song.title}</p>
+                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
+                                <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) { console.log("Sync error."); }
         }
 
-        async function updateToggleState() {
-            blockSyncLoop = true;
-            const allow = document.getElementById('toggle-requests').checked;
-            try {
-                await fetch('/api/admin/toggle', {
+        async function saveSystemRules() {
+            if (!isAuthorized) return;
+            const maxVal = document.getElementById('input-max-credits').value;
+            const downVal = document.getElementById('input-countdown').value;
+
+            const res = await fetch('/api/admin/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
+            });
+            if(res.ok) alert("System parameters updated successfully.");
+            updateDashboard();
+        }
+
+        async function triggerAction(id, action) {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, action })
+            });
+            updateDashboard();
+        }
+
+        async function clearSystem(actionType, message) {
+            if (!isAuthorized) return;
+            if (confirm(message)) {
+                await fetch('/api/admin/action', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ allow })
+                    body: JSON.stringify({ id: null, action: actionType })
                 });
-            } catch (e) { console.log("Failed tracking switch toggle adjustment."); }
-            blockSyncLoop = false;
-            fetchAdminState();
+                updateDashboard();
+            }
         }
 
-        async function updateConfigs() {
-            blockSyncLoop = true;
-            const maxCredits = parseInt(document.getElementById('max-credits').value) || 3;
-            const countdownLength = parseInt(document.getElementById('cooldown-duration').value) || 60;
-            try {
-                await fetch('/api/admin/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ maxCredits, countdownLength })
-                });
-            } catch (e) { console.log("Failed saving settings update adjustments."); }
-            blockSyncLoop = false;
-            fetchAdminState();
+        async function toggleRequests() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ allow: !requestsAllowed })
+            });
+            updateDashboard();
         }
 
-        async function triggerGlobalAction(id, action) {
-            if (action === 'clearQueue' && !confirm("Wipe every item out of the active queue pool?")) return;
-            if (action === 'clearHistory' && !confirm("Purge historical track memory logs?")) return;
-            if (action === 'clearMessages' && !confirm("Wipe out all stored user messages from the logs?")) return;
-            
-            try {
-                const res = await fetch('/api/admin/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, action })
-                });
-                if (res.ok) fetchAdminState();
-            } catch (e) { console.log("Error posting dashboard actions map routing."); }
-        }
+        window.onload = () => {
+            document.getElementById('password-input').focus();
+        };
 
-        fetchAdminState();
-        setInterval(fetchAdminState, 3000);
+        setInterval(updateDashboard, 3000);
     </script>
 </body>
 </html>
