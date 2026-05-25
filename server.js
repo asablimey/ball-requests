@@ -51,10 +51,12 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// -------------------------------------------------------------
-// PATCHED SEARCH ENDPOINT
-// -------------------------------------------------------------
+// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
 app.get('/api/search', async (req, res) => {
+    if (!systemConfigs.requestsAllowed) {
+        return res.json({ tracks: [] }); 
+    }
+
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
     if (!spotifyAccessToken) await getSpotifyToken();
