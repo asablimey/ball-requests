@@ -221,20 +221,17 @@
 
     <script>
         let requestsAllowed = true;
-        let isAuthorized = false; // Prevents background fetch before checking pass
+        let isAuthorized = false; 
 
-        // 🔒 PASSWORD SECURITY CHECK
         function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
-            
-            // 🔑 Confirmed System Password
             const masterPassword = "ballDJ2026"; 
 
             if (inputField.value === masterPassword) {
                 isAuthorized = true;
                 document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard(); // Run immediately upon validation
+                updateDashboard(); 
             } else {
                 errorMsg.style.display = 'block';
                 inputField.value = '';
@@ -243,7 +240,7 @@
         }
 
         async function updateDashboard() {
-            if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+            if (!isAuthorized) return; 
             
             try {
                 const res = await fetch('/api/admin/data');
@@ -268,8 +265,9 @@
                         <div class="song-details">
                             <img src="${song.artwork}">
                             <div>
-                                <p class="song-title">${song.title} [${song.duration}] (${song.bpm} BPM)</p>
+                                <p class="song-title">${song.title}</p>
                                 <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;|&nbsp; Tempo: ${song.bpm} BPM</p>
                             </div>
                         </div>
                         <div class="actions">
@@ -286,8 +284,9 @@
                         <div class="song-details">
                             <img src="${song.artwork}">
                             <div>
-                                <p class="song-title">${song.title} [${song.duration}] (${song.bpm} BPM)</p>
+                                <p class="song-title">${song.title}</p>
                                 <p class="song-artist">${song.artist}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;|&nbsp; Tempo: ${song.bpm} BPM</p>
                             </div>
                         </div>
                     </div>
@@ -341,7 +340,6 @@
             updateDashboard();
         }
 
-        // Lock screen focus on setup load
         window.onload = () => {
             document.getElementById('password-input').focus();
         };
