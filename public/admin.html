@@ -1,346 +1,691 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>DJ Control Center</title>
+
     <style>
+
         :root {
+
             --spotify-green: #1DB954;
+
             --spotify-black: #121212;
+
             --panel-bg: #181818;
+
             --card-bg: #242424;
+
             --blue-action: #007aff;
+
             --red-action: #e91429;
+
         }
+
+
 
         body { 
+
             background-color: var(--spotify-black); 
+
             color: white; 
+
             font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+
             padding: 25px; 
+
             margin: 0; 
+
         }
+
+
 
         /* 🔒 PASSWORD LOCK OVERLAY STYLES */
+
         #admin-lock-screen {
+
             position: fixed;
+
             top: 0;
+
             left: 0;
+
             width: 100vw;
+
             height: 100vh;
+
             background-color: var(--spotify-black);
+
             display: flex;
+
             flex-direction: column;
+
             justify-content: center;
+
             align-items: center;
+
             z-index: 9999;
+
         }
+
+
 
         .lock-container {
+
             background-color: var(--panel-bg);
+
             border: 1px solid #282828;
+
             padding: 40px;
+
             border-radius: 16px;
+
             text-align: center;
+
             box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+
             max-width: 320px;
+
             width: 100%;
+
         }
+
+
 
         .lock-container h2 {
+
             margin-top: 0;
+
             color: white;
+
             font-size: 1.6rem;
+
             margin-bottom: 20px;
+
             border-bottom: none;
+
             padding-bottom: 0;
+
         }
+
+
 
         .lock-input {
+
             width: 100%;
+
             background-color: var(--card-bg);
+
             border: 1px solid #333;
+
             padding: 12px;
+
             color: white;
+
             border-radius: 8px;
+
             font-size: 1rem;
+
             box-sizing: border-box;
+
             outline: none;
+
             text-align: center;
+
             margin-bottom: 15px;
+
         }
+
         .lock-input:focus { border-color: var(--spotify-green); }
 
+
+
         .lock-btn {
+
             background-color: var(--spotify-green);
+
             color: white;
+
             border: none;
+
             padding: 12px 24px;
+
             border-radius: 50px;
+
             font-weight: 700;
+
             cursor: pointer;
+
             width: 100%;
+
             font-size: 1rem;
+
         }
+
         .lock-btn:hover { filter: brightness(1.1); }
+
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
+
+
         /* 🟢 UNTOUCHED ORIGINAL LAYOUT STYLES */
+
         .header { 
+
             display: flex; 
+
             justify-content: space-between; 
+
             align-items: center; 
+
             border-bottom: 1px solid #282828; 
+
             padding-bottom: 20px; 
+
             margin-bottom: 20px; 
+
         }
+
+
 
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
 
+
+
         .config-dashboard {
+
             background-color: var(--panel-bg);
+
             border: 1px solid #282828;
+
             border-radius: 12px;
+
             padding: 20px;
+
             margin-bottom: 25px;
+
             display: flex;
+
             gap: 20px;
+
             align-items: flex-end;
+
             flex-wrap: wrap;
+
         }
+
+
 
         .input-group { display: flex; flex-direction: column; gap: 8px; }
+
         .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
+
         .input-group input { 
+
             background-color: var(--card-bg); 
+
             border: 1px solid #333; 
+
             padding: 10px 14px; 
+
             color: white; 
+
             border-radius: 6px; 
+
             font-size: 1rem; 
+
             width: 140px;
+
             font-weight: bold;
+
         }
 
+
+
         .save-config-btn {
+
             background-color: white;
+
             color: black;
+
             border: none;
+
             padding: 11px 22px;
+
             border-radius: 6px;
+
             font-weight: 700;
+
             cursor: pointer;
+
             font-size: 0.95rem;
+
             transition: all 0.15s ease;
+
         }
+
         .save-config-btn:hover { background-color: var(--spotify-green); color: white; }
+
+
 
         .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
 
+
+
         .toggle-btn { 
+
             padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
+
             transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+
         }
+
+
 
         .utility-btn {
+
             padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
+
             background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
+
         }
+
         .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
 
+
+
         .open-status { background-color: var(--spotify-green); color: white; }
+
         .closed-status { background-color: var(--red-action); color: white; }
 
+
+
         .lists-container { display: flex; gap: 30px; flex-wrap: wrap; }
+
         .panel { flex: 1; min-width: 340px; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; }
+
+
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
+
+
         .song-row { display: flex; justify-content: space-between; align-items: center; padding: 14px; background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c; }
+
         .song-details { display: flex; align-items: center; gap: 16px; }
+
         .song-details img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
+
         .song-title { font-weight: 700; margin: 0; font-size: 1.1rem; }
+
         .song-artist { color: #a7a7a7; margin: 4px 0 0 0; font-size: 0.9rem; }
 
+
+
         .actions { display: flex; gap: 10px; }
+
         .btn { padding: 12px 16px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.9rem; }
+
         .btn:hover { filter: brightness(1.1); }
+
         .btn-top { background-color: var(--blue-action); }
+
         .btn-played { background-color: var(--spotify-green); }
+
         .btn-remove { background-color: #3e3e3e; }
+
         .btn-remove:hover { background-color: var(--red-action); }
 
+
+
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
+
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
+
     </style>
+
 </head>
+
 <body>
 
+
+
     <div id="admin-lock-screen">
+
         <div class="lock-container">
+
             <h2>Enter DJ Password</h2>
+
             <input type="password" id="password-input" class="lock-input" placeholder="••••••••" onkeydown="if(event.key === 'Enter') verifyPassword()">
+
             <button class="lock-btn" onclick="verifyPassword()">Unlock Dashboard</button>
+
             <div id="lock-error-msg" class="lock-error">Incorrect password. Access denied.</div>
+
         </div>
+
     </div>
+
+
 
     <div class="header">
+
         <h1>DJ Master Control</h1>
+
         <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+
     </div>
+
+
 
     <div class="config-dashboard">
+
         <div class="input-group">
+
             <label>Max Credit Bank</label>
+
             <input type="number" id="input-max-credits" min="1">
+
         </div>
+
         <div class="input-group">
+
             <label>Regen Timer (Secs)</label>
+
             <input type="number" id="input-countdown" min="5">
+
         </div>
+
         <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+
     </div>
+
+
 
     <div class="control-bar">
+
         <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+
         <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+
     </div>
+
+
 
     <div class="lists-container">
+
         <div class="panel">
+
             <h2>Current Queue</h2>
+
             <div id="queue-list"></div>
+
         </div>
+
         <div class="panel">
+
             <h2>Song History (Played)</h2>
+
             <div id="history-list"></div>
+
         </div>
+
     </div>
 
+
+
     <script>
+
         let requestsAllowed = true;
+
         let isAuthorized = false; // Prevents background fetch before checking pass
 
+
+
         // 🔒 PASSWORD SECURITY CHECK
+
         function verifyPassword() {
+
             const inputField = document.getElementById('password-input');
+
             const errorMsg = document.getElementById('lock-error-msg');
+
             
+
             // 🔑 Confirmed System Password
+
             const masterPassword = "ballDJ2026"; 
 
+
+
             if (inputField.value === masterPassword) {
+
                 isAuthorized = true;
+
                 document.getElementById('admin-lock-screen').style.display = 'none';
+
                 updateDashboard(); // Run immediately upon validation
+
             } else {
+
                 errorMsg.style.display = 'block';
+
                 inputField.value = '';
+
                 inputField.focus();
+
             }
+
         }
+
+
 
         async function updateDashboard() {
+
             if (!isAuthorized) return; // Completely blocks live API streaming if lock overlay is active
+
             
+
             try {
+
                 const res = await fetch('/api/admin/data');
+
                 if (!res.ok) return;
+
                 const data = await res.json();
+
                 
+
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
+
                     document.getElementById('input-max-credits').value = data.maxCredits;
+
                 }
+
                 if(document.activeElement !== document.getElementById('input-countdown')) {
+
                     document.getElementById('input-countdown').value = data.countdownLength;
+
                 }
+
+
 
                 const toggleBtn = document.getElementById('toggle-requests');
+
                 requestsAllowed = data.requestsAllowed;
+
                 toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
+
                 toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
 
+
+
                 const queueList = document.getElementById('queue-list');
+
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
+
                     <div class="song-row">
+
                         <div class="song-details">
+
                             <img src="${song.artwork}">
+
                             <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+
                         </div>
+
                         <div class="actions">
+
                             <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
+
                             <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
+
                             <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
+
                         </div>
+
                     </div>
+
                 `).join('');
+
+
 
                 const historyList = document.getElementById('history-list');
+
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
+
                     <div class="song-row history-row">
+
                         <div class="song-details">
+
                             <img src="${song.artwork}">
+
                             <div><p class="song-title">${song.title}</p><p class="song-artist">${song.artist}</p></div>
+
                         </div>
+
                     </div>
+
                 `).join('');
+
             } catch(e) { console.log("Sync error."); }
+
         }
+
+
 
         async function saveSystemRules() {
+
             if (!isAuthorized) return;
+
             const maxVal = document.getElementById('input-max-credits').value;
+
             const downVal = document.getElementById('input-countdown').value;
 
+
+
             const res = await fetch('/api/admin/config', {
+
                 method: 'POST',
+
                 headers: { 'Content-Type': 'application/json' },
+
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
+
             });
+
             if(res.ok) alert("System parameters updated successfully.");
+
             updateDashboard();
+
         }
+
+
 
         async function triggerAction(id, action) {
+
             if (!isAuthorized) return;
+
             await fetch('/api/admin/action', {
+
                 method: 'POST',
+
                 headers: { 'Content-Type': 'application/json' },
+
                 body: JSON.stringify({ id, action })
+
             });
+
             updateDashboard();
+
         }
+
+
 
         async function clearSystem(actionType, message) {
+
             if (!isAuthorized) return;
+
             if (confirm(message)) {
+
                 await fetch('/api/admin/action', {
+
                     method: 'POST',
+
                     headers: { 'Content-Type': 'application/json' },
+
                     body: JSON.stringify({ id: null, action: actionType })
+
                 });
+
                 updateDashboard();
+
             }
+
         }
+
+
 
         async function toggleRequests() {
+
             if (!isAuthorized) return;
+
             await fetch('/api/admin/toggle', {
+
                 method: 'POST',
+
                 headers: { 'Content-Type': 'application/json' },
+
                 body: JSON.stringify({ allow: !requestsAllowed })
+
             });
+
             updateDashboard();
+
         }
 
+
+
         // Lock screen focus on setup load
+
         window.onload = () => {
+
             document.getElementById('password-input').focus();
+
         };
 
+
+
         setInterval(updateDashboard, 3000);
+
     </script>
+
 </body>
-</html>
+
+</html> 
