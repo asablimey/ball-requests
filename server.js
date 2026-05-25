@@ -1,103 +1,173 @@
 const express = require('express');
 const path = require('path');
+const fetch = require('node-fetch');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Middleware to parse JSON bodies
 app.use(express.json());
-
-// Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Global state variables
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+
+let systemConfigs = {
+    maxCredits: 3,
+    countdownLength: 60,
+    requestsAllowed: true
+};
+
 let activeQueue = [];
 let playedHistory = [];
-let djMessages = []; // Global array for live DJ messages
+let spotifyAccessToken = "";
 
-// --- Existing Spotify / Queue Endpoints (Placeholders for your existing logic) ---
-
-async function getSpotifyToken() {
-    // Your existing Spotify token retrieval logic runs here
-    console.log('[SPOTIFY] Token fetched successfully.');
+function formatDuration(ms) {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(0);
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
+// Background token generator - authenticates the app itself directly
+async function getSpotifyToken() {
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+        console.error("[SPOTIFY] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET in environment variables.");
+        return;
+    }
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials'
+        });
+        const data = await response.json();
+        if (data.access_token) {
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Master API access token refreshed successfully.");
+        } else {
+            console.error("[SPOTIFY] Failed to fetch token:", data);
+        }
+    } catch (err) {
+        console.error("[SPOTIFY] Auth error:", err.message);
+    }
+}
+// Automatically refresh the master token every 50 minutes
+setInterval(getSpotifyToken, 1000 * 60 * 50);
+
+// -------------------------------------------------------------
+// USER SEARCH API (Uses Master Token)
+// -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
-    // Your existing search logic
-    res.json({ tracks: [] });
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [] });
+    
+    if (!spotifyAccessToken) {
+        await getSpotifyToken(); 
+    }
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await response.json();
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: formatDuration(track.duration_ms)
+        }));
+        res.json({ tracks });
+    } catch (err) {
+        res.status(500).json({ error: "Search feature unavailable" });
+    }
 });
 
 app.post('/api/request', (req, res) => {
-    // Your existing song request logic
+    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    const { track } = req.body;
+    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+
+    const existingTrack = activeQueue.find(t => t.id === track.id);
+    if (existingTrack) {
+        existingTrack.votes = (existingTrack.votes || 1) + 1;
+    } else {
+        activeQueue.push({
+            id: track.id || Date.now().toString(),
+            title: track.name,
+            artist: track.artist || 'Unknown Artist',
+            artwork: track.artwork || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: track.duration || '--:--',
+            votes: 1
+        });
+    }
     res.json({ success: true });
 });
 
-// Your existing queue mutation logic (upvote, downvote, played, remove)
-app.post('/api/queue/action', (req, res) => {
-    const { trackIndex, action } = req.body;
-    
-    // Example mirroring your screenshot's logic:
-    if (action === 'played') {
-        const [track] = activeQueue.splice(trackIndex, 1);
-        if (track) {
-            playedHistory.unshift({
-                title: track.title,
-                artist: track.artist,
-                artwork: track.artwork,
-                explicit: track.explicit,
-                duration: track.duration
-            });
-        }
-    } else if (action === 'remove') {
-        activeQueue.splice(trackIndex, 1);
-    }
-    
-    res.json({ success: true });
-});
-
-
-// --- New Messaging & Updated Admin Endpoints ---
-
-// Endpoint for guests to send a message to the DJ
-app.post('/api/messages', (req, res) => {
-    const { text } = req.body;
-    if (!text || text.trim() === "") {
-        return res.status(400).json({ success: false, error: "Message cannot be empty" });
-    }
-
-    const newMessage = {
-        id: Date.now().toString(),
-        text: text.trim(),
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    djMessages.push(newMessage);
-    res.json({ success: true, message: "Message sent to DJ!" });
-});
-
-// Sync data endpoint for the Admin Dashboard
-app.get('/api/admin/data', (req, res) => {
+app.get('/data', (req, res) => {
     res.json({
-        activeQueue: activeQueue,
-        playedHistory: playedHistory,
-        messages: djMessages // Passes the live messages to the admin dashboard
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
     });
 });
 
-// Utility endpoint for DJ to clear the message board
-app.post('/api/admin/messages/clear', (req, res) => {
-    djMessages = [];
+// -------------------------------------------------------------
+// CONTROL LAYER (ADMIN)
+// -------------------------------------------------------------
+app.get('/api/admin/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+        history: playedHistory
+    });
+});
+
+app.post('/api/admin/config', (req, res) => {
+    const { maxCredits, countdownLength } = req.body;
+    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
+    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
     res.json({ success: true });
 });
 
+app.post('/api/admin/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
 
-// --- Catch-All Routing ---
+app.post('/api/admin/action', (req, res) => {
+    const { id, action } = req.body;
+    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
+    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
 
-// Fallback to serve index.html for any unmatched routes
+    const trackIndex = activeQueue.findIndex(t => t.id === id);
+    if (trackIndex !== -1) {
+        if (action === 'top') {
+            const track = activeQueue[trackIndex];
+            const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
+            track.votes = highestVotes + 1;
+        } else if (action === 'played') {
+            const [track] = activeQueue.splice(trackIndex, 1);
+            playedHistory.unshift(track);
+        } else if (action === 'remove') {
+            activeQueue.splice(trackIndex, 1);
+        }
+    }
+    res.json({ success: true });
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start Server
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
     await getSpotifyToken();
