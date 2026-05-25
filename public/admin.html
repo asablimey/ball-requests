@@ -246,7 +246,6 @@
             text-overflow: ellipsis;
         }
 
-        /* 📁 DISPLAY STYLES FOR VOTE INDICES IN ADMIN PANEL */
         .admin-vote-block {
             display: flex;
             align-items: center;
@@ -264,18 +263,19 @@
         .vote-display-node svg {
             width: 18px;
             height: 18px;
-            fill: none;
             stroke-width: 2.5;
         }
-        .node-up svg { stroke: var(--spotify-green); }
-        .node-down svg { stroke: var(--red-action); }
+        .node-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
+        .node-down svg { stroke: var(--red-action); fill: var(--red-action); }
 
         .vote-display-count {
             font-size: 0.8rem;
             font-weight: 700;
-            margin-top: 2px;
+            margin-top: 4px;
             color: #a7a7a7;
         }
+        .node-up .vote-display-count { color: var(--spotify-green); }
+        .node-down .vote-display-count { color: var(--red-action); }
 
         .actions { 
             display: flex; 
