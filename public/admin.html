@@ -12,7 +12,6 @@
             --card-bg: #242424;
             --blue-action: #007aff;
             --red-action: #e91429;
-            --purple-analytics: #a333ff;
         }
 
         body { 
@@ -146,11 +145,9 @@
 
         .utility-btn {
             padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
-            background-color: #222; color: #b3b3b3; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
+            background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
         }
-        .utility-btn.danger-btn { color: #ff3b30; }
-        .utility-btn:hover { background-color: #333; color: white; }
-        .utility-btn.danger-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
+        .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
 
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
@@ -162,7 +159,6 @@
             margin-bottom: 20px;
             border-bottom: 2px solid #282828;
             padding-bottom: 10px;
-            flex-wrap: wrap;
         }
 
         .tab-button {
@@ -177,14 +173,18 @@
             transition: all 0.2s ease;
         }
         .tab-button:hover { color: white; background-color: var(--card-bg); }
-        .tab-button.active-tab { color: white; background-color: var(--spotify-green); }
-        #tab-btn-analytics.active-tab { background-color: var(--purple-analytics); }
+        .tab-button.active-tab {
+            color: white;
+            background-color: var(--spotify-green);
+        }
 
         .tab-content {
-            display: none;
+            display: none; /* Hidden by default */
             width: 100%;
         }
-        .tab-content.active-content { display: block; }
+        .tab-content.active-content {
+            display: block; /* Visible when tab is selected */
+        }
         
         .panel { 
             width: 100%;
@@ -196,44 +196,6 @@
         }
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
-        #tab-panel-analytics h2 { color: var(--purple-analytics); }
-
-        /* ANALYTICS CARD GRID */
-        .analytics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin-bottom: 15px;
-        }
-
-        .analytics-card {
-            background-color: var(--card-bg);
-            border: 1px solid #2c2c2c;
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-
-        .analytics-card h3 {
-            margin: 0 0 10px 0;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            color: #a7a7a7;
-            letter-spacing: 0.5px;
-        }
-
-        .analytics-card .metric-value {
-            font-size: 2rem;
-            font-weight: 800;
-            color: white;
-            margin: 0;
-        }
-        .analytics-card .metric-subtext {
-            font-size: 1.1rem;
-            color: var(--purple-analytics);
-            font-weight: 700;
-        }
 
         .song-row { 
             display: flex; 
@@ -397,15 +359,13 @@
     </div>
 
     <div class="control-bar">
-        <button class="utility-btn danger-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the live pool?')">🗑 Clear Queue</button>
-        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to wipe your local played tracks list?')">🗑 Clear Played Local</button>
-        <button class="utility-btn danger-btn" style="border-color: #551a8b;" onclick="clearSystem('wipeDatabaseAnalytics', '⚠️ CRITICAL ACTION ⚠️\n\nAre you sure you want to permanently clear out all historical statistics from MongoDB Atlas? This cannot be undone.')">💾 Wipe Cloud Database</button>
+        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
     <div class="tab-bar">
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
-        <button id="tab-btn-analytics" class="tab-button" onclick="switchTab('analytics')">📊 Party Insights</button>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -422,47 +382,28 @@
         </div>
     </div>
 
-    <div id="tab-panel-analytics" class="tab-content">
-        <div class="panel">
-            <h2>MongoDB Live Metrics</h2>
-            <div class="analytics-grid">
-                <div class="analytics-card">
-                    <h3>Total App Submissions</h3>
-                    <p id="stat-total-requests" class="metric-value">0</p>
-                </div>
-                <div class="analytics-card">
-                    <h3>Crowd Voting Iterations</h3>
-                    <p id="stat-total-votes" class="metric-value">0</p>
-                </div>
-                <div class="analytics-card">
-                    <h3>Explicit Content Requests</h3>
-                    <p id="stat-explicit-ratio" class="metric-value">0%</p>
-                </div>
-                <div class="analytics-card">
-                    <h3>Top Requested Artist</h3>
-                    <p id="stat-top-artist" class="metric-subtext">None</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
         let requestsAllowed = true;
         let isAuthorized = false; 
 
+        // Tab selection switching algorithm
         function switchTab(targetTab) {
-            const tabs = ['queue', 'history', 'analytics'];
-            tabs.forEach(tab => {
-                const btn = document.getElementById(`tab-btn-${tab}`);
-                const panel = document.getElementById(`tab-panel-${tab}`);
-                if (tab === targetTab) {
-                    btn.classList.add('active-tab');
-                    panel.classList.add('active-content');
-                } else {
-                    btn.classList.remove('active-tab');
-                    panel.classList.remove('active-content');
-                }
-            });
+            const queueBtn = document.getElementById('tab-btn-queue');
+            const historyBtn = document.getElementById('tab-btn-history');
+            const queuePanel = document.getElementById('tab-panel-queue');
+            const historyPanel = document.getElementById('tab-panel-history');
+
+            if (targetTab === 'queue') {
+                queueBtn.classList.add('active-tab');
+                historyBtn.classList.remove('active-tab');
+                queuePanel.classList.add('active-content');
+                historyPanel.classList.remove('active-content');
+            } else {
+                historyBtn.classList.add('active-tab');
+                queueBtn.classList.remove('active-tab');
+                historyPanel.classList.add('active-content');
+                queuePanel.classList.remove('active-content');
+            }
         }
 
         function verifyPassword() {
@@ -500,14 +441,6 @@
                 requestsAllowed = data.requestsAllowed;
                 toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
                 toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                // Render Analytics Data points dynamically
-                if (data.analytics) {
-                    document.getElementById('stat-total-requests').innerText = data.analytics.totalRequests || 0;
-                    document.getElementById('stat-total-votes').innerText = data.analytics.totalVotes || 0;
-                    document.getElementById('stat-explicit-ratio').innerText = `${data.analytics.explicitPercentage || 0}%`;
-                    document.getElementById('stat-top-artist').innerText = data.analytics.topArtistName || 'None';
-                }
 
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
@@ -557,7 +490,7 @@
                         </div>
                     </div>
                 `).join('');
-            } catch(e) { console.log("Sync extraction error."); }
+            } catch(e) { console.log("Sync error."); }
         }
 
         async function saveSystemRules() {
@@ -570,7 +503,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
             });
-            if(res.ok) alert("System rules synchronized successfully.");
+            if(res.ok) alert("System parameters updated successfully.");
             updateDashboard();
         }
 
