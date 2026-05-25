@@ -87,7 +87,10 @@ app.post('/api/request', (req, res) => {
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
-        existingTrack.ups = (existingTrack.ups || 0) + 1;
+        // Auto upvote if requested again, ensuring unique identity tracking
+        if (!existingTrack.upvoters.includes('system-generated')) {
+            existingTrack.upvoters.push('system-generated');
+        }
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
@@ -96,35 +99,71 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
-            ups: 1,
-            downs: 0
+            upvoters: [],
+            downvoters: []
         });
     }
     res.json({ success: true });
 });
 
 // -------------------------------------------------------------
-// VOTE ROUTE INTERACTION
+// SECURE ID-BASED SMART VOTING SCHEME
 // -------------------------------------------------------------
 app.post('/api/vote', (req, res) => {
-    const { id, type } = req.body;
+    const { id, type, voterId } = req.body;
+    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+
     const track = activeQueue.find(t => t.id === id);
-    if (!track) return res.status(404).json({ error: "Track not found in queue." });
+    if (!track) return res.status(404).json({ error: "Track missing from live pool." });
+
+    // Ensure state collections are explicitly arrayed
+    if (!track.upvoters) track.upvoters = [];
+    if (!track.downvoters) track.downvoters = [];
+
+    const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
+    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
 
     if (type === 'up') {
-        track.ups = (track.ups || 0) + 1;
+        if (track.upvoters.includes(voterId)) {
+            clearUp(); // Clicking upvote again clears it back to neutral
+        } else {
+            clearDown(); // Clear existing dislike if any
+            track.upvoters.push(voterId); // Add upvote
+        }
     } else if (type === 'down') {
-        track.downs = (track.downs || 0) + 1;
+        if (track.downvoters.includes(voterId)) {
+            clearDown(); // Clicking downvote again clears it back to neutral
+        } else {
+            clearUp(); // Clear existing like if any
+            track.downvoters.push(voterId); // Add downvote
+        }
     }
+
     res.json({ success: true });
 });
+
+// Calculate metrics sorting by net popularity tally (ups minus downs)
+function buildSortedQueue() {
+    return activeQueue.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork,
+        explicit: t.explicit,
+        duration: t.duration,
+        ups: t.upvoters?.length || 0,
+        downs: t.downvoters?.length || 0,
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || []
+    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
 
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => ((b.ups || 0) - (b.downs || 0)) - ((a.ups || 0) - (a.downs || 0))),
+        queue: buildSortedQueue(),
         history: playedHistory
     });
 });
@@ -134,7 +173,7 @@ app.get('/api/admin/data', (req, res) => {
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: activeQueue.sort((a, b) => ((b.ups || 0) - (b.downs || 0)) - ((a.ups || 0) - (a.downs || 0))),
+        queue: buildSortedQueue(),
         history: playedHistory
     });
 });
@@ -161,11 +200,21 @@ app.post('/api/admin/action', (req, res) => {
     if (trackIndex !== -1) {
         if (action === 'top') {
             const track = activeQueue[trackIndex];
-            const highestNet = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => (t.ups || 0) - (t.downs || 0))) : 0;
-            track.ups = highestNet + (track.downs || 0) + 1;
+            const sorted = buildSortedQueue();
+            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
+            
+            // Override vote arrays to push item directly to top position
+            track.downvoters = [];
+            track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
         } else if (action === 'played') {
             const [track] = activeQueue.splice(trackIndex, 1);
-            playedHistory.unshift(track);
+            playedHistory.unshift({
+                title: track.title,
+                artist: track.artist,
+                artwork: track.artwork,
+                explicit: track.explicit,
+                duration: track.duration
+            });
         } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
         }
