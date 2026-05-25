@@ -362,6 +362,7 @@
             document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
         }
 
+        UX_countdownVisibility = () => { manageCountdownVisibility(); };
         function manageCountdownVisibility() {
             const countdownEl = document.getElementById('countdown-status');
             
@@ -542,7 +543,6 @@
             } catch (e) { alert("Failed to connect to request server."); }
         }
 
-        // Handles prompt presentation and posting message payloads to server backend
         async function promptDJMessage() {
             const userText = prompt("Type your note or shoutout to the DJ here:");
             if (!userText || userText.trim() === "") return;
