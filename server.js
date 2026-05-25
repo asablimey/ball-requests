@@ -26,9 +26,10 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
+// Background token generator - authenticates the app itself directly
 async function getSpotifyToken() {
     if (!CLIENT_ID || !CLIENT_SECRET) {
-        console.error("[SPOTIFY] Missing credentials in environment.");
+        console.error("[SPOTIFY] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET in environment variables.");
         return;
     }
     try {
@@ -43,42 +44,41 @@ async function getSpotifyToken() {
         const data = await response.json();
         if (data.access_token) {
             spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Master token refreshed.");
+            console.log("[SPOTIFY] Master API access token refreshed successfully.");
+        } else {
+            console.error("[SPOTIFY] Failed to fetch token:", data);
         }
     } catch (err) {
         console.error("[SPOTIFY] Auth error:", err.message);
     }
 }
+// Automatically refresh the master token every 50 minutes
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SEARCH ROUTE - strictly blocked if DJ turns off requests
+// -------------------------------------------------------------
+// USER SEARCH API (Uses Master Token)
+// -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
-    if (!systemConfigs.requestsAllowed) {
-        return res.json({ tracks: [] }); 
-    }
-
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
-    if (!spotifyAccessToken) await getSpotifyToken();
+    
+    if (!spotifyAccessToken) {
+        await getSpotifyToken(); 
+    }
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
-        const trackItems = data.tracks?.items || [];
-        
-        const tracks = trackItems.map(track => {
-            return {
-                id: track.id,
-                name: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
-                explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms)
-            };
-        });
-        
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: formatDuration(track.duration_ms)
+        }));
         res.json({ tracks });
     } catch (err) {
         res.status(500).json({ error: "Search feature unavailable" });
@@ -92,9 +92,7 @@ app.post('/api/request', (req, res) => {
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
-        if (!existingTrack.upvoters.includes('system-generated')) {
-            existingTrack.upvoters.push('system-generated');
-        }
+        existingTrack.votes = (existingTrack.votes || 1) + 1;
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
@@ -103,83 +101,31 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
-            upvoters: [],
-            downvoters: []
+            votes: 1
         });
     }
     res.json({ success: true });
 });
-
-app.post('/api/vote', (req, res) => {
-    const { id, type, voterId } = req.body;
-    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
-
-    const track = activeQueue.find(t => t.id === id);
-    if (!track) return res.status(404).json({ error: "Track missing from live pool." });
-
-    if (!track.upvoters) track.upvoters = [];
-    if (!track.downvoters) track.downvoters = [];
-
-    const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
-    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
-
-    if (type === 'up') {
-        if (track.upvoters.includes(voterId)) {
-            clearUp();
-        } else {
-            clearDown();
-            track.upvoters.push(voterId);
-        }
-    } else if (type === 'down') {
-        if (track.downvoters.includes(voterId)) {
-            clearDown();
-        } else {
-            clearUp();
-            track.downvoters.push(voterId);
-        }
-    }
-
-    res.json({ success: true });
-});
-
-// NEW MESSAGE FEATURE ROUTE - Safely receives on-site popup submissions
-app.post('/api/message', (req, res) => {
-    const { message, voterId } = req.body;
-    console.log(`[DJ MESSAGE] Received from client ${voterId || 'Anonymous'}: "${message}"`);
-    res.json({ success: true });
-});
-
-function buildSortedQueue() {
-    return activeQueue.map(t => ({
-        id: t.id,
-        title: t.title,
-        artist: t.artist,
-        artwork: t.artwork,
-        explicit: t.explicit,
-        duration: t.duration,
-        ups: t.upvoters?.length || 0,
-        downs: t.downvoters?.length || 0,
-        upvoters: t.upvoters || [],
-        downvoters: t.downvoters || []
-    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-}
 
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: buildSortedQueue(),
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
         history: playedHistory
     });
 });
 
+// -------------------------------------------------------------
+// CONTROL LAYER (ADMIN)
+// -------------------------------------------------------------
 app.get('/api/admin/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
-        queue: buildSortedQueue(),
+        queue: activeQueue.sort((a, b) => (b.votes || 0) - (a.votes || 0)),
         history: playedHistory
     });
 });
@@ -206,19 +152,11 @@ app.post('/api/admin/action', (req, res) => {
     if (trackIndex !== -1) {
         if (action === 'top') {
             const track = activeQueue[trackIndex];
-            const sorted = buildSortedQueue();
-            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
-            track.downvoters = [];
-            track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
+            const highestVotes = activeQueue.length > 0 ? Math.max(...activeQueue.map(t => t.votes || 0)) : 0;
+            track.votes = highestVotes + 1;
         } else if (action === 'played') {
             const [track] = activeQueue.splice(trackIndex, 1);
-            playedHistory.unshift({
-                title: track.title,
-                artist: track.artist,
-                artwork: track.artwork,
-                explicit: track.explicit,
-                duration: track.duration
-            });
+            playedHistory.unshift(track);
         } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
         }
@@ -226,12 +164,6 @@ app.post('/api/admin/action', (req, res) => {
     res.json({ success: true });
 });
 
-// ADMIN PROTECTION ROUTE - Tells Express exactly what to do when looking for admin file
-app.get('/admin.html', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-// WILDCARD FALLBACK - Keeps guests strictly locked on index.html
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
