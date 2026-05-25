@@ -27,16 +27,14 @@ const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || "YOUR_CLIENT_ID";
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || "YOUR_CLIENT_SECRET";
 const REDIRECT_URI = process.env.REDIRECT_URI || "https://song-requests-gnzd.onrender.com/api/auth/callback";
 
-// Background variables to handle the anonymous server-to-server token
 let anonymousAccessToken = null;
 let anonymousTokenExpiresAt = 0;
 
-// Helper function to generate/refresh a server token for open public searches
+// Helper to generate a background token for open searches
 async function getAnonymousServerToken() {
     if (anonymousAccessToken && Date.now() < anonymousTokenExpiresAt) {
         return anonymousAccessToken;
     }
-    
     const authBuffer = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -47,15 +45,11 @@ async function getAnonymousServerToken() {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
-        
         if (response.ok) {
             const data = await response.json();
             anonymousAccessToken = data.access_token;
             anonymousTokenExpiresAt = Date.now() + (data.expires_in * 1000);
             return anonymousAccessToken;
-        } else {
-            const errDetails = await response.text();
-            console.error("Spotify Auth Token rejection details:", errDetails);
         }
     } catch (e) {
         console.error("Failed fetching background anonymous token:", e);
@@ -64,7 +58,7 @@ async function getAnonymousServerToken() {
 }
 
 // -------------------------------------------------------------
-// SPOTIFY USER AUTH FLOW (OPTIONAL PLAYLIST CONNECT)
+// SPOTIFY USER AUTH FLOW
 // -------------------------------------------------------------
 app.get('/api/auth/login', (req, res) => {
     const scopes = 'playlist-read-private playlist-read-collaborative';
@@ -80,7 +74,6 @@ app.get('/api/auth/callback', async (req, res) => {
     const code = req.query.code || null;
     if (!code) return res.redirect('/?error=auth_denied');
     const authBuffer = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
-    
     try {
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
@@ -94,7 +87,6 @@ app.get('/api/auth/callback', async (req, res) => {
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         });
-
         if (response.ok) {
             const data = await response.json();
             req.session.userAccessToken = data.access_token;
@@ -111,7 +103,7 @@ app.get('/api/auth/callback', async (req, res) => {
 
 async function ensureUserToken(req, res, next) {
     if (!req.session || !req.session.userAccessToken) {
-        return res.status(401).json({ error: "User not connected to Spotify account." });
+        return res.status(401).json({ error: "User not connected to Spotify." });
     }
     if (Date.now() < req.session.tokenExpiresAt) {
         return next();
@@ -164,7 +156,7 @@ app.get('/api/user/playlist-tracks', ensureUserToken, async (req, res) => {
     const playlistId = req.query.id;
     if (!playlistId) return res.status(400).json({ error: "Missing playlist identifier." });
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/$${playlistId}/tracks?limit=50`, {
             headers: { 'Authorization': `Bearer ${req.session.userAccessToken}` }
         });
         if (!response.ok) return res.status(response.status).json({ error: "Failed parsing playlist tracks." });
@@ -186,32 +178,24 @@ app.get('/api/user/playlist-tracks', ensureUserToken, async (req, res) => {
             });
         res.json({ tracks: formattedTracks });
     } catch (e) {
-        res.status(500).json({ error: "Playlist data collection exception." });
+        res.status(500).json({ error: "Playlist data collection error." });
     }
 });
 
 // -------------------------------------------------------------
-// OPEN PUBLIC GLOBAL SEARCH (NO LOGIN REQUIRED)
+// PUBLIC SEARCH
 // -------------------------------------------------------------
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
-
-    // 1. Fallback order: Use the logged-in user's token first if available, otherwise fetch the background server token
     let token = req.session ? req.session.userAccessToken : null;
-    if (!token) {
-        token = await getAnonymousServerToken();
-    }
-
-    if (!token) {
-        return res.status(500).json({ error: "Spotify connectivity offline. Credentials might be incorrect." });
-    }
+    if (!token) token = await getAnonymousServerToken();
+    if (!token) return res.status(500).json({ error: "Spotify connectivity offline." });
 
     try {
-        const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`;
+        const url = `https://api.spotify.com/v1/search?q=$${encodeURIComponent(query)}&type=track&limit=8`;
         const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
         if (!response.ok) return res.status(response.status).json({ error: "Search request failed." });
-
         const data = await response.json();
         const formattedTracks = (data.tracks?.items || []).map(track => {
             const minutes = Math.floor(track.duration_ms / 60000);
@@ -220,26 +204,25 @@ app.get('/api/search', async (req, res) => {
                 id: track.id,
                 name: track.name,
                 artist: track.artists.map(a => a.name).join(', '),
-                artwork: track.album.images[2]?.url || track.album.images[0]?.url || 'https://via.placeholder.com/50',
+                artwork: track.album.images[2]?.url || 'https://via.placeholder.com/50',
                 duration: `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`,
                 explicit: track.explicit
             };
         });
         res.json({ tracks: formattedTracks });
     } catch (err) {
-        res.status(500).json({ error: "Internal Search Error Exception" });
+        res.status(500).json({ error: "Search Error Exception" });
     }
 });
 
 // -------------------------------------------------------------
-// APPLICATION REQUEST PIPELINES & ADMIN CONTROLS
+// CORE QUEUE ENGINE
 // -------------------------------------------------------------
 app.post('/api/request', (req, res) => {
-    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions are currently closed." });
+    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
-    if (!track || !track.id) return res.status(400).json({ error: "Invalid track choice." });
-    if (activeQueue.some(item => item.id === track.id)) return res.status(400).json({ error: "This track is already waiting!" });
-
+    if (!track || !track.id) return res.status(400).json({ error: "Invalid track." });
+    if (activeQueue.some(item => item.id === track.id)) return res.status(400).json({ error: "Already waiting!" });
     activeQueue.push({ id: track.id, title: track.name, artist: track.artist, artwork: track.artwork, votes: 1 });
     res.json({ success: true });
 });
@@ -255,7 +238,7 @@ app.post('/api/admin/login', (req, res) => {
 
 function verifyAdminAuth(req, res, next) {
     if (req.headers['x-admin-password'] === ADMIN_PASSWORD) return next();
-    res.status(403).json({ error: "Unauthorized access." });
+    res.status(403).json({ error: "Unauthorized." });
 }
 
 app.get('/api/admin/data', verifyAdminAuth, (req, res) => {
@@ -288,4 +271,4 @@ app.post('/api/admin/action', verifyAdminAuth, (req, res) => {
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`Server executing live on node port: ${PORT}`));
+app.listen(PORT, () => console.log(`Live on port: ${PORT}`));
