@@ -129,7 +129,6 @@
         
         .placeholder-text { color: var(--text-muted); font-style: italic; font-size: 0.95rem; }
 
-        /* 🟢 CONNECTOR BUTTONS AT BOTTOM */
         .spotify-auth-container {
             margin-top: 30px;
             margin-bottom: 10px;
@@ -150,9 +149,7 @@
             transition: background-color 0.2s ease, filter 0.2s ease;
             box-sizing: border-box;
         }
-        .spotify-ctrl-btn:hover {
-            filter: brightness(1.1);
-        }
+        .spotify-ctrl-btn:hover { filter: brightness(1.1); }
         
         .spotify-ctrl-btn.connected-mode {
             background-color: #242424;
@@ -182,9 +179,7 @@
             font-size: 1rem;
             outline: none;
         }
-        .playlist-select-dropdown:focus {
-            border-color: var(--spotify-green);
-        }
+        .playlist-select-dropdown:focus { border-color: var(--spotify-green); }
     </style>
 </head>
 <body>
@@ -215,7 +210,7 @@
             
             <h3 id="results-header" class="section-title">Search Results</h3>
             <div id="results-list">
-                <p class="placeholder-text">Connect your Spotify account at the bottom to perform searches.</p>
+                <p class="placeholder-text">Type in the box above to discover tracks.</p>
             </div>
         </div>
 
@@ -250,7 +245,6 @@
                         btn.innerText = "My Playlists";
                         btn.className = "spotify-ctrl-btn connected-mode";
                         document.getElementById('playlist-panel').style.display = 'block';
-                        document.getElementById('results-list').innerHTML = `<p class="placeholder-text">Type in the box above to discover tracks.</p>`;
                         fetchUserPlaylists();
                     }
                 }
@@ -272,9 +266,7 @@
                 if (!res.ok) return;
                 const playlists = await res.json();
                 const dropdown = document.getElementById('playlist-dropdown');
-                
                 dropdown.innerHTML = '<option value="">-- Choose a Playlist --</option>';
-                
                 playlists.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
@@ -288,7 +280,6 @@
             const playlistId = document.getElementById('playlist-dropdown').value;
             const container = document.getElementById('results-list');
             const header = document.getElementById('results-header');
-            
             if (!playlistId) return;
             
             document.getElementById('search-input').value = "";
@@ -323,10 +314,6 @@
             fetch(`/api/search?q=${encodeURIComponent(query)}`)
             .then(res => res.json())
             .then(data => {
-                if (data.error) {
-                    container.innerHTML = `<p class='placeholder-text'>${data.error}</p>`;
-                    return;
-                }
                 if(!data.tracks || data.tracks.length === 0) {
                     container.innerHTML = "<p class='placeholder-text'>No results matched your query.</p>";
                     return;
@@ -334,7 +321,7 @@
                 renderTrackRows(data.tracks);
             })
             .catch(() => {
-                container.innerHTML = "<p class='placeholder-text'>Search failed. Make sure you are logged in.</p>";
+                container.innerHTML = "<p class='placeholder-text'>Search error encountered.</p>";
             });
         }
 
@@ -393,7 +380,7 @@
             }
         }
 
-        function escapeHtml(str) { return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
+        function escapeHtml(str) { return str.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">").replace(/"/g, """).replace(/'/g, "'"); }
         
         async function syncWithServer() {
             try {
@@ -437,7 +424,7 @@
             } else if (localCredits <= 0) {
                 btns.forEach(b => b.disabled = true);
             } else {
-                inputs.placeholder = isUserConnectedToSpotify ? "Search tracks, artists..." : "Connect your Spotify account below to unlock searching";
+                inputs.placeholder = "Search tracks, artists...";
                 btns.forEach(b => b.disabled = false);
             }
         }
