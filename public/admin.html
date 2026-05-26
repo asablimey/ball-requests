@@ -144,12 +144,20 @@ Admin
             transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
-        .fullscreen-btn {
-            padding: 14px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
-            background-color: #222; color: white; cursor: pointer; font-size: 1rem; transition: all 0.2s ease;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        .fullscreen-icon-btn {
+            background: none;
+            border: none;
+            color: #a7a7a7;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease, transform 0.1s ease;
         }
-        .fullscreen-btn:hover { background-color: #333; border-color: #555; }
+        .fullscreen-icon-btn:hover { color: white; }
+        .fullscreen-icon-btn:active { transform: scale(0.95); }
+        .fullscreen-icon-btn svg { width: 24px; height: 24px; fill: currentColor; }
 
         .utility-btn {
             padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
@@ -351,9 +359,13 @@ Admin
 
     <div class="header">
         <h1>Current Requests</h1>
-        <div style="display: flex; gap: 10px;">
-            <button id="toggle-fullscreen" class="fullscreen-btn" onclick="toggleFullscreen()">🖥 Go Fullscreen</button>
+        <div style="display: flex; align-items: center; gap: 12px;">
             <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+            <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
+                <svg viewBox="0 0 24 24" id="fullscreen-svg">
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                </svg>
+            </button>
         </div>
     </div>
 
@@ -551,30 +563,28 @@ Admin
         }
 
         function toggleFullscreen() {
-            const btn = document.getElementById('toggle-fullscreen');
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen()
-                    .then(() => {
-                        btn.innerText = "❌ Exit Fullscreen";
-                    })
                     .catch(err => {
                         console.log(`Error enabling fullscreen: ${err.message}`);
                     });
             } else {
                 document.exitFullscreen();
-                btn.innerText = "🖥 Go Fullscreen";
             }
         }
 
-        // Keep fullscreen button text synced if tablet exits using native device gestures
-        document.addEventListener('fullscreenchange', () => {
-            const btn = document.getElementById('toggle-fullscreen');
+        function updateFullscreenIcon() {
+            const svgNode = document.getElementById('fullscreen-svg');
             if (!document.fullscreenElement) {
-                btn.innerText = "🖥 Go Fullscreen";
+                // Expand Icon
+                svgNode.innerHTML = `<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>`;
             } else {
-                btn.innerText = "❌ Exit Fullscreen";
+                // Shrink / Exit Icon
+                svgNode.innerHTML = `<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>`;
             }
-        });
+        }
+
+        document.addEventListener('fullscreenchange', updateFullscreenIcon);
 
         window.onload = () => {
             document.getElementById('password-input').focus();
