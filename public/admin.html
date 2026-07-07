@@ -1,4 +1,3 @@
-Admin
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -366,6 +365,7 @@ Admin
         <h1>Current Requests</h1>
         <div style="display: flex; align-items: center; gap: 12px;">
             <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+            <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
             <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
                 <svg viewBox="0 0 24 24" id="fullscreen-svg">
                     <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
@@ -412,6 +412,7 @@ Admin
 
     <script>
         let requestsAllowed = true;
+        let explicitBlockActive = false;
         let isAuthorized = false; 
 
         // Tab selection switching algorithm
@@ -469,6 +470,11 @@ Admin
                 requestsAllowed = data.requestsAllowed;
                 toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
                 toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                const explicitBtn = document.getElementById('toggle-explicit');
+                explicitBlockActive = data.explicitBlockActive || false;
+                explicitBtn.innerText = explicitBlockActive ? "Explicit: BLOCKED" : "Explicit: ALLOWED";
+                explicitBtn.className = explicitBlockActive ? "toggle-btn closed-status" : "toggle-btn open-status";
 
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
@@ -563,6 +569,16 @@ Admin
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ allow: !requestsAllowed })
+            });
+            updateDashboard();
+        }
+
+        async function toggleExplicitLock() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-explicit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ blockExplicit: !explicitBlockActive })
             });
             updateDashboard();
         }
