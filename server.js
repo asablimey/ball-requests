@@ -13,7 +13,8 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
-    requestsAllowed: true
+    requestsAllowed: true,
+    explicitBlockActive: false
 };
 
 let activeQueue = [];
@@ -68,7 +69,7 @@ app.get('/api/search', async (req, res) => {
         const data = await response.json();
         const trackItems = data.tracks?.items || [];
         
-        const tracks = trackItems.map(track => {
+        let tracks = trackItems.map(track => {
             return {
                 id: track.id,
                 name: track.name,
@@ -79,6 +80,11 @@ app.get('/api/search', async (req, res) => {
             };
         });
         
+        // Filter out explicit tracks if explicit restriction lock is active
+        if (systemConfigs.explicitBlockActive) {
+            tracks = tracks.filter(track => !track.explicit);
+        }
+
         res.json({ tracks });
     } catch (err) {
         res.status(500).json({ error: "Search feature unavailable" });
@@ -89,6 +95,11 @@ app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+
+    // API block safety gate against manual requests injection of explicit songs
+    if (systemConfigs.explicitBlockActive && track.explicit) {
+        return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+    }
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
@@ -162,6 +173,7 @@ app.get('/data', (req, res) => {
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -172,6 +184,7 @@ app.get('/api/admin/data', (req, res) => {
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -187,6 +200,12 @@ app.post('/api/admin/config', (req, res) => {
 app.post('/api/admin/toggle', (req, res) => {
     const { allow } = req.body;
     if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-explicit', (req, res) => {
+    const { blockExplicit } = req.body;
+    if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
     res.json({ success: true });
 });
 
