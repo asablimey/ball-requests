@@ -17,6 +17,7 @@
             --card-bg: #242424;
             --blue-action: #007aff;
             --red-action: #e91429;
+            --purple-action: #a333c8;
         }
 
         body { 
@@ -144,7 +145,7 @@
         .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
 
         .toggle-btn { 
-            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
+            padding: 14px 24px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
             transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
@@ -171,6 +172,7 @@
 
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
+        .purple-status { background-color: var(--purple-action); color: white; }
 
         /* TAB NAVIGATION STYLES */
         .tab-bar {
@@ -342,7 +344,7 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
-        @media (max-width: 600px) {
+        @media (max-width: 768px) {
             body { padding: 15px; }
             h1 { font-size: 1.8rem; }
             .song-row { flex-direction: column; align-items: flex-start; }
@@ -363,9 +365,10 @@
 
     <div class="header">
         <h1>Current Requests</h1>
-        <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
             <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
             <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+            <button id="toggle-played-guard" class="toggle-btn closed-status" onclick="togglePlayedGuard()">Played Guard: OFF</button>
             <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
                 <svg viewBox="0 0 24 24" id="fullscreen-svg">
                     <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
@@ -413,9 +416,9 @@
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
+        let playedGuardActive = false;
         let isAuthorized = false; 
 
-        // Tab selection switching algorithm
         function switchTab(targetTab) {
             const queueBtn = document.getElementById('tab-btn-queue');
             const historyBtn = document.getElementById('tab-btn-history');
@@ -475,6 +478,11 @@
                 explicitBlockActive = data.explicitBlockActive || false;
                 explicitBtn.innerText = explicitBlockActive ? "Explicit: BLOCKED" : "Explicit: ALLOWED";
                 explicitBtn.className = explicitBlockActive ? "toggle-btn closed-status" : "toggle-btn open-status";
+
+                const guardBtn = document.getElementById('toggle-played-guard');
+                playedGuardActive = data.playedGuardActive || false;
+                guardBtn.innerText = playedGuardActive ? "Played Guard: ON" : "Played Guard: OFF";
+                guardBtn.className = playedGuardActive ? "toggle-btn purple-status" : "toggle-btn closed-status";
 
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
@@ -583,6 +591,16 @@
             updateDashboard();
         }
 
+        async function togglePlayedGuard() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-played-guard', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active: !playedGuardActive })
+            });
+            updateDashboard();
+        }
+
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen()
@@ -597,10 +615,8 @@
         function updateFullscreenIcon() {
             const svgNode = document.getElementById('fullscreen-svg');
             if (!document.fullscreenElement) {
-                // Expand Icon
                 svgNode.innerHTML = `<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>`;
             } else {
-                // Shrink / Exit Icon
                 svgNode.innerHTML = `<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>`;
             }
         }
