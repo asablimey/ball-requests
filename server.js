@@ -14,8 +14,7 @@ let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
     requestsAllowed: true,
-    explicitBlockActive: false,
-    playedGuardActive: false
+    explicitBlockActive: false
 };
 
 let activeQueue = [];
@@ -71,20 +70,17 @@ app.get('/api/search', async (req, res) => {
         const trackItems = data.tracks?.items || [];
         
         let tracks = trackItems.map(track => {
-            // Check if the song has already been played
-            const alreadyPlayed = playedHistory.some(historyTrack => historyTrack.title === track.name && historyTrack.artist.includes(track.artists[0]?.name));
-
             return {
                 id: track.id,
                 name: track.name,
                 artist: track.artists.map(a => a.name).join(', '),
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms),
-                alreadyPlayed: alreadyPlayed // Sent down to frontend structure
+                duration: formatDuration(track.duration_ms)
             };
         });
         
+        // Filter out explicit tracks if explicit restriction lock is active
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
         }
@@ -100,16 +96,9 @@ app.post('/api/request', (req, res) => {
     const { track } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
+    // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
-    }
-
-    // Backend restriction gate if Played Guard is explicitly turned on
-    if (systemConfigs.playedGuardActive) {
-        const alreadyPlayed = playedHistory.some(historyTrack => historyTrack.title === track.name && track.artist.includes(historyTrack.title));
-        if (alreadyPlayed) {
-            return res.status(403).json({ error: "This track has already been played during this set." });
-        }
     }
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
@@ -185,7 +174,6 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        playedGuardActive: systemConfigs.playedGuardActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -197,7 +185,6 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        playedGuardActive: systemConfigs.playedGuardActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -219,12 +206,6 @@ app.post('/api/admin/toggle', (req, res) => {
 app.post('/api/admin/toggle-explicit', (req, res) => {
     const { blockExplicit } = req.body;
     if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-played-guard', (req, res) => {
-    const { active } = req.body;
-    if (typeof active === 'boolean') systemConfigs.playedGuardActive = active;
     res.json({ success: true });
 });
 
