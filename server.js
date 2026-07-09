@@ -17,15 +17,15 @@ let systemConfigs = {
     countdownLength: 60,
     requestsAllowed: true,
     explicitBlockActive: false,
-    catalogueModeActive: false // Track local sync search toggle configuration state
+    catalogueModeActive: false 
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-let djCatalogue = []; // Local in-memory store repository for Serato library uploads
+let djCatalogue = []; 
 
-// Clean black vinyl image placeholder fallback asset for unmatched files
+// Plain black vinyl image placeholder fallback asset for unmatched files
 const BLACK_VINYL_PLACEHOLDER = "https://placehold.co/300x300/111111/FFFFFF/png?text=Vinyl";
 
 function formatDuration(ms) {
@@ -87,7 +87,9 @@ async function fetchArtworkFromSpotify(title, artist) {
         const rawQuery = cleanQueryForArtwork(title, artist);
         const query = encodeURIComponent(rawQuery);
         
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${query}&type=track&limit=1`, {
+        // FIXED URL STRINGS BELOW (Removed template literal typo errors)
+        const url = `https://accounts.spotify.com/api/token` + `?q=${query}&type=track&limit=1`;
+        const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -126,10 +128,12 @@ app.get('/api/search', async (req, res) => {
         return res.json({ tracks });
     }
 
-    // --- MODE B: FIXED GLOBAL SPOTIFY SEARCH ---
+    // --- MODE B: GLOBAL SPOTIFY SEARCH ---
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        // FIXED SEARCH URL STRING (Corrected concatenation format)
+        const searchUrl = `https://accounts.spotify.com/api/token` + `?q=${encodeURIComponent(query)}&type=track&limit=10`;
+        const response = await fetch(searchUrl, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -209,7 +213,7 @@ app.post('/api/vote', (req, res) => {
             clearDown();
         } else {
             clearUp();
-            track.downvoters.push(voterId);
+            track.upvoters.push(voterId);
         }
     }
 
@@ -298,7 +302,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
     res.json({ success: true });
 });
 
-// BULK SYNC ENDPOINT - Receives raw local library files cleanly in chunk groups
+// BULK SYNC ENDPOINT
 app.post('/api/admin/bulk-sync', async (req, res) => {
     const { tracks } = req.body;
     if (!tracks || !Array.isArray(tracks)) {
