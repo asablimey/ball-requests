@@ -196,7 +196,7 @@ app.get('/data', (req, res) => {
 
 app.get('/api/admin/data', (req, res) => {
     res.json({
-        maxCredits: systemConfigs.maxConfigs,
+        maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
@@ -249,6 +249,47 @@ app.post('/api/admin/catalogue/add', (req, res) => {
         });
     }
     res.json({ success: true });
+});
+
+// BULK SYNC ENDPOINT: Inbound pipeline processing local Serato Mac files
+app.post('/api/admin/bulk-sync', async (req, res) => {
+    const { tracks } = req.body;
+    
+    if (!tracks || !Array.isArray(tracks)) {
+        return res.status(400).json({ error: "Invalid tracks payload structure." });
+    }
+
+    console.log(`Received ${tracks.length} tracks from local Serato folder. Syncing...`);
+    let addedCount = 0;
+
+    for (const track of tracks) {
+        try {
+            // Match structures by checking both Name and Artist inside your live system layout array
+            const alreadyExists = djCatalogue.some(existingTrack => 
+                existingTrack.name.toLowerCase() === track.title.toLowerCase() && 
+                existingTrack.artist.toLowerCase() === track.artist.toLowerCase()
+            );
+
+            if (alreadyExists) continue;
+
+            // Pack track definitions to directly correlate with your /api/search filter loop outputs
+            const trackData = {
+                id: `serato_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                name: track.title,
+                artist: track.artist,
+                artwork: "https://picsum.photos/48", // Standard clean layout fallback thumbnail
+                explicit: false,
+                duration: track.duration ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : "3:30"
+            };
+
+            djCatalogue.push(trackData);
+            addedCount++;
+        } catch (err) {
+            console.error(`Skipped song sync processing line exception: ${track.title}`, err.message);
+        }
+    }
+
+    res.json({ success: true, message: `Successfully loaded ${addedCount} brand new tracks straight into your DJ Catalogue loop.` });
 });
 
 app.post('/api/admin/action', (req, res) => {
