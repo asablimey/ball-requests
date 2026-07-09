@@ -255,13 +255,9 @@
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
+        <input type="text" id="search-input" class="search-box" placeholder="Search for songs..." oninput="executeSearch()">
 
-        <div style="display: flex; gap: 15px; margin-bottom: 15px; border-bottom: 2px solid #282828; padding-bottom: 8px;">
-            <span class="section-title" id="tab-queue" style="cursor: pointer; margin: 0; user-select: none;" onclick="switchTab('queue')">Live Queue</span>
-            <span class="section-title" id="tab-catalogue" style="cursor: pointer; margin: 0; color: #666; user-select: none;" onclick="switchTab('catalogue')">DJ Catalogue</span>
-        </div>
-
+        <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
     </div>
 
@@ -274,8 +270,7 @@
         let currentServerDuration = 60;
         let globalSearchResults = [];
         let systemRequestsAllowed = true;
-        let currentTab = 'queue';
-        let localCatalogueData = [];
+        let isCatalogueModeActive = false;
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -291,6 +286,8 @@
                 maxCredits = data.maxCredits;
                 currentServerDuration = data.countdownLength;
                 systemRequestsAllowed = data.requestsAllowed;
+                isCatalogueModeActive = data.countdownLength;
+                isCatalogueModeActive = data.catalogueModeActive;
                 
                 setupLocalCredits();
                 manageCountdownVisibility();
@@ -300,48 +297,24 @@
                     searchInput.disabled = true;
                     searchInput.value = "";
                     searchInput.placeholder = "Song submissions are currently paused by the DJ.";
-                    if (currentTab === 'queue') renderQueue(data.queue);
+                    renderQueue(data.queue);
                 } else {
                     if (searchInput.disabled) {
                         searchInput.disabled = false;
-                        searchInput.placeholder = "Search for songs or artists...";
+                    }
+                    // Update input placeholder visually based on DJ's control configuration
+                    if (isCatalogueModeActive) {
+                        searchInput.placeholder = "Search DJ's Curated Catalogue...";
+                    } else {
+                        searchInput.placeholder = "Search for songs or artists on Spotify...";
                     }
                     
-                    if (currentTab === 'queue' && searchInput.value.trim() === "") {
+                    if (searchInput.value.trim() === "") {
+                        document.getElementById('list-title').innerText = "Live Queue";
                         renderQueue(data.queue);
                     }
                 }
             } catch (e) { console.log("State sync failure."); }
-        }
-
-        function switchTab(tab) {
-            currentTab = tab;
-            const queueTab = document.getElementById('tab-queue');
-            const catalogueTab = document.getElementById('tab-catalogue');
-            const searchInput = document.getElementById('search-input');
-
-            if (tab === 'queue') {
-                queueTab.style.color = 'var(--spotify-green)';
-                catalogueTab.style.color = '#666';
-                searchInput.style.display = 'block';
-                fetchSystemState();
-            } else {
-                catalogueTab.style.color = 'var(--spotify-green)';
-                queueTab.style.color = '#666';
-                searchInput.style.display = 'none';
-                fetchCatalogue();
-            }
-        }
-
-        async function fetchCatalogue() {
-            try {
-                const res = await fetch('/api/catalogue');
-                const data = await res.json();
-                localCatalogueData = data.catalogue;
-                if (currentTab === 'catalogue') {
-                    renderCatalogue(localCatalogueData);
-                }
-            } catch (e) { console.log("Failed to fetch catalogue."); }
         }
 
         function setupLocalCredits() {
@@ -442,32 +415,6 @@
             }).join('');
         }
 
-        function renderCatalogue(catalogue) {
-            const display = document.getElementById('main-display-list');
-            if (catalogue.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">The DJ hasn\'t curated any tracks into the catalogue yet.</p>';
-                return;
-            }
-
-            display.innerHTML = catalogue.map((track, index) => `
-                <div class="song-row">
-                    <div class="song-details">
-                        <img src="${track.artwork}">
-                        <div class="text-block">
-                            <div class="title-wrapper">
-                                <p class="song-title">${track.name}</p>
-                                ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                            </div>
-                            <p class="song-artist">${track.artist}</p>
-                        </div>
-                    </div>
-                    <div class="actions">
-                        <button class="btn-request" onclick="submitCatalogueRequest(${index})">Request</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
         async function castVote(id, type) {
             try {
                 const res = await fetch('/api/vote', {
@@ -476,7 +423,7 @@
                     body: JSON.stringify({ id, type, voterId: voterSignatureToken })
                 });
                 if (res.ok) fetchSystemState();
-            } catch (e) { console.log("Voting exception dropped."); }
+            } catch (e) { console.log("Voting entry exception dropped."); }
         }
 
         function executeSearch() {
@@ -495,6 +442,7 @@
                     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
                     const data = await res.json();
                     
+                    document.getElementById('list-title').innerText = "Search Results";
                     const display = document.getElementById('main-display-list');
                     
                     if (!data.tracks || data.tracks.length === 0) {
@@ -563,52 +511,9 @@
             } catch (e) { alert("Failed to connect to request server."); }
         }
 
-        async function submitCatalogueRequest(index) {
-            if (!systemRequestsAllowed) {
-                alert("Submissions are currently closed.");
-                return;
-            }
-            if (availableCredits <= 0) {
-                alert("You are out of credits!");
-                return;
-            }
-
-            const item = localCatalogueData[index];
-            if (!item) return;
-
-            const track = {
-                id: item.id,
-                name: item.name,
-                artist: item.artist,
-                artwork: item.artwork,
-                explicit: item.explicit,
-                duration: item.duration
-            };
-
-            try {
-                const res = await fetch('/api/request', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track })
-                });
-                
-                if (res.ok) {
-                    availableCredits--;
-                    localStorage.setItem('userCredits', availableCredits);
-                    document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
-                    manageCountdownVisibility();
-                    alert("Song requested from Catalogue!");
-                    switchTab('queue');
-                } else {
-                    const errorData = await res.json();
-                    alert(errorData.error || "Submission rejected.");
-                }
-            } catch (e) { alert("Failed to send request."); }
-        }
-
         fetchSystemState();
         setInterval(() => {
-            if (currentTab === 'queue' && document.getElementById('search-input').value.trim() === "") {
+            if (document.getElementById('search-input').value.trim() === "") {
                 fetchSystemState();
             }
         }, 4000);
