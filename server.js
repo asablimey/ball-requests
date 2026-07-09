@@ -103,6 +103,7 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q?.toLowerCase();
     if (!query) return res.json({ tracks: [] });
 
+    // --- MODE A: CATALOGUE MODE SEARCH ---
     if (systemConfigs.catalogueModeActive) {
         const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
         const cleanedQuery = cleanString(query);
@@ -120,8 +121,10 @@ app.get('/api/search', async (req, res) => {
         return res.json({ tracks });
     }
 
+    // --- MODE B: GLOBAL SPOTIFY SEARCH ---
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
+        // FIXED THE ENDPOINT LINK HERE:
         const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
@@ -143,6 +146,7 @@ app.get('/api/search', async (req, res) => {
 
         res.json({ tracks });
     } catch (err) {
+        console.error("[SEARCH ERROR]", err.message);
         res.status(500).json({ error: "Search feature unavailable" });
     }
 });
@@ -203,7 +207,7 @@ app.post('/api/vote', (req, res) => {
             clearDown();
         } else {
             clearUp();
-            track.downvoters.push(voterId);
+            track.upvoters.push(voterId);
         }
     }
 
