@@ -20,10 +20,11 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
+let djCatalogue = []; // Holds the DJ's pre-approved tracks
 
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
-    const seconds = ((ms % 60000) / 1000).toFixed(0);
+    const seconds = Math.floor((ms % 60000) / 1000);
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
@@ -52,7 +53,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
+// SEARCH ROUTE
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -80,7 +81,6 @@ app.get('/api/search', async (req, res) => {
             };
         });
         
-        // Filter out explicit tracks if explicit restriction lock is active
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
         }
@@ -91,12 +91,12 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+// REQUEST ROUTE
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
-    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+    if (!track || !(track.name || track.title)) return res.status(400).json({ error: "Missing metadata." });
 
-    // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
@@ -109,7 +109,7 @@ app.post('/api/request', (req, res) => {
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
-            title: track.name,
+            title: track.name || track.title,
             artist: track.artist || 'Unknown Artist',
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
@@ -121,6 +121,12 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
+// GET CATALOGUE
+app.get('/api/catalogue', (req, res) => {
+    res.json({ catalogue: djCatalogue });
+});
+
+// VOTE ROUTE
 app.post('/api/vote', (req, res) => {
     const { id, type, voterId } = req.body;
     if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
@@ -209,6 +215,25 @@ app.post('/api/admin/toggle-explicit', (req, res) => {
     res.json({ success: true });
 });
 
+// ADMIN CATALOGUE ADD TRACK
+app.post('/api/admin/catalogue/add', (req, res) => {
+    const { track } = req.body;
+    if (!track || !track.id) return res.status(400).json({ error: "Invalid track data." });
+    
+    const exists = djCatalogue.some(t => t.id === track.id);
+    if (!exists) {
+        djCatalogue.push({
+            id: track.id,
+            name: track.name || track.title,
+            artist: track.artist || 'Unknown Artist',
+            artwork: track.artwork || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: track.duration || '--:--'
+        });
+    }
+    res.json({ success: true, catalogue: djCatalogue });
+});
+
 app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
     if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
@@ -243,6 +268,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`[SERVER] Running on port ${PORT}`);
+    console.log("[SERVER] Running on port " + PORT);
     await getSpotifyToken();
 });
