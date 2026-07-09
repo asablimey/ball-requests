@@ -56,6 +56,23 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
+// Helper function to search Spotify for a track's official image URL
+async function fetchArtworkFromSpotify(title, artist) {
+    if (!spotifyAccessToken) await getSpotifyToken();
+    try {
+        const query = encodeURIComponent(`track:${title} artist:${artist}`);
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=$${query}&type=track&limit=1`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await response.json();
+        const trackItem = data.tracks?.items?.[0];
+        return trackItem?.album?.images?.[0]?.url || null;
+    } catch (err) {
+        console.error(`[ARTWORK] Failed lookup for ${title}:`, err.message);
+        return null;
+    }
+}
+
 // SMART SEARCH ROUTE - Switches automatically between Broad Catalogue Search and Spotify
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
@@ -67,7 +84,6 @@ app.get('/api/search', async (req, res) => {
 
     // --- CATALOGUE SEARCH MODE (BROAD & FUZZY) ---
     if (systemConfigs.catalogueModeActive) {
-        // Helper function to strip all grammar, punctuation, and spaces (e.g., "Don't Look - Back!" -> "dontlookback")
         const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
 
         const cleanedQuery = cleanString(query);
@@ -76,8 +92,6 @@ app.get('/api/search', async (req, res) => {
         let tracks = djCatalogue.filter(track => {
             const cleanedName = cleanString(track.name);
             const cleanedArtist = cleanString(track.artist);
-            
-            // Matches if the stripped search text is found anywhere inside the stripped name or artist
             return cleanedName.includes(cleanedQuery) || cleanedArtist.includes(cleanedQuery);
         });
         
@@ -260,7 +274,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
     res.json({ success: true });
 });
 
-// BULK SYNC ENDPOINT: Handles incoming chunks of Serato local track files cleanly
+// BULK SYNC ENDPOINT: Enhanced with live Spotify artwork lookups
 app.post('/api/admin/bulk-sync', async (req, res) => {
     const { tracks } = req.body;
     
@@ -268,7 +282,7 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
         return res.status(400).json({ error: "Invalid tracks payload structure." });
     }
 
-    console.log(`Received batch of ${tracks.length} tracks from Serato scanner. Processing...`);
+    console.log(`Received batch of ${tracks.length} tracks. Fetching correct artwork...`);
     let addedCount = 0;
 
     for (const track of tracks) {
@@ -280,11 +294,14 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
 
             if (alreadyExists) continue;
 
+            // Look up the exact artwork on Spotify using metadata strings
+            const realArtwork = await fetchArtworkFromSpotify(track.title, track.artist);
+
             const trackData = {
                 id: `serato_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 name: track.title,
                 artist: track.artist,
-                artwork: "🎵", // Clean, cohesive placeholder symbol to remove random image noise
+                artwork: realArtwork || "https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl", 
                 explicit: false,
                 duration: track.duration ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : "3:30"
             };
@@ -296,7 +313,7 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
         }
     }
 
-    res.json({ success: true, message: `Loaded ${addedCount} tracks successfully.` });
+    res.json({ success: true, message: `Loaded ${addedCount} tracks with artwork updates.` });
 });
 
 app.post('/api/admin/action', (req, res) => {
