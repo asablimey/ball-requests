@@ -81,6 +81,7 @@
         }
         .search-box:focus { border-color: var(--spotify-green); }
         
+        /* Disabled search state styling */
         .search-box:disabled {
             background-color: #111;
             border-color: #222;
@@ -255,7 +256,7 @@
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search for songs..." oninput="executeSearch()">
+        <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
 
         <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
@@ -269,8 +270,7 @@
         let countdownTimer = null;
         let currentServerDuration = 60;
         let globalSearchResults = [];
-        let systemRequestsAllowed = true;
-        let isCatalogueModeActive = false;
+        let systemRequestsAllowed = true; // Local tracker for global toggling
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -286,27 +286,22 @@
                 maxCredits = data.maxCredits;
                 currentServerDuration = data.countdownLength;
                 systemRequestsAllowed = data.requestsAllowed;
-                isCatalogueModeActive = data.countdownLength;
-                isCatalogueModeActive = data.catalogueModeActive;
                 
                 setupLocalCredits();
                 manageCountdownVisibility();
 
+                // Live lock/unlock layout handling
                 const searchInput = document.getElementById('search-input');
                 if (!systemRequestsAllowed) {
                     searchInput.disabled = true;
                     searchInput.value = "";
                     searchInput.placeholder = "Song submissions are currently paused by the DJ.";
+                    document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
                 } else {
                     if (searchInput.disabled) {
                         searchInput.disabled = false;
-                    }
-                    // Update input placeholder visually based on DJ's control configuration
-                    if (isCatalogueModeActive) {
-                        searchInput.placeholder = "Search DJ's Curated Catalogue...";
-                    } else {
-                        searchInput.placeholder = "Search for songs or artists on Spotify...";
+                        searchInput.placeholder = "Search for songs or artists...";
                     }
                     
                     if (searchInput.value.trim() === "") {
@@ -427,7 +422,7 @@
         }
 
         function executeSearch() {
-            if (!systemRequestsAllowed) return;
+            if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
             
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
@@ -512,11 +507,7 @@
         }
 
         fetchSystemState();
-        setInterval(() => {
-            if (document.getElementById('search-input').value.trim() === "") {
-                fetchSystemState();
-            }
-        }, 4000);
+        setInterval(fetchSystemState, 4000);
     </script>
 </body>
 </html>
