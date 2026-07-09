@@ -4,7 +4,6 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Upgraded body parsing limits to handle large incoming sync batches smoothly
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -56,12 +55,34 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// Helper function to search Spotify for a track's official image URL
+// Cleans text strings to build optimized artwork lookups
+function cleanQueryForArtwork(title, artist) {
+    let cleanTitle = title.toLowerCase()
+        .replace(/\(.*?mix.*?\)/g, '')
+        .replace(/\[.*?\]/g, '')
+        .replace(/\(.*?feat.*?\)/g, '')
+        .replace(/\(.*?edit.*?\)/g, '')
+        .replace(/ft\..*?$/g, '')
+        .replace(/feat\..*?$/g, '')
+        .replace(/[^a-zA-Z0-9 ]/g, '')
+        .trim();
+        
+    let cleanArtist = artist.toLowerCase()
+        .split(',')[0]
+        .split('&')[0]
+        .replace(/[^a-zA-Z0-9 ]/g, '')
+        .trim();
+
+    return `track:${cleanTitle} artist:${cleanArtist}`;
+}
+
 async function fetchArtworkFromSpotify(title, artist) {
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
-        const query = encodeURIComponent(`track:${title} artist:${artist}`);
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=$${query}&type=track&limit=1`, {
+        const rawQuery = cleanQueryForArtwork(title, artist);
+        const query = encodeURIComponent(rawQuery);
+        
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${query}&type=track&limit=1`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -73,7 +94,7 @@ async function fetchArtworkFromSpotify(title, artist) {
     }
 }
 
-// SMART SEARCH ROUTE - Switches automatically between Broad Catalogue Search and Spotify
+// SMART SEARCH ROUTE
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -82,10 +103,8 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q?.toLowerCase();
     if (!query) return res.json({ tracks: [] });
 
-    // --- CATALOGUE SEARCH MODE (BROAD & FUZZY) ---
     if (systemConfigs.catalogueModeActive) {
         const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
-
         const cleanedQuery = cleanString(query);
         if (!cleanedQuery) return res.json({ tracks: [] });
 
@@ -101,10 +120,9 @@ app.get('/api/search', async (req, res) => {
         return res.json({ tracks });
     }
 
-    // --- GLOBAL SPOTIFY SEARCH MODE ---
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -114,7 +132,7 @@ app.get('/api/search', async (req, res) => {
             id: track.id,
             name: track.name,
             artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            artwork: track.album?.images[0]?.url || 'https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl',
             explicit: track.explicit || false,
             duration: formatDuration(track.duration_ms)
         }));
@@ -266,7 +284,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
             id: track.id,
             name: track.name || track.title,
             artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || '🎵',
+            artwork: track.artwork || 'https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl',
             explicit: track.explicit || false,
             duration: track.duration || '--:--'
         });
@@ -274,15 +292,15 @@ app.post('/api/admin/catalogue/add', (req, res) => {
     res.json({ success: true });
 });
 
-// BULK SYNC ENDPOINT: Enhanced with live Spotify artwork lookups
+// BULK SYNC ENDPOINT
 app.post('/api/admin/bulk-sync', async (req, res) => {
     const { tracks } = req.body;
     
     if (!tracks || !Array.isArray(tracks)) {
-        return res.status(400).json({ error: "Invalid tracks payload structure." });
+        return res.status(400).json({ error: "Invalid payload." });
     }
 
-    console.log(`Received batch of ${tracks.length} tracks. Fetching correct artwork...`);
+    console.log(`Processing batch of ${tracks.length} tracks with optimized artwork lookups...`);
     let addedCount = 0;
 
     for (const track of tracks) {
@@ -294,7 +312,6 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
 
             if (alreadyExists) continue;
 
-            // Look up the exact artwork on Spotify using metadata strings
             const realArtwork = await fetchArtworkFromSpotify(track.title, track.artist);
 
             const trackData = {
@@ -309,11 +326,11 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
             djCatalogue.push(trackData);
             addedCount++;
         } catch (err) {
-            console.error(`Skipped song sync processing exception: ${track.title}`, err.message);
+            console.error(`Skipped track processing exception: ${track.title}`, err.message);
         }
     }
 
-    res.json({ success: true, message: `Loaded ${addedCount} tracks with artwork updates.` });
+    res.json({ success: true, message: `Loaded ${addedCount} tracks.` });
 });
 
 app.post('/api/admin/action', (req, res) => {
