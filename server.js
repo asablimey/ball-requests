@@ -14,13 +14,14 @@ let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
     requestsAllowed: true,
-    explicitBlockActive: false
+    explicitBlockActive: false,
+    catalogueModeActive: false // <-- NEW: Config to track if searching global or catalogue
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-let djCatalogue = []; // Holds the DJ's pre-approved tracks
+let djCatalogue = []; 
 
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
@@ -53,33 +54,45 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SEARCH ROUTE
+// SMART SEARCH ROUTE - Searches Spotify OR Catalogue based on Admin setting
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
     }
 
-    const query = req.query.q;
+    const query = req.query.q?.toLowerCase();
     if (!query) return res.json({ tracks: [] });
-    if (!spotifyAccessToken) await getSpotifyToken();
 
+    // MODE A: Catalogue Search Only
+    if (systemConfigs.catalogueModeActive) {
+        let tracks = djCatalogue.filter(track => 
+            track.name.toLowerCase().includes(query) || 
+            track.artist.toLowerCase().includes(query)
+        );
+        
+        if (systemConfigs.explicitBlockActive) {
+            tracks = tracks.filter(track => !track.explicit);
+        }
+        return res.json({ tracks });
+    }
+
+    // MODE B: Global Spotify Search (Default)
+    if (!spotifyAccessToken) await getSpotifyToken();
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
         const trackItems = data.tracks?.items || [];
         
-        let tracks = trackItems.map(track => {
-            return {
-                id: track.id,
-                name: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
-                explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms)
-            };
-        });
+        let tracks = trackItems.map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: track.artists.map(a => a.name).join(', '),
+            artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: formatDuration(track.duration_ms)
+        }));
         
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
@@ -95,7 +108,7 @@ app.get('/api/search', async (req, res) => {
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
-    if (!track || !(track.name || track.title)) return res.status(400).json({ error: "Missing metadata." });
+    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
@@ -109,7 +122,7 @@ app.post('/api/request', (req, res) => {
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
-            title: track.name || track.title,
+            title: track.name,
             artist: track.artist || 'Unknown Artist',
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
@@ -119,11 +132,6 @@ app.post('/api/request', (req, res) => {
         });
     }
     res.json({ success: true });
-});
-
-// GET CATALOGUE
-app.get('/api/catalogue', (req, res) => {
-    res.json({ catalogue: djCatalogue });
 });
 
 // VOTE ROUTE
@@ -180,6 +188,7 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        catalogueModeActive: systemConfigs.catalogueModeActive, // <-- Pass state down
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -187,10 +196,11 @@ app.get('/data', (req, res) => {
 
 app.get('/api/admin/data', (req, res) => {
     res.json({
-        maxCredits: systemConfigs.maxCredits,
+        maxCredits: systemConfigs.maxConfigs,
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        catalogueModeActive: systemConfigs.catalogueModeActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -215,6 +225,13 @@ app.post('/api/admin/toggle-explicit', (req, res) => {
     res.json({ success: true });
 });
 
+// NEW ADMIN TOGGLE: Switches between Spotify search and Catalogue search
+app.post('/api/admin/toggle-catalogue-mode', (req, res) => {
+    const { useCatalogueOnly } = req.body;
+    if (typeof useCatalogueOnly === 'boolean') systemConfigs.catalogueModeActive = useCatalogueOnly;
+    res.json({ success: true, catalogueModeActive: systemConfigs.catalogueModeActive });
+});
+
 // ADMIN CATALOGUE ADD TRACK
 app.post('/api/admin/catalogue/add', (req, res) => {
     const { track } = req.body;
@@ -231,7 +248,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
             duration: track.duration || '--:--'
         });
     }
-    res.json({ success: true, catalogue: djCatalogue });
+    res.json({ success: true });
 });
 
 app.post('/api/admin/action', (req, res) => {
