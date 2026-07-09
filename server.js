@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Upgraded body parsing limits to handle large incoming sync batches smoothly
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -16,7 +17,7 @@ let systemConfigs = {
     countdownLength: 60,
     requestsAllowed: true,
     explicitBlockActive: false,
-    catalogueModeActive: false // <-- NEW: Config to track if searching global or catalogue
+    catalogueModeActive: false 
 };
 
 let activeQueue = [];
@@ -55,7 +56,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SMART SEARCH ROUTE - Searches Spotify OR Catalogue based on Admin setting
+// SMART SEARCH ROUTE - Switches automatically between Broad Catalogue Search and Spotify
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -64,12 +65,21 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q?.toLowerCase();
     if (!query) return res.json({ tracks: [] });
 
-    // MODE A: Catalogue Search Only
+    // --- CATALOGUE SEARCH MODE (BROAD & FUZZY) ---
     if (systemConfigs.catalogueModeActive) {
-        let tracks = djCatalogue.filter(track => 
-            track.name.toLowerCase().includes(query) || 
-            track.artist.toLowerCase().includes(query)
-        );
+        // Helper function to strip all grammar, punctuation, and spaces (e.g., "Don't Look - Back!" -> "dontlookback")
+        const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        const cleanedQuery = cleanString(query);
+        if (!cleanedQuery) return res.json({ tracks: [] });
+
+        let tracks = djCatalogue.filter(track => {
+            const cleanedName = cleanString(track.name);
+            const cleanedArtist = cleanString(track.artist);
+            
+            // Matches if the stripped search text is found anywhere inside the stripped name or artist
+            return cleanedName.includes(cleanedQuery) || cleanedArtist.includes(cleanedQuery);
+        });
         
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
@@ -77,7 +87,7 @@ app.get('/api/search', async (req, res) => {
         return res.json({ tracks });
     }
 
-    // MODE B: Global Spotify Search (Default)
+    // --- GLOBAL SPOTIFY SEARCH MODE ---
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
         const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${encodeURIComponent(query)}&type=track&limit=10`, {
@@ -125,7 +135,7 @@ app.post('/api/request', (req, res) => {
             id: track.id || Date.now().toString(),
             title: track.name,
             artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || 'https://picsum.photos/48',
+            artwork: track.artwork || '⚙️',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
             upvoters: [],
@@ -189,7 +199,7 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        catalogueModeActive: systemConfigs.catalogueModeActive, // <-- Pass state down
+        catalogueModeActive: systemConfigs.catalogueModeActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -226,14 +236,12 @@ app.post('/api/admin/toggle-explicit', (req, res) => {
     res.json({ success: true });
 });
 
-// NEW ADMIN TOGGLE: Switches between Spotify search and Catalogue search
 app.post('/api/admin/toggle-catalogue-mode', (req, res) => {
     const { useCatalogueOnly } = req.body;
     if (typeof useCatalogueOnly === 'boolean') systemConfigs.catalogueModeActive = useCatalogueOnly;
     res.json({ success: true, catalogueModeActive: systemConfigs.catalogueModeActive });
 });
 
-// ADMIN CATALOGUE ADD TRACK
 app.post('/api/admin/catalogue/add', (req, res) => {
     const { track } = req.body;
     if (!track || !track.id) return res.status(400).json({ error: "Invalid track data." });
@@ -244,7 +252,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
             id: track.id,
             name: track.name || track.title,
             artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || 'https://picsum.photos/48',
+            artwork: track.artwork || '🎵',
             explicit: track.explicit || false,
             duration: track.duration || '--:--'
         });
@@ -252,7 +260,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
     res.json({ success: true });
 });
 
-// BULK SYNC ENDPOINT: Inbound pipeline processing local Serato Mac files
+// BULK SYNC ENDPOINT: Handles incoming chunks of Serato local track files cleanly
 app.post('/api/admin/bulk-sync', async (req, res) => {
     const { tracks } = req.body;
     
@@ -260,12 +268,11 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
         return res.status(400).json({ error: "Invalid tracks payload structure." });
     }
 
-    console.log(`Received ${tracks.length} tracks from local Serato folder. Syncing...`);
+    console.log(`Received batch of ${tracks.length} tracks from Serato scanner. Processing...`);
     let addedCount = 0;
 
     for (const track of tracks) {
         try {
-            // Match structures by checking both Name and Artist inside your live system layout array
             const alreadyExists = djCatalogue.some(existingTrack => 
                 existingTrack.name.toLowerCase() === track.title.toLowerCase() && 
                 existingTrack.artist.toLowerCase() === track.artist.toLowerCase()
@@ -273,12 +280,11 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
 
             if (alreadyExists) continue;
 
-            // Pack track definitions to directly correlate with your /api/search filter loop outputs
             const trackData = {
                 id: `serato_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 name: track.title,
                 artist: track.artist,
-                artwork: "https://picsum.photos/48", // Standard clean layout fallback thumbnail
+                artwork: "🎵", // Clean, cohesive placeholder symbol to remove random image noise
                 explicit: false,
                 duration: track.duration ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : "3:30"
             };
@@ -286,11 +292,11 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
             djCatalogue.push(trackData);
             addedCount++;
         } catch (err) {
-            console.error(`Skipped song sync processing line exception: ${track.title}`, err.message);
+            console.error(`Skipped song sync processing exception: ${track.title}`, err.message);
         }
     }
 
-    res.json({ success: true, message: `Successfully loaded ${addedCount} brand new tracks straight into your DJ Catalogue loop.` });
+    res.json({ success: true, message: `Loaded ${addedCount} tracks successfully.` });
 });
 
 app.post('/api/admin/action', (req, res) => {
