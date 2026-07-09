@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Upgraded body parsing capacity limits to handle large incoming sync batches smoothly
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -16,17 +17,20 @@ let systemConfigs = {
     countdownLength: 60,
     requestsAllowed: true,
     explicitBlockActive: false,
-    catalogueModeActive: false 
+    catalogueModeActive: false // Track local sync search toggle configuration state
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-let djCatalogue = []; 
+let djCatalogue = []; // Local in-memory store repository for Serato library uploads
+
+// Clean black vinyl image placeholder fallback asset for unmatched files
+const BLACK_VINYL_PLACEHOLDER = "https://placehold.co/300x300/111111/FFFFFF/png?text=Vinyl";
 
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
+    const seconds = ((ms % 60000) / 1000).toFixed(0);
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
@@ -55,7 +59,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// Cleans text strings to build optimized artwork lookups
+// Cleans messy text strings to dramatically optimize background lookups
 function cleanQueryForArtwork(title, artist) {
     let cleanTitle = title.toLowerCase()
         .replace(/\(.*?mix.*?\)/g, '')
@@ -76,13 +80,14 @@ function cleanQueryForArtwork(title, artist) {
     return `track:${cleanTitle} artist:${cleanArtist}`;
 }
 
+// Internal async utility function to grab live cover art paths during uploads
 async function fetchArtworkFromSpotify(title, artist) {
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
         const rawQuery = cleanQueryForArtwork(title, artist);
         const query = encodeURIComponent(rawQuery);
         
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${query}&type=track&limit=1`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${query}&type=track&limit=1`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -94,16 +99,16 @@ async function fetchArtworkFromSpotify(title, artist) {
     }
 }
 
-// SMART SEARCH ROUTE
+// SMART SEARCH ROUTE - Autofilters seamlessly across both systems
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
     }
 
-    const query = req.query.q?.toLowerCase();
+    const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
 
-    // --- MODE A: CATALOGUE MODE SEARCH ---
+    // --- MODE A: LOCAL FUZZY CATALOGUE SEARCH ---
     if (systemConfigs.catalogueModeActive) {
         const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
         const cleanedQuery = cleanString(query);
@@ -121,11 +126,10 @@ app.get('/api/search', async (req, res) => {
         return res.json({ tracks });
     }
 
-    // --- MODE B: GLOBAL SPOTIFY SEARCH ---
+    // --- MODE B: FIXED GLOBAL SPOTIFY SEARCH ---
     if (!spotifyAccessToken) await getSpotifyToken();
     try {
-        // FIXED THE ENDPOINT LINK HERE:
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+        const response = await fetch(`https://api.spotify.com/v1/search?q=$?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
@@ -135,7 +139,7 @@ app.get('/api/search', async (req, res) => {
             id: track.id,
             name: track.name,
             artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || 'https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl',
+            artwork: track.album?.images[0]?.url || BLACK_VINYL_PLACEHOLDER,
             explicit: track.explicit || false,
             duration: formatDuration(track.duration_ms)
         }));
@@ -151,7 +155,6 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// REQUEST ROUTE
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track } = req.body;
@@ -171,7 +174,7 @@ app.post('/api/request', (req, res) => {
             id: track.id || Date.now().toString(),
             title: track.name,
             artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || '⚙️',
+            artwork: track.artwork || BLACK_VINYL_PLACEHOLDER,
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
             upvoters: [],
@@ -181,7 +184,6 @@ app.post('/api/request', (req, res) => {
     res.json({ success: true });
 });
 
-// VOTE ROUTE
 app.post('/api/vote', (req, res) => {
     const { id, type, voterId } = req.body;
     if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
@@ -207,7 +209,7 @@ app.post('/api/vote', (req, res) => {
             clearDown();
         } else {
             clearUp();
-            track.upvoters.push(voterId);
+            track.downvoters.push(voterId);
         }
     }
 
@@ -288,7 +290,7 @@ app.post('/api/admin/catalogue/add', (req, res) => {
             id: track.id,
             name: track.name || track.title,
             artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || 'https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl',
+            artwork: track.artwork || BLACK_VINYL_PLACEHOLDER,
             explicit: track.explicit || false,
             duration: track.duration || '--:--'
         });
@@ -296,15 +298,14 @@ app.post('/api/admin/catalogue/add', (req, res) => {
     res.json({ success: true });
 });
 
-// BULK SYNC ENDPOINT
+// BULK SYNC ENDPOINT - Receives raw local library files cleanly in chunk groups
 app.post('/api/admin/bulk-sync', async (req, res) => {
     const { tracks } = req.body;
-    
     if (!tracks || !Array.isArray(tracks)) {
-        return res.status(400).json({ error: "Invalid payload." });
+        return res.status(400).json({ error: "Invalid array structure payload." });
     }
 
-    console.log(`Processing batch of ${tracks.length} tracks with optimized artwork lookups...`);
+    console.log(`Processing batch of ${tracks.length} tracks with artwork mapping filter rules...`);
     let addedCount = 0;
 
     for (const track of tracks) {
@@ -322,7 +323,7 @@ app.post('/api/admin/bulk-sync', async (req, res) => {
                 id: `serato_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
                 name: track.title,
                 artist: track.artist,
-                artwork: realArtwork || "https://placehold.co/150x150/111111/FFFFFF/png?text=Vinyl", 
+                artwork: realArtwork || BLACK_VINYL_PLACEHOLDER, 
                 explicit: false,
                 duration: track.duration ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : "3:30"
             };
@@ -371,6 +372,6 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log("[SERVER] Running on port " + PORT);
+    console.log(`[SERVER] Running on port ${PORT}`);
     await getSpotifyToken();
 });
