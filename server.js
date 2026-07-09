@@ -4,9 +4,7 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Upgraded body parsing capacity limits to handle large incoming sync batches smoothly
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
@@ -22,9 +20,6 @@ let systemConfigs = {
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-
-// Plain black vinyl image placeholder fallback asset for unmatched files
-const BLACK_VINYL_PLACEHOLDER = "https://placehold.co/300x300/111111/FFFFFF/png?text=Vinyl";
 
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
@@ -57,7 +52,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// SEARCH ROUTE - Kept exactly as your original working code
+// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -68,7 +63,6 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        // UNTOUCHED: Kept your original URL endpoint formatting exactly as requested
         const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
@@ -80,13 +74,13 @@ app.get('/api/search', async (req, res) => {
                 id: track.id,
                 name: track.name,
                 artist: track.artists.map(a => a.name).join(', '),
-                // REPLACED: Changed the random picsum image to the plain black vinyl placeholder
-                artwork: track.album?.images[0]?.url || BLACK_VINYL_PLACEHOLDER,
+                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms)
             };
         });
         
+        // Filter out explicit tracks if explicit restriction lock is active
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
         }
@@ -102,6 +96,7 @@ app.post('/api/request', (req, res) => {
     const { track } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
+    // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
@@ -116,8 +111,7 @@ app.post('/api/request', (req, res) => {
             id: track.id || Date.now().toString(),
             title: track.name,
             artist: track.artist || 'Unknown Artist',
-            // REPLACED: Changed fallback to plain black vinyl placeholder
-            artwork: track.artwork || BLACK_VINYL_PLACEHOLDER,
+            artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
             upvoters: [],
@@ -152,7 +146,7 @@ app.post('/api/vote', (req, res) => {
             clearDown();
         } else {
             clearUp();
-            track.upvoters.push(voterId);
+            track.downvoters.push(voterId);
         }
     }
 
