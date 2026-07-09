@@ -16,14 +16,12 @@ let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
     requestsAllowed: true,
-    explicitBlockActive: false,
-    catalogueModeActive: false 
+    explicitBlockActive: false
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-let djCatalogue = []; 
 
 // Plain black vinyl image placeholder fallback asset for unmatched files
 const BLACK_VINYL_PLACEHOLDER = "https://placehold.co/300x300/111111/FFFFFF/png?text=Vinyl";
@@ -59,49 +57,7 @@ async function getSpotifyToken() {
 }
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
-// Cleans messy text strings to dramatically optimize background lookups
-function cleanQueryForArtwork(title, artist) {
-    let cleanTitle = title.toLowerCase()
-        .replace(/\(.*?mix.*?\)/g, '')
-        .replace(/\[.*?\]/g, '')
-        .replace(/\(.*?feat.*?\)/g, '')
-        .replace(/\(.*?edit.*?\)/g, '')
-        .replace(/ft\..*?$/g, '')
-        .replace(/feat\..*?$/g, '')
-        .replace(/[^a-zA-Z0-9 ]/g, '')
-        .trim();
-        
-    let cleanArtist = artist.toLowerCase()
-        .split(',')[0]
-        .split('&')[0]
-        .replace(/[^a-zA-Z0-9 ]/g, '')
-        .trim();
-
-    return `track:${cleanTitle} artist:${cleanArtist}`;
-}
-
-// Internal async utility function to grab live cover art paths during uploads
-async function fetchArtworkFromSpotify(title, artist) {
-    if (!spotifyAccessToken) await getSpotifyToken();
-    try {
-        const rawQuery = cleanQueryForArtwork(title, artist);
-        const query = encodeURIComponent(rawQuery);
-        
-        // FIXED URL STRINGS BELOW (Removed template literal typo errors)
-        const url = `https://accounts.spotify.com/api/token` + `?q=${query}&type=track&limit=1`;
-        const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-        });
-        const data = await response.json();
-        const trackItem = data.tracks?.items?.[0];
-        return trackItem?.album?.images?.[0]?.url || null;
-    } catch (err) {
-        console.error(`[ARTWORK] Failed lookup for ${title}:`, err.message);
-        return null;
-    }
-}
-
-// SMART SEARCH ROUTE - Autofilters seamlessly across both systems
+// SEARCH ROUTE - Kept exactly as your original working code
 app.get('/api/search', async (req, res) => {
     if (!systemConfigs.requestsAllowed) {
         return res.json({ tracks: [] }); 
@@ -109,44 +65,27 @@ app.get('/api/search', async (req, res) => {
 
     const query = req.query.q;
     if (!query) return res.json({ tracks: [] });
-
-    // --- MODE A: LOCAL FUZZY CATALOGUE SEARCH ---
-    if (systemConfigs.catalogueModeActive) {
-        const cleanString = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const cleanedQuery = cleanString(query);
-        if (!cleanedQuery) return res.json({ tracks: [] });
-
-        let tracks = djCatalogue.filter(track => {
-            const cleanedName = cleanString(track.name);
-            const cleanedArtist = cleanString(track.artist);
-            return cleanedName.includes(cleanedQuery) || cleanedArtist.includes(cleanedQuery);
-        });
-        
-        if (systemConfigs.explicitBlockActive) {
-            tracks = tracks.filter(track => !track.explicit);
-        }
-        return res.json({ tracks });
-    }
-
-    // --- MODE B: GLOBAL SPOTIFY SEARCH ---
     if (!spotifyAccessToken) await getSpotifyToken();
+
     try {
-        // FIXED SEARCH URL STRING (Corrected concatenation format)
-        const searchUrl = `https://accounts.spotify.com/api/token` + `?q=${encodeURIComponent(query)}&type=track&limit=10`;
-        const response = await fetch(searchUrl, {
+        // UNTOUCHED: Kept your original URL endpoint formatting exactly as requested
+        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
         const trackItems = data.tracks?.items || [];
         
-        let tracks = trackItems.map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists.map(a => a.name).join(', '),
-            artwork: track.album?.images[0]?.url || BLACK_VINYL_PLACEHOLDER,
-            explicit: track.explicit || false,
-            duration: formatDuration(track.duration_ms)
-        }));
+        let tracks = trackItems.map(track => {
+            return {
+                id: track.id,
+                name: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                // REPLACED: Changed the random picsum image to the plain black vinyl placeholder
+                artwork: track.album?.images[0]?.url || BLACK_VINYL_PLACEHOLDER,
+                explicit: track.explicit || false,
+                duration: formatDuration(track.duration_ms)
+            };
+        });
         
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
@@ -154,7 +93,6 @@ app.get('/api/search', async (req, res) => {
 
         res.json({ tracks });
     } catch (err) {
-        console.error("[SEARCH ERROR]", err.message);
         res.status(500).json({ error: "Search feature unavailable" });
     }
 });
@@ -178,6 +116,7 @@ app.post('/api/request', (req, res) => {
             id: track.id || Date.now().toString(),
             title: track.name,
             artist: track.artist || 'Unknown Artist',
+            // REPLACED: Changed fallback to plain black vinyl placeholder
             artwork: track.artwork || BLACK_VINYL_PLACEHOLDER,
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
@@ -241,7 +180,6 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        catalogueModeActive: systemConfigs.catalogueModeActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -253,7 +191,6 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        catalogueModeActive: systemConfigs.catalogueModeActive,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -276,70 +213,6 @@ app.post('/api/admin/toggle-explicit', (req, res) => {
     const { blockExplicit } = req.body;
     if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
     res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-catalogue-mode', (req, res) => {
-    const { useCatalogueOnly } = req.body;
-    if (typeof useCatalogueOnly === 'boolean') systemConfigs.catalogueModeActive = useCatalogueOnly;
-    res.json({ success: true, catalogueModeActive: systemConfigs.catalogueModeActive });
-});
-
-app.post('/api/admin/catalogue/add', (req, res) => {
-    const { track } = req.body;
-    if (!track || !track.id) return res.status(400).json({ error: "Invalid track data." });
-    
-    const exists = djCatalogue.some(t => t.id === track.id);
-    if (!exists) {
-        djCatalogue.push({
-            id: track.id,
-            name: track.name || track.title,
-            artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || BLACK_VINYL_PLACEHOLDER,
-            explicit: track.explicit || false,
-            duration: track.duration || '--:--'
-        });
-    }
-    res.json({ success: true });
-});
-
-// BULK SYNC ENDPOINT
-app.post('/api/admin/bulk-sync', async (req, res) => {
-    const { tracks } = req.body;
-    if (!tracks || !Array.isArray(tracks)) {
-        return res.status(400).json({ error: "Invalid array structure payload." });
-    }
-
-    console.log(`Processing batch of ${tracks.length} tracks with artwork mapping filter rules...`);
-    let addedCount = 0;
-
-    for (const track of tracks) {
-        try {
-            const alreadyExists = djCatalogue.some(existingTrack => 
-                existingTrack.name.toLowerCase() === track.title.toLowerCase() && 
-                existingTrack.artist.toLowerCase() === track.artist.toLowerCase()
-            );
-
-            if (alreadyExists) continue;
-
-            const realArtwork = await fetchArtworkFromSpotify(track.title, track.artist);
-
-            const trackData = {
-                id: `serato_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-                name: track.title,
-                artist: track.artist,
-                artwork: realArtwork || BLACK_VINYL_PLACEHOLDER, 
-                explicit: false,
-                duration: track.duration ? `${Math.floor(track.duration / 60)}:${String(track.duration % 60).padStart(2, '0')}` : "3:30"
-            };
-
-            djCatalogue.push(trackData);
-            addedCount++;
-        } catch (err) {
-            console.error(`Skipped track processing exception: ${track.title}`, err.message);
-        }
-    }
-
-    res.json({ success: true, message: `Loaded ${addedCount} tracks.` });
 });
 
 app.post('/api/admin/action', (req, res) => {
