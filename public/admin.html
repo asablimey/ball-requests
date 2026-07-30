@@ -394,6 +394,7 @@
     <div class="tab-bar">
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
+        <button id="tab-btn-playback" class="tab-button" onclick="switchTab('playback')">Playback</button>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -410,29 +411,65 @@
         </div>
     </div>
 
+    <div id="tab-panel-playback" class="tab-content">
+        <div class="panel">
+            <h2>Spotify Playback</h2>
+
+            <div id="playback-disconnected" style="display:none;">
+                <p style="color:#a7a7a7;">Connect your Spotify Premium account to play requests directly from this dashboard.</p>
+                <a href="/api/admin/spotify-login"><button class="save-config-btn">Connect Spotify</button></a>
+            </div>
+
+            <div id="playback-connected" style="display:none;">
+                <div id="player-status" style="color:#a7a7a7; margin-bottom:15px;">Initializing player…</div>
+
+                <div id="now-playing-box" style="display:none; background:var(--card-bg); border-radius:8px; padding:16px; margin-bottom:20px;">
+                    <div style="font-size:0.75rem; color:var(--spotify-green); font-weight:700; text-transform:uppercase; margin-bottom:6px;">Now Playing</div>
+                    <div id="now-playing-title" style="font-weight:700; font-size:1.1rem;"></div>
+                    <div id="now-playing-artist" style="color:#a7a7a7;"></div>
+                </div>
+
+                <div class="control-bar" style="margin-bottom:20px;">
+                    <button class="utility-btn" id="btn-play-next" onclick="playNextInQueue()">▶ Play Next From Queue</button>
+                    <button class="utility-btn" id="btn-pause" onclick="pausePlayback()">⏸ Pause</button>
+                    <button class="toggle-btn open-status" id="btn-autoadvance" onclick="toggleAutoAdvance()">Auto-Advance: OFF</button>
+                    <button class="utility-btn" onclick="disconnectSpotify()">Disconnect</button>
+                </div>
+
+                <p style="color:#666; font-size:0.8rem;">Keep this tab open on the device connected to your speakers — playback happens through this browser tab, same as Spotify Connect.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
         let isAuthorized = false; 
+        let spotifyPlayer = null;
+        let autoAdvanceEnabled = false;
 
         // Tab selection switching algorithm
         function switchTab(targetTab) {
-            const queueBtn = document.getElementById('tab-btn-queue');
-            const historyBtn = document.getElementById('tab-btn-history');
-            const queuePanel = document.getElementById('tab-panel-queue');
-            const historyPanel = document.getElementById('tab-panel-history');
+            const tabs = {
+                queue: { btn: 'tab-btn-queue', panel: 'tab-panel-queue' },
+                history: { btn: 'tab-btn-history', panel: 'tab-panel-history' },
+                playback: { btn: 'tab-btn-playback', panel: 'tab-panel-playback' }
+            };
 
-            if (targetTab === 'queue') {
-                queueBtn.classList.add('active-tab');
-                historyBtn.classList.remove('active-tab');
-                queuePanel.classList.add('active-content');
-                historyPanel.classList.remove('active-content');
-            } else {
-                historyBtn.classList.add('active-tab');
-                queueBtn.classList.remove('active-tab');
-                historyPanel.classList.add('active-content');
-                queuePanel.classList.remove('active-content');
-            }
+            Object.keys(tabs).forEach(key => {
+                const btn = document.getElementById(tabs[key].btn);
+                const panel = document.getElementById(tabs[key].panel);
+                if (key === targetTab) {
+                    btn.classList.add('active-tab');
+                    panel.classList.add('active-content');
+                } else {
+                    btn.classList.remove('active-tab');
+                    panel.classList.remove('active-content');
+                }
+            });
+
+            if (targetTab === 'playback') checkSpotifyStatus();
         }
 
         function verifyPassword() {
@@ -612,6 +649,118 @@
         };
 
         setInterval(updateDashboard, 3000);
+
+        // --- Spotify Playback ---
+
+        async function checkSpotifyStatus() {
+            if (!isAuthorized) return;
+            try {
+                const res = await fetch('/api/admin/spotify-status');
+                const data = await res.json();
+
+                autoAdvanceEnabled = data.autoAdvance;
+                document.getElementById('btn-autoadvance').innerText = `Auto-Advance: ${autoAdvanceEnabled ? 'ON' : 'OFF'}`;
+
+                if (data.connected) {
+                    document.getElementById('playback-disconnected').style.display = 'none';
+                    document.getElementById('playback-connected').style.display = 'block';
+                    if (!spotifyPlayer) initSpotifyPlayer();
+                } else {
+                    document.getElementById('playback-disconnected').style.display = 'block';
+                    document.getElementById('playback-connected').style.display = 'none';
+                }
+            } catch (e) { console.log('Spotify status check failed.'); }
+        }
+
+        // Called automatically by the SDK script once it's loaded
+        window.onSpotifyWebPlaybackSDKReady = () => {
+            // Player only initializes once we know the DJ is actually connected;
+            // checkSpotifyStatus() calls initSpotifyPlayer() when appropriate.
+        };
+
+        function initSpotifyPlayer() {
+            spotifyPlayer = new Spotify.Player({
+                name: 'DJ Dashboard Player',
+                getOAuthToken: async (callback) => {
+                    try {
+                        const res = await fetch('/api/admin/spotify-token');
+                        const data = await res.json();
+                        callback(data.accessToken);
+                    } catch (e) { console.log('Could not fetch playback token.'); }
+                },
+                volume: 0.8
+            });
+
+            spotifyPlayer.addListener('ready', async ({ device_id }) => {
+                document.getElementById('player-status').innerText = 'Connected and ready.';
+                await fetch('/api/admin/spotify-device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ deviceId: device_id })
+                });
+            });
+
+            spotifyPlayer.addListener('not_ready', () => {
+                document.getElementById('player-status').innerText = 'Device went offline.';
+            });
+
+            spotifyPlayer.addListener('player_state_changed', (state) => {
+                if (!state) return;
+
+                const track = state.track_window.current_track;
+                const box = document.getElementById('now-playing-box');
+                if (track) {
+                    box.style.display = 'block';
+                    document.getElementById('now-playing-title').innerText = track.name;
+                    document.getElementById('now-playing-artist').innerText = track.artists.map(a => a.name).join(', ');
+                }
+
+                // Track just finished (paused, at/near the end, nothing queued next by the SDK itself)
+                const nearEnd = state.duration && state.position === 0 && state.paused;
+                if (nearEnd && autoAdvanceEnabled) {
+                    playNextInQueue();
+                }
+            });
+
+            spotifyPlayer.connect();
+        }
+
+        async function playNextInQueue() {
+            if (!isAuthorized) return;
+            const res = await fetch('/api/admin/spotify/play-next', { method: 'POST' });
+            const data = await res.json();
+            if (!data.success) {
+                console.log(data.error || 'Nothing to play.');
+            }
+            updateDashboard();
+        }
+
+        async function pausePlayback() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/spotify/pause', { method: 'POST' });
+        }
+
+        async function toggleAutoAdvance() {
+            if (!isAuthorized) return;
+            autoAdvanceEnabled = !autoAdvanceEnabled;
+            await fetch('/api/admin/spotify-autoadvance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: autoAdvanceEnabled })
+            });
+            document.getElementById('btn-autoadvance').innerText = `Auto-Advance: ${autoAdvanceEnabled ? 'ON' : 'OFF'}`;
+        }
+
+        async function disconnectSpotify() {
+            if (!isAuthorized) return;
+            if (!confirm('Disconnect Spotify playback?')) return;
+            await fetch('/api/admin/spotify-disconnect', { method: 'POST' });
+            if (spotifyPlayer) {
+                spotifyPlayer.disconnect();
+                spotifyPlayer = null;
+            }
+            checkSpotifyStatus();
+        }
     </script>
 </body>
 </html>
