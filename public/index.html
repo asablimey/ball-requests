@@ -1,3 +1,5 @@
+INDEX
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -238,57 +240,6 @@
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
 
-        /* --- Name entry modal --- */
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0,0,0,0.75); display: flex; justify-content: center; align-items: center;
-            z-index: 9999; padding: 20px; box-sizing: border-box;
-        }
-        .modal-box {
-            background: var(--panel-bg); border: 1px solid #282828; border-radius: 16px; padding: 32px;
-            max-width: 340px; width: 100%; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-        }
-        .modal-box h2 { margin: 0 0 8px 0; font-size: 1.4rem; }
-        .modal-box p { color: #a7a7a7; font-size: 0.9rem; margin: 0 0 20px 0; }
-        .modal-input {
-            width: 100%; background: var(--card-bg); border: 1px solid #333; padding: 12px;
-            color: white; border-radius: 8px; font-size: 1rem; box-sizing: border-box; outline: none;
-            text-align: center; margin-bottom: 15px;
-        }
-        .modal-input:focus { border-color: var(--spotify-green); }
-        .modal-btn {
-            background: var(--spotify-green); color: white; border: none; padding: 12px 24px;
-            border-radius: 50px; font-weight: 700; cursor: pointer; width: 100%; font-size: 1rem;
-        }
-
-        /* --- Spotify connect button + browse panel --- */
-        .spotify-connect-btn {
-            display: inline-flex; align-items: center; gap: 6px; background: transparent;
-            border: 1px solid var(--spotify-green); color: var(--spotify-green); padding: 8px 16px;
-            border-radius: 50px; font-weight: 700; font-size: 0.8rem; cursor: pointer; white-space: nowrap;
-        }
-        .spotify-connect-btn:hover { background: var(--spotify-green); color: white; }
-        .spotify-connect-btn.is-connected { background: var(--spotify-green); color: white; }
-
-        .spotify-panel {
-            background: var(--panel-bg); border: 1px solid #282828; border-radius: 12px;
-            padding: 18px; margin-bottom: 25px;
-        }
-        .spotify-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .spotify-panel-header h3 { margin: 0; font-size: 1rem; color: var(--spotify-green); }
-        .spotify-panel-header button {
-            background: none; border: none; color: #a7a7a7; cursor: pointer; font-size: 0.8rem;
-            text-decoration: underline;
-        }
-        .playlist-row {
-            display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 8px; cursor: pointer;
-        }
-        .playlist-row:hover { background: var(--card-bg); }
-        .playlist-row img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
-        .playlist-row .pl-name { font-weight: 700; font-size: 0.9rem; }
-        .playlist-row .pl-count { color: #a7a7a7; font-size: 0.78rem; }
-        .back-link { color: var(--spotify-green); cursor: pointer; font-size: 0.85rem; margin-bottom: 10px; display: inline-block; }
-
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
@@ -298,31 +249,13 @@
 </head>
 <body>
 
-    <div id="name-modal" class="modal-overlay" style="display:none;">
-        <div class="modal-box">
-            <h2>What's your name?</h2>
-            <p>So the DJ knows who requested what. This won't be shown to other guests.</p>
-            <input type="text" id="name-modal-input" class="modal-input" placeholder="Your name" maxlength="40" onkeydown="if(event.key === 'Enter') saveGuestName()">
-            <button class="modal-btn" onclick="saveGuestName()">Continue</button>
-        </div>
-    </div>
-
     <div class="container">
         <div class="header">
             <h1>Song Requests</h1>
             <div class="credits-container">
-                <button id="spotify-connect-btn" class="spotify-connect-btn" onclick="handleSpotifyConnectClick()">Connect Spotify</button>
                 <div id="credits-status" class="credits-display">Credits: -- / --</div>
                 <div id="countdown-status" class="countdown-display">Regen in: --s</div>
             </div>
-        </div>
-
-        <div id="spotify-panel" class="spotify-panel" style="display:none;">
-            <div class="spotify-panel-header">
-                <h3 id="spotify-panel-title">Your Playlists</h3>
-                <button onclick="disconnectGuestSpotify()">Disconnect</button>
-            </div>
-            <div id="spotify-panel-body"><p class="empty-placeholder">Loading…</p></div>
         </div>
 
         <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
@@ -345,26 +278,6 @@
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
         }
         const voterSignatureToken = localStorage.getItem('voterSignatureToken');
-
-        // --- Guest name capture ---
-        // Shown once per browser on first visit. Only used to label requests for the DJ;
-        // never sent back to other guests or shown on the live queue.
-        function getGuestName() { return localStorage.getItem('guestDisplayName') || ''; }
-
-        function showNameModalIfNeeded() {
-            if (!getGuestName()) {
-                document.getElementById('name-modal').style.display = 'flex';
-                document.getElementById('name-modal-input').focus();
-            }
-        }
-
-        function saveGuestName() {
-            const input = document.getElementById('name-modal-input');
-            const name = input.value.trim();
-            if (!name) { input.focus(); return; }
-            localStorage.setItem('guestDisplayName', name.slice(0, 40));
-            document.getElementById('name-modal').style.display = 'none';
-        }
 
         async function fetchSystemState() {
             try {
@@ -558,17 +471,14 @@
             }, 300);
         }
 
-        function submitRequestAtIndex(index) {
-            const track = globalSearchResults[index];
-            if (!track) return;
-            requestTrackObject(track, { clearSearch: true });
-        }
-
-        async function requestTrackObject(track, opts = {}) {
+        async function submitRequestAtIndex(index) {
             if (!systemRequestsAllowed) {
                 alert("Submissions are currently closed.");
                 return;
             }
+
+            const track = globalSearchResults[index];
+            if (!track) return;
 
             if (availableCredits <= 0) {
                 alert("You are out of credits! Wait for the regeneration cycle.");
@@ -579,7 +489,7 @@
                 const res = await fetch('/api/request', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track, requesterName: getGuestName() })
+                    body: JSON.stringify({ track })
                 });
                 
                 if (res.ok) {
@@ -588,7 +498,7 @@
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     manageCountdownVisibility();
                     
-                    if (opts.clearSearch) document.getElementById('search-input').value = "";
+                    document.getElementById('search-input').value = "";
                     await fetchSystemState();
                     alert("Song successfully added to the queue!");
                 } else {
@@ -598,145 +508,6 @@
             } catch (e) { alert("Failed to connect to request server."); }
         }
 
-        // --- Guest Spotify browsing (read-only "see my playlists" login) ---
-        // Separate from the DJ's own Spotify connection — this just lets a guest
-        // sign into their own account to browse their playlists/tracks and request
-        // straight from them. It never touches playback.
-        let guestSpotifyConnected = false;
-        let spotifyPanelView = 'playlists'; // 'playlists' | 'tracks'
-
-        async function checkGuestSpotifyStatus() {
-            try {
-                const res = await fetch('/api/guest/spotify-status');
-                const data = await res.json();
-                guestSpotifyConnected = !!data.connected;
-                const btn = document.getElementById('spotify-connect-btn');
-                btn.innerText = guestSpotifyConnected ? 'Spotify Connected' : 'Connect Spotify';
-                btn.classList.toggle('is-connected', guestSpotifyConnected);
-            } catch (e) { /* silent — non-critical */ }
-        }
-
-        function handleSpotifyConnectClick() {
-            if (!guestSpotifyConnected) {
-                window.location.href = '/api/guest/spotify-login';
-                return;
-            }
-            const panel = document.getElementById('spotify-panel');
-            const isOpen = panel.style.display !== 'none';
-            if (isOpen) {
-                panel.style.display = 'none';
-            } else {
-                panel.style.display = 'block';
-                spotifyPanelView = 'playlists';
-                loadGuestPlaylists();
-            }
-        }
-
-        let currentPlaylists = [];
-
-        function openPlaylistAtIndex(idx) {
-            const pl = currentPlaylists[idx];
-            if (pl) loadGuestPlaylistTracks(pl.id, pl.name);
-        }
-
-        async function loadGuestPlaylists() {
-            document.getElementById('spotify-panel-title').innerText = 'Your Playlists';
-            const body = document.getElementById('spotify-panel-body');
-            body.innerHTML = '<p class="empty-placeholder">Loading…</p>';
-            try {
-                const res = await fetch('/api/guest/spotify-playlists');
-                if (!res.ok) {
-                    body.innerHTML = '<p class="empty-placeholder">Could not load your playlists. Try reconnecting.</p>';
-                    return;
-                }
-                const data = await res.json();
-                currentPlaylists = data.playlists || [];
-                if (currentPlaylists.length === 0) {
-                    body.innerHTML = '<p class="empty-placeholder">No playlists found on your account.</p>';
-                    return;
-                }
-                body.innerHTML = currentPlaylists.map((pl, idx) => `
-                    <div class="playlist-row" onclick="openPlaylistAtIndex(${idx})">
-                        <img src="${pl.artwork}">
-                        <div>
-                            <div class="pl-name">${pl.name}</div>
-                            <div class="pl-count">${pl.trackCount} tracks</div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (e) {
-                body.innerHTML = '<p class="empty-placeholder">Could not load your playlists.</p>';
-            }
-        }
-
-        let currentPlaylistTracks = [];
-
-        function requestPlaylistTrackAtIndex(idx) {
-            const track = currentPlaylistTracks[idx];
-            if (track) requestTrackObject(track);
-        }
-
-        async function loadGuestPlaylistTracks(playlistId, playlistName) {
-            spotifyPanelView = 'tracks';
-            document.getElementById('spotify-panel-title').innerText = playlistName;
-            const body = document.getElementById('spotify-panel-body');
-            body.innerHTML = '<p class="empty-placeholder">Loading…</p>';
-            try {
-                const res = await fetch(`/api/guest/spotify-playlist/${encodeURIComponent(playlistId)}/tracks`);
-                if (!res.ok) {
-                    body.innerHTML = '<p class="empty-placeholder">Could not load tracks.</p>';
-                    return;
-                }
-                const data = await res.json();
-                currentPlaylistTracks = data.tracks || [];
-                let html = '<span class="back-link" onclick="loadGuestPlaylists()">‹ Back to playlists</span>';
-                if (data.unavailable) {
-                    html += '<p class="empty-placeholder">Spotify only shares track details for playlists you own or collaborate on. Try one of your own playlists instead.</p>';
-                } else if (currentPlaylistTracks.length === 0) {
-                    html += '<p class="empty-placeholder">No tracks in this playlist.</p>';
-                } else {
-                    html += currentPlaylistTracks.map((track, idx) => `
-                        <div class="song-row">
-                            <div class="song-details">
-                                <img src="${track.artwork}">
-                                <div class="text-block">
-                                    <div class="title-wrapper">
-                                        <p class="song-title">${track.name}</p>
-                                        ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    </div>
-                                    <p class="song-artist">${track.artist}</p>
-                                </div>
-                            </div>
-                            <div class="actions">
-                                <button class="btn-request" onclick="requestPlaylistTrackAtIndex(${idx})">Request</button>
-                            </div>
-                        </div>
-                    `).join('');
-                }
-                body.innerHTML = html;
-            } catch (e) {
-                body.innerHTML = '<p class="empty-placeholder">Could not load tracks.</p>';
-            }
-        }
-
-        async function disconnectGuestSpotify() {
-            await fetch('/api/guest/spotify-disconnect', { method: 'POST' });
-            guestSpotifyConnected = false;
-            document.getElementById('spotify-panel').style.display = 'none';
-            checkGuestSpotifyStatus();
-        }
-
-        // Landed back here from the Spotify auth redirect — clean the URL and open the panel.
-        if (window.location.search.includes('spotify=connected')) {
-            window.history.replaceState({}, document.title, window.location.pathname);
-            checkGuestSpotifyStatus().then(() => {
-                if (guestSpotifyConnected) handleSpotifyConnectClick();
-            });
-        } else {
-            checkGuestSpotifyStatus();
-        }
-
-        showNameModalIfNeeded();
         fetchSystemState();
         setInterval(fetchSystemState, 4000);
     </script>
