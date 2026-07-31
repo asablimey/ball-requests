@@ -10,6 +10,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
+// The guest page's "Connect Spotify" button needs the Client ID (not the secret) to run
+// its own PKCE login. Client IDs aren't sensitive - this is safe to expose publicly.
+app.get('/api/public-config', (req, res) => {
+    res.json({ spotifyClientId: CLIENT_ID });
+});
+
 let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
