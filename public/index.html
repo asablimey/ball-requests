@@ -49,14 +49,44 @@
             gap: 6px;
         }
 
-        .credits-display {
+        .top-pill-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Shared pill style - the credits display and Connect Spotify button
+           use this exact same class so they always stay the same size. */
+        .pill-btn {
             background-color: var(--panel-bg);
             padding: 10px 20px;
             border-radius: 50px;
             font-weight: 700;
             border: 1px solid #282828;
             white-space: nowrap;
+            font-size: 1rem;
+            font-family: inherit;
+            box-sizing: border-box;
         }
+
+        .credits-display { color: white; }
+
+        .connect-spotify-btn {
+            color: var(--spotify-green);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        }
+        .connect-spotify-btn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
+        .connect-spotify-btn:hover { background-color: #202020; }
+        .connect-spotify-btn.is-connected {
+            color: white;
+            background-color: var(--spotify-green);
+            border-color: transparent;
+        }
+        .connect-spotify-btn.is-connected:hover { background-color: #1ed760; }
 
         .countdown-display {
             font-size: 0.85rem;
@@ -80,7 +110,7 @@
             transition: all 0.2s ease;
         }
         .search-box:focus { border-color: var(--spotify-green); }
-        
+
         /* Disabled search state styling */
         .search-box:disabled {
             background-color: #111;
@@ -235,13 +265,78 @@
             transition: transform 0.1s ease;
         }
         .btn-request:active { transform: scale(0.95); }
+        .btn-request:disabled { background-color: #3e3e3e; cursor: default; }
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
+
+        /* PLAYLIST MODAL */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .modal-overlay.is-visible { display: flex; }
+
+        .modal-box {
+            background: var(--panel-bg);
+            border-radius: 16px;
+            border: 1px solid #282828;
+            width: 100%;
+            max-width: 480px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 18px 20px;
+            border-bottom: 1px solid #282828;
+            flex-shrink: 0;
+        }
+        .modal-back-btn {
+            background: none; border: none; color: #a7a7a7; cursor: pointer; padding: 4px;
+            display: none; align-items: center; justify-content: center;
+        }
+        .modal-back-btn.is-visible { display: flex; }
+        .modal-back-btn svg { width: 20px; height: 20px; fill: currentColor; }
+        .modal-title { font-weight: 800; font-size: 1.1rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .modal-close-btn { background: none; border: none; color: #a7a7a7; cursor: pointer; font-size: 1.3rem; padding: 4px 8px; line-height: 1; }
+        .modal-close-btn:hover { color: white; }
+
+        .modal-body { overflow-y: auto; padding: 16px 20px; }
+
+        .playlist-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 6px;
+            transition: background-color 0.15s ease;
+        }
+        .playlist-row:hover { background-color: var(--card-bg); }
+        .playlist-row img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: #333; }
+        .playlist-row .pl-name { font-weight: 700; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .playlist-row .pl-count { font-size: 0.8rem; color: #a7a7a7; margin: 2px 0 0 0; }
+
+        .modal-loading, .modal-empty { color: #a7a7a7; text-align: center; padding: 30px 10px; font-style: italic; }
 
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
             .credits-container { align-items: center; width: 100%; }
+            .pill-btn { padding: 9px 14px; font-size: 0.9rem; }
         }
     </style>
 </head>
@@ -251,7 +346,13 @@
         <div class="header">
             <h1>Song Requests</h1>
             <div class="credits-container">
-                <div id="credits-status" class="credits-display">Credits: -- / --</div>
+                <div class="top-pill-row">
+                    <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
+                        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.586 14.424a.622.622 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.622.622 0 1 1-.277-1.215c3.809-.871 7.077-.496 9.712 1.115a.622.622 0 0 1 .207.857zm1.223-2.722a.78.78 0 0 1-1.072.257c-2.688-1.652-6.786-2.131-9.965-1.166a.78.78 0 0 1-.453-1.492c3.632-1.102 8.147-.568 11.233 1.329a.78.78 0 0 1 .257 1.072zm.105-2.835C14.692 9.115 9.375 8.93 6.297 9.885a.936.936 0 1 1-.55-1.79c3.532-1.095 9.404-.882 13.115 1.36a.936.936 0 0 1-.948 1.612z"/></svg>
+                        <span id="connect-spotify-label">Connect Spotify</span>
+                    </button>
+                    <div id="credits-status" class="pill-btn credits-display">Credits: -- / --</div>
+                </div>
                 <div id="countdown-status" class="countdown-display">Regen in: --s</div>
             </div>
         </div>
@@ -260,6 +361,22 @@
 
         <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
+    </div>
+
+    <!-- PLAYLIST BROWSER MODAL -->
+    <div class="modal-overlay" id="playlist-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <button class="modal-back-btn" id="modal-back-btn" onclick="showPlaylistGrid()" title="Back">
+                    <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+                </button>
+                <div class="modal-title" id="modal-title">Your Playlists</div>
+                <button class="modal-close-btn" onclick="closePlaylistModal()">✕</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <p class="modal-loading">Loading your playlists…</p>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -271,6 +388,7 @@
         let currentServerDuration = 60;
         let globalSearchResults = [];
         let systemRequestsAllowed = true; // Local tracker for global toggling
+        let explicitBlockActive = false;
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -282,11 +400,12 @@
                 const res = await fetch('/data');
                 if (!res.ok) return;
                 const data = await res.json();
-                
+
                 maxCredits = data.maxCredits;
                 currentServerDuration = data.countdownLength;
                 systemRequestsAllowed = data.requestsAllowed;
-                
+                explicitBlockActive = data.explicitBlockActive || false;
+
                 setupLocalCredits();
                 manageCountdownVisibility();
 
@@ -303,7 +422,7 @@
                         searchInput.disabled = false;
                         searchInput.placeholder = "Search for songs or artists...";
                     }
-                    
+
                     if (searchInput.value.trim() === "") {
                         document.getElementById('list-title').innerText = "Live Queue";
                         renderQueue(data.queue);
@@ -317,18 +436,18 @@
                 localStorage.setItem('userCredits', maxCredits);
             }
             availableCredits = parseInt(localStorage.getItem('userCredits'));
-            
+
             if (availableCredits > maxCredits) {
                 availableCredits = maxCredits;
                 localStorage.setItem('userCredits', availableCredits);
             }
-            
+
             document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
         }
 
         function manageCountdownVisibility() {
             const countdownEl = document.getElementById('countdown-status');
-            
+
             if (availableCredits >= maxCredits) {
                 countdownEl.style.display = 'none';
                 if (countdownTimer) {
@@ -343,13 +462,13 @@
 
         function startLocalCountdown() {
             if (countdownTimer) return;
-            
+
             timeRemaining = currentServerDuration;
             document.getElementById('countdown-status').innerText = `Regen in: ${timeRemaining}s`;
-            
+
             countdownTimer = setInterval(() => {
                 timeRemaining--;
-                
+
                 if (timeRemaining <= 0) {
                     timeRemaining = currentServerDuration;
                     if (availableCredits < maxCredits) {
@@ -358,7 +477,7 @@
                         document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     }
                 }
-                
+
                 if (availableCredits >= maxCredits) {
                     document.getElementById('countdown-status').style.display = 'none';
                     clearInterval(countdownTimer);
@@ -423,10 +542,10 @@
 
         function executeSearch() {
             if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
-            
+
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
-            
+
             if (query === "") {
                 fetchSystemState();
                 return;
@@ -436,10 +555,10 @@
                 try {
                     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
                     const data = await res.json();
-                    
+
                     document.getElementById('list-title').innerText = "Search Results";
                     const display = document.getElementById('main-display-list');
-                    
+
                     if (!data.tracks || data.tracks.length === 0) {
                         globalSearchResults = [];
                         display.innerHTML = '<p class="empty-placeholder">No matching songs found.</p>';
@@ -469,45 +588,302 @@
             }, 300);
         }
 
-        async function submitRequestAtIndex(index) {
+        // Shared submission path used by both search results and the playlist browser,
+        // so credits, explicit-locking, and error handling behave identically either way.
+        async function submitTrackRequest(track) {
             if (!systemRequestsAllowed) {
                 alert("Submissions are currently closed.");
-                return;
+                return false;
             }
-
-            const track = globalSearchResults[index];
-            if (!track) return;
-
             if (availableCredits <= 0) {
                 alert("You are out of credits! Wait for the regeneration cycle.");
-                return;
+                return false;
             }
-
             try {
                 const res = await fetch('/api/request', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ track })
                 });
-                
+
                 if (res.ok) {
                     availableCredits--;
                     localStorage.setItem('userCredits', availableCredits);
                     document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
                     manageCountdownVisibility();
-                    
-                    document.getElementById('search-input').value = "";
                     await fetchSystemState();
-                    alert("Song successfully added to the queue!");
+                    return true;
                 } else {
                     const errorData = await res.json();
                     alert(errorData.error || "Submission rejected.");
+                    return false;
                 }
-            } catch (e) { alert("Failed to connect to request server."); }
+            } catch (e) {
+                alert("Failed to connect to request server.");
+                return false;
+            }
+        }
+
+        async function submitRequestAtIndex(index) {
+            const track = globalSearchResults[index];
+            if (!track) return;
+            const ok = await submitTrackRequest(track);
+            if (ok) {
+                document.getElementById('search-input').value = "";
+                alert("Song successfully added to the queue!");
+            }
         }
 
         fetchSystemState();
         setInterval(fetchSystemState, 4000);
+
+        // --- Guest Spotify Connect (browse-your-playlists) ---
+        // Uses Authorization Code + PKCE entirely in the browser: no server session or
+        // secret needed, the token just lives for this tab so the guest can pick songs
+        // from their own playlists. Scopes are read-only (playlists only).
+
+        const GUEST_SPOTIFY_SCOPES = 'playlist-read-private playlist-read-collaborative';
+        let guestSpotifyToken = null;
+        let activePlaylistId = null;
+
+        function randomPkceString(length) {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let text = '';
+            const randomValues = crypto.getRandomValues(new Uint8Array(length));
+            for (let i = 0; i < length; i++) text += chars[randomValues[i] % chars.length];
+            return text;
+        }
+
+        function base64UrlEncode(buffer) {
+            return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        }
+
+        async function pkceChallengeFromVerifier(verifier) {
+            const data = new TextEncoder().encode(verifier);
+            const digest = await crypto.subtle.digest('SHA-256', data);
+            return base64UrlEncode(digest);
+        }
+
+        function guestRedirectUri() {
+            return window.location.origin + window.location.pathname;
+        }
+
+        function updateSpotifyConnectButton(connected) {
+            const btn = document.getElementById('connect-spotify-btn');
+            const label = document.getElementById('connect-spotify-label');
+            btn.classList.toggle('is-connected', connected);
+            label.innerText = connected ? 'My Playlists' : 'Connect Spotify';
+        }
+
+        async function handleSpotifyConnectClick() {
+            if (guestSpotifyToken) {
+                openPlaylistModal();
+                return;
+            }
+
+            try {
+                const configRes = await fetch('/api/public-config');
+                const config = await configRes.json();
+                if (!config.spotifyClientId) {
+                    alert('Spotify connect is not configured on the server yet.');
+                    return;
+                }
+
+                const verifier = randomPkceString(64);
+                sessionStorage.setItem('guest_pkce_verifier', verifier);
+                const challenge = await pkceChallengeFromVerifier(verifier);
+
+                const params = new URLSearchParams({
+                    response_type: 'code',
+                    client_id: config.spotifyClientId,
+                    scope: GUEST_SPOTIFY_SCOPES,
+                    redirect_uri: guestRedirectUri(),
+                    code_challenge_method: 'S256',
+                    code_challenge: challenge
+                });
+                window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+            } catch (e) {
+                alert('Could not start Spotify login.');
+            }
+        }
+
+        async function completeGuestSpotifyLogin() {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            if (!code) return;
+
+            // Clean the ?code=... out of the URL either way, so a refresh doesn't re-trigger this
+            window.history.replaceState({}, document.title, guestRedirectUri());
+
+            const verifier = sessionStorage.getItem('guest_pkce_verifier');
+            if (!verifier) return;
+
+            try {
+                const configRes = await fetch('/api/public-config');
+                const config = await configRes.json();
+
+                const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        grant_type: 'authorization_code',
+                        code,
+                        redirect_uri: guestRedirectUri(),
+                        client_id: config.spotifyClientId,
+                        code_verifier: verifier
+                    })
+                });
+                const data = await tokenRes.json();
+                if (data.access_token) {
+                    guestSpotifyToken = data.access_token;
+                    sessionStorage.setItem('guest_spotify_token', data.access_token);
+                    sessionStorage.setItem('guest_spotify_token_expiry', String(Date.now() + data.expires_in * 1000));
+                    updateSpotifyConnectButton(true);
+                    openPlaylistModal();
+                }
+            } catch (e) { console.log('Guest Spotify token exchange failed.'); }
+        }
+
+        function restoreGuestSpotifySession() {
+            const token = sessionStorage.getItem('guest_spotify_token');
+            const expiry = parseInt(sessionStorage.getItem('guest_spotify_token_expiry') || '0', 10);
+            if (token && Date.now() < expiry) {
+                guestSpotifyToken = token;
+                updateSpotifyConnectButton(true);
+            }
+        }
+
+        function openPlaylistModal() {
+            document.getElementById('playlist-modal').classList.add('is-visible');
+            showPlaylistGrid();
+        }
+        function closePlaylistModal() {
+            document.getElementById('playlist-modal').classList.remove('is-visible');
+        }
+
+        async function showPlaylistGrid() {
+            activePlaylistId = null;
+            document.getElementById('modal-title').innerText = 'Your Playlists';
+            document.getElementById('modal-back-btn').classList.remove('is-visible');
+            const body = document.getElementById('modal-body');
+            body.innerHTML = '<p class="modal-loading">Loading your playlists…</p>';
+
+            try {
+                const res = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
+                    headers: { Authorization: `Bearer ${guestSpotifyToken}` }
+                });
+                if (res.status === 401) {
+                    guestSpotifyToken = null;
+                    sessionStorage.removeItem('guest_spotify_token');
+                    updateSpotifyConnectButton(false);
+                    closePlaylistModal();
+                    alert('Your Spotify session expired — hit "Connect Spotify" again.');
+                    return;
+                }
+                const data = await res.json();
+                const playlists = data.items || [];
+
+                if (playlists.length === 0) {
+                    body.innerHTML = '<p class="modal-empty">No playlists found on your Spotify account.</p>';
+                    return;
+                }
+
+                body.innerHTML = playlists.map(pl => `
+                    <div class="playlist-row" onclick="showPlaylistTracks('${pl.id}', ${JSON.stringify(pl.name).replace(/"/g, '&quot;')})">
+                        <img src="${pl.images?.[0]?.url || ''}">
+                        <div>
+                            <p class="pl-name">${pl.name}</p>
+                            <p class="pl-count">${pl.tracks?.total ?? 0} tracks</p>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                body.innerHTML = '<p class="modal-empty">Could not load playlists. Try again.</p>';
+            }
+        }
+
+        function formatMsToClock(ms) {
+            if (!ms) return '--:--';
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+
+        function mapSpotifyTrack(t) {
+            return {
+                id: t.id,
+                name: t.name,
+                artist: (t.artists || []).map(a => a.name).join(', '),
+                artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+                explicit: t.explicit || false,
+                duration: formatMsToClock(t.duration_ms)
+            };
+        }
+
+        async function showPlaylistTracks(playlistId, playlistName) {
+            activePlaylistId = playlistId;
+            document.getElementById('modal-title').innerText = playlistName;
+            document.getElementById('modal-back-btn').classList.add('is-visible');
+            const body = document.getElementById('modal-body');
+            body.innerHTML = '<p class="modal-loading">Loading tracks…</p>';
+
+            try {
+                const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
+                    headers: { Authorization: `Bearer ${guestSpotifyToken}` }
+                });
+                const data = await res.json();
+                let tracks = (data.items || []).map(i => i.track).filter(t => t && t.id);
+
+                // Match the DJ's explicit-content rule the same way search results already do
+                if (explicitBlockActive) tracks = tracks.filter(t => !t.explicit);
+
+                if (tracks.length === 0) {
+                    body.innerHTML = '<p class="modal-empty">No requestable tracks in this playlist.</p>';
+                    return;
+                }
+
+                body.innerHTML = tracks.map((t, index) => `
+                    <div class="song-row" style="margin-bottom: 8px;">
+                        <div class="song-details">
+                            <img src="${t.album?.images?.[0]?.url || ''}">
+                            <div class="text-block">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${t.name}</p>
+                                    ${t.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                </div>
+                                <p class="song-artist">${(t.artists || []).map(a => a.name).join(', ')}</p>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn-request" id="pl-track-btn-${index}" onclick="requestFromPlaylist(${index}, this)">Request</button>
+                        </div>
+                    </div>
+                `).join('');
+
+                window.__currentPlaylistTracks = tracks;
+            } catch (e) {
+                body.innerHTML = '<p class="modal-empty">Could not load this playlist. Try again.</p>';
+            }
+        }
+
+        async function requestFromPlaylist(index, btnEl) {
+            const rawTrack = (window.__currentPlaylistTracks || [])[index];
+            if (!rawTrack) return;
+            const track = mapSpotifyTrack(rawTrack);
+
+            btnEl.disabled = true;
+            const ok = await submitTrackRequest(track);
+            if (ok) {
+                btnEl.innerText = 'Added ✓';
+            } else {
+                btnEl.disabled = false;
+            }
+        }
+
+        restoreGuestSpotifySession();
+        completeGuestSpotifyLogin();
     </script>
 </body>
 </html>
