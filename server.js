@@ -453,6 +453,18 @@ app.post('/api/admin/spotify/pause', async (req, res) => {
     res.json({ success: true });
 });
 
+// Toggles repeat mode for the current track. 'track' = loop the current song, 'off' = normal.
+app.post('/api/admin/spotify/repeat', async (req, res) => {
+    const { mode } = req.body; // 'track' | 'off'
+    const ok = await ensureDjTokenFresh();
+    if (!ok || !playbackState.deviceId) return res.status(400).json({ error: 'Not connected.' });
+    await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${mode === 'track' ? 'track' : 'off'}&device_id=${playbackState.deviceId}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${djSpotifyAuth.accessToken}` }
+    });
+    res.json({ success: true });
+});
+
 // Pulls the top track off the active queue, plays it, and moves it to history.
 // Used both for the manual "Play Next" button and auto-advance.
 app.post('/api/admin/spotify/play-next', async (req, res) => {
