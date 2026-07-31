@@ -684,9 +684,13 @@
 
             try {
                 const configRes = await fetch('/api/public-config');
+                if (!configRes.ok) {
+                    alert('Could not reach the server to start Spotify login.');
+                    return;
+                }
                 const config = await configRes.json();
                 if (!config.spotifyClientId) {
-                    alert('Spotify connect is not configured on the server yet.');
+                    alert('Spotify connect is not configured on the server yet (missing SPOTIFY_CLIENT_ID).');
                     return;
                 }
 
@@ -741,6 +745,9 @@
                     sessionStorage.setItem('guest_spotify_token_expiry', String(Date.now() + data.expires_in * 1000));
                     updateSpotifyConnectButton(true);
                     openPlaylistModal();
+                } else {
+                    console.log('Spotify token exchange failed:', data);
+                    alert(data.error_description || 'Spotify login failed. Check that the redirect URI is registered in the Spotify Dashboard.');
                 }
             } catch (e) { console.log('Guest Spotify token exchange failed.'); }
         }
