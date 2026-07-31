@@ -421,7 +421,10 @@
                             <button class="np-icon-btn" id="np-loop-btn" onclick="toggleLoop()" title="Loop current track">
                                 <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
                             </button>
-                            <button class="toggle-btn open-status" id="btn-autoadvance" onclick="toggleAutoAdvance()" style="padding:8px 18px; font-size:0.8rem;">Auto-Advance: OFF</button>
+                            <span style="color:#a7a7a7; font-size:0.8rem; display:flex; align-items:center; gap:6px;">
+                                <span style="width:8px; height:8px; border-radius:50%; background:var(--spotify-green); display:inline-block;"></span>
+                                Auto-advance: always on
+                            </span>
 
                             <div class="np-volume-row">
                                 <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
@@ -445,7 +448,6 @@
         let explicitBlockActive = false;
         let isAuthorized = false;
         let spotifyPlayer = null;
-        let autoAdvanceEnabled = false;
         let latestQueue = [];
 
         // Tab selection switching algorithm
@@ -729,9 +731,6 @@
                 }
                 const data = await res.json();
 
-                autoAdvanceEnabled = data.autoAdvance;
-                document.getElementById('btn-autoadvance').innerText = `Auto-Advance: ${autoAdvanceEnabled ? 'ON' : 'OFF'}`;
-
                 if (data.connected) {
                     document.getElementById('playback-disconnected').style.display = 'none';
                     document.getElementById('playback-connected').style.display = 'block';
@@ -834,6 +833,14 @@
                 const trackChanged = incomingTrackId !== lastKnownTrackId;
 
                 if (trackChanged) {
+                    // If this is the track we pre-queued natively on Spotify's own queue,
+                    // Spotify already advanced into it with no gap - just sync our data,
+                    // don't call play again (that would restart it and cause a stutter).
+                    if (preQueuedTrackId && incomingTrackId === preQueuedTrackId) {
+                        confirmTrackStarted(preQueuedTrackId);
+                    }
+                    preQueuedTrackId = null;
+
                     // A genuinely new track loaded (manual play, play-next, or Spotify's own
                     // autoplay) — this is NOT an end-of-track event, even though it can
                     // momentarily report position 0 / paused true just like a real end does.
@@ -845,10 +852,22 @@
                     hasProgressedPastStart = true;
                 }
 
+                // Gapless handoff: with ~10s left on the current track, hand the next
+                // request straight to Spotify's own queue so the device advances into
+                // it natively instead of us reactively calling play() after a gap.
+                if (!isPaused && currentTrackDuration && !preQueuedTrackId) {
+                    const remaining = currentTrackDuration - currentPosition;
+                    if (remaining > 0 && remaining <= 10000) {
+                        armGaplessHandoff();
+                    }
+                }
+
                 const withinCooldown = Date.now() < advanceCooldownUntil;
                 const realEndOfTrack = !trackChanged && hasProgressedPastStart && state.duration && state.position === 0 && state.paused;
 
-                if (realEndOfTrack && autoAdvanceEnabled && !withinCooldown) {
+                // Fallback path — only needed if the gapless pre-queue above never fired
+                // (e.g. the queue was empty until just now, or the queue call failed).
+                if (realEndOfTrack && !withinCooldown) {
                     advanceCooldownUntil = Date.now() + 4000;
                     hasProgressedPastStart = false;
                     playNextInQueue();
@@ -858,6 +877,33 @@
             spotifyPlayer.connect().then(success => {
                 if (!success) showPlayerError('Player failed to connect. Try refreshing this tab.');
             });
+        }
+
+        let preQueuedTrackId = null;
+        async function armGaplessHandoff() {
+            if (latestQueue.length === 0) return; // nothing waiting — fallback path will handle it at end-of-track
+            const nextId = latestQueue[0].id;
+            preQueuedTrackId = nextId; // set optimistically to avoid re-firing every progress tick
+            try {
+                const res = await fetch('/api/admin/spotify/queue-next', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trackId: nextId })
+                });
+                const data = await res.json();
+                if (!data.success) preQueuedTrackId = null; // let the fallback handle it instead
+            } catch (e) { preQueuedTrackId = null; }
+        }
+
+        async function confirmTrackStarted(trackId) {
+            try {
+                await fetch('/api/admin/spotify/confirm-started', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trackId })
+                });
+                updateDashboard();
+            } catch (e) { /* next poll will resync anyway */ }
         }
 
         function updatePlayIcon() {
@@ -978,17 +1024,6 @@
                 });
                 await playNextInQueue();
             } catch (e) { showPlayerError('Could not play that track.'); }
-        }
-
-        async function toggleAutoAdvance() {
-            if (!isAuthorized) return;
-            autoAdvanceEnabled = !autoAdvanceEnabled;
-            await fetch('/api/admin/spotify-autoadvance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: autoAdvanceEnabled })
-            });
-            document.getElementById('btn-autoadvance').innerText = `Auto-Advance: ${autoAdvanceEnabled ? 'ON' : 'OFF'}`;
         }
 
         async function disconnectSpotify() {
