@@ -101,6 +101,12 @@
             display: none;
         }
 
+        .search-bar-wrapper {
+            position: relative;
+            width: 100%;
+            margin-bottom: 25px;
+        }
+
         .search-box {
             width: 100%;
             background-color: var(--panel-bg);
@@ -111,10 +117,11 @@
             font-size: 1rem;
             box-sizing: border-box;
             outline: none;
-            margin-bottom: 25px;
-            transition: all 0.2s ease;
+            margin-bottom: 0;
+            transition: all 0.2s ease, padding 0.15s ease;
         }
         .search-box:focus { border-color: var(--spotify-green); }
+        .search-box.has-inline-btn { padding-right: 150px; }
 
         /* Disabled search state styling */
         .search-box:disabled {
@@ -123,6 +130,34 @@
             color: #555;
             cursor: not-allowed;
             opacity: 0.6;
+        }
+
+        .inline-playlists-btn {
+            display: none;
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            bottom: 6px;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--spotify-green);
+            color: white;
+            border: 1px solid var(--spotify-green);
+            padding: 0 18px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: filter 0.15s ease;
+        }
+        .inline-playlists-btn:hover { filter: brightness(1.1); }
+        .inline-playlists-btn.is-visible { display: flex; }
+
+        @media (max-width: 400px) {
+            .search-box.has-inline-btn { padding-right: 128px; }
+            .inline-playlists-btn { padding: 0 12px; font-size: 0.8rem; }
         }
 
         .section-title {
@@ -401,7 +436,10 @@
             </div>
         </div>
 
-        <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
+        <div class="search-bar-wrapper">
+            <input type="text" id="search-input" class="search-box" placeholder="Search for songs or artists..." oninput="executeSearch()">
+            <button type="button" id="inline-playlists-btn" class="inline-playlists-btn" onclick="openPlaylistModal()">My Playlists</button>
+        </div>
 
         <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
@@ -749,6 +787,11 @@
             const label = document.getElementById('connect-spotify-label');
             btn.classList.toggle('is-connected', connected);
             label.innerText = connected ? 'Connected' : 'Connect Spotify';
+
+            const inlineBtn = document.getElementById('inline-playlists-btn');
+            const searchBox = document.getElementById('search-input');
+            inlineBtn.classList.toggle('is-visible', connected);
+            searchBox.classList.toggle('has-inline-btn', connected);
         }
 
         function disconnectSpotify() {
