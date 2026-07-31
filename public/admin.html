@@ -293,23 +293,37 @@
         }
 
         /* Requester panel - DJ-only visibility of who added each track */
+        .length-requester-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 6px 0 0 0;
+        }
+        .length-text {
+            font-size: 0.85rem;
+            color: #a7a7a7;
+            font-weight: 600;
+            white-space: nowrap;
+        }
         .requester-badge {
             display: inline-flex;
             align-items: center;
             gap: 5px;
-            margin: 6px 0 0 0;
+            line-height: 1;
             font-size: 0.8rem;
             font-weight: 600;
             color: var(--spotify-green);
             background-color: rgba(29, 185, 84, 0.12);
-            padding: 3px 9px;
+            padding: 4px 9px;
             border-radius: 20px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 100%;
+            max-width: 60%;
+            flex-shrink: 0;
         }
-        .requester-badge svg { width: 12px; height: 12px; fill: var(--spotify-green); flex-shrink: 0; }
+        .requester-badge svg { width: 12px; height: 12px; fill: var(--spotify-green); flex-shrink: 0; display: block; }
 
         .admin-vote-block {
             display: flex;
@@ -515,8 +529,10 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
-                                ${buildRequesterBadge(song.requesters)}
+                                <div class="length-requester-row">
+                                    <span class="length-text">Length: ${song.duration}</span>
+                                    ${buildRequesterBadge(song.requesters)}
+                                </div>
                             </div>
                         </div>
                         <div class="actions">
@@ -548,8 +564,10 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
-                                ${buildRequesterBadge(song.requesters)}
+                                <div class="length-requester-row">
+                                    <span class="length-text">Length: ${song.duration}</span>
+                                    ${buildRequesterBadge(song.requesters)}
+                                </div>
                             </div>
                         </div>
                     </div>
