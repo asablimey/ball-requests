@@ -1,5 +1,3 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -256,6 +254,7 @@
         .np-icon-btn:hover { background: rgba(255,255,255,0.1); }
         .np-icon-btn:active { transform: scale(0.9); }
         .np-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
+        .np-icon-btn.active-loop { color: var(--spotify-green); background: rgba(29,185,84,0.15); }
         .np-play-btn { background: var(--spotify-green); color: white; width: 52px; height: 52px; border-radius: 50%; }
         .np-play-btn:hover { background: #1ed760; transform: scale(1.05); }
         .np-play-btn svg { width: 24px; height: 24px; }
@@ -413,8 +412,14 @@
                             <button class="np-icon-btn np-play-btn" id="np-play-btn" onclick="togglePlayPause()" title="Play / Pause">
                                 <svg id="np-play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                             </button>
+                            <button class="np-icon-btn" onclick="stopPlayback()" title="Stop">
+                                <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+                            </button>
                             <button class="np-icon-btn" onclick="playNextInQueue()" title="Play next from queue">
                                 <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                            </button>
+                            <button class="np-icon-btn" id="np-loop-btn" onclick="toggleLoop()" title="Loop current track">
+                                <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
                             </button>
                             <button class="toggle-btn open-status" id="btn-autoadvance" onclick="toggleAutoAdvance()" style="padding:8px 18px; font-size:0.8rem;">Auto-Advance: OFF</button>
 
@@ -897,6 +902,32 @@
                 showPlayerError('');
                 await spotifyPlayer.togglePlay();
             } catch (e) { showPlayerError('Play/pause failed. Make sure this browser tab is still open and Spotify is Premium.'); }
+        }
+
+        async function stopPlayback() {
+            if (!isAuthorized) return;
+            if (!spotifyPlayer) { showPlayerError('Player not connected yet.'); return; }
+            try {
+                showPlayerError('');
+                await spotifyPlayer.pause();
+                await spotifyPlayer.seek(0);
+                currentPosition = 0;
+                renderProgress(0, currentTrackDuration);
+            } catch (e) { showPlayerError('Stop failed.'); }
+        }
+
+        let loopEnabled = false;
+        async function toggleLoop() {
+            if (!isAuthorized) return;
+            loopEnabled = !loopEnabled;
+            document.getElementById('np-loop-btn').classList.toggle('active-loop', loopEnabled);
+            try {
+                await fetch('/api/admin/spotify/repeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: loopEnabled ? 'track' : 'off' })
+                });
+            } catch (e) { showPlayerError('Loop toggle failed.'); }
         }
 
         function seekOnBar(evt) {
