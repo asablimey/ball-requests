@@ -67,6 +67,8 @@
             font-size: 1rem;
             font-family: inherit;
             box-sizing: border-box;
+            width: 190px;
+            text-align: center;
         }
 
         .credits-display { color: white; }
@@ -78,6 +80,7 @@
             cursor: pointer;
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
             transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
@@ -377,7 +380,7 @@
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
             .credits-container { align-items: center; width: 100%; }
-            .pill-btn { padding: 9px 14px; font-size: 0.9rem; }
+            .pill-btn { padding: 9px 14px; font-size: 0.9rem; width: 150px; }
         }
     </style>
 </head>
@@ -449,13 +452,10 @@
         // --- Guest username (private to DJ view only) ---
         let guestUsername = localStorage.getItem('guestUsername') || '';
 
-        function ensureUsernameCaptured(afterFn) {
-            if (guestUsername && guestUsername.trim() !== '') {
-                if (afterFn) afterFn();
-                return;
+        function promptForUsernameIfNeeded() {
+            if (!guestUsername || guestUsername.trim() === '') {
+                document.getElementById('username-modal').classList.add('is-visible');
             }
-            document.getElementById('username-modal').classList.add('is-visible');
-            window.__pendingUsernameCallback = afterFn || null;
         }
 
         function saveUsername() {
@@ -468,9 +468,6 @@
             guestUsername = val;
             localStorage.setItem('guestUsername', guestUsername);
             document.getElementById('username-modal').classList.remove('is-visible');
-            const cb = window.__pendingUsernameCallback;
-            window.__pendingUsernameCallback = null;
-            if (cb) cb();
         }
 
         async function fetchSystemState() {
@@ -703,15 +700,13 @@
         }
 
         async function submitRequestAtIndex(index) {
-            ensureUsernameCaptured(async () => {
-                const track = globalSearchResults[index];
-                if (!track) return;
-                const ok = await submitTrackRequest(track);
-                if (ok) {
-                    document.getElementById('search-input').value = "";
-                    alert("Song successfully added to the queue!");
-                }
-            });
+            const track = globalSearchResults[index];
+            if (!track) return;
+            const ok = await submitTrackRequest(track);
+            if (ok) {
+                document.getElementById('search-input').value = "";
+                alert("Song successfully added to the queue!");
+            }
         }
 
         fetchSystemState();
@@ -756,9 +751,17 @@
             label.innerText = connected ? 'Connected' : 'Connect Spotify';
         }
 
+        function disconnectSpotify() {
+            guestSpotifyToken = null;
+            sessionStorage.removeItem('guest_spotify_token');
+            sessionStorage.removeItem('guest_spotify_token_expiry');
+            updateSpotifyConnectButton(false);
+            closePlaylistModal();
+        }
+
         async function handleSpotifyConnectClick() {
             if (guestSpotifyToken) {
-                openPlaylistModal();
+                disconnectSpotify();
                 return;
             }
 
@@ -965,21 +968,20 @@
         }
 
         async function requestFromPlaylist(index, btnEl) {
-            ensureUsernameCaptured(async () => {
-                const rawTrack = (window.__currentPlaylistTracks || [])[index];
-                if (!rawTrack) return;
-                const track = mapSpotifyTrack(rawTrack);
+            const rawTrack = (window.__currentPlaylistTracks || [])[index];
+            if (!rawTrack) return;
+            const track = mapSpotifyTrack(rawTrack);
 
-                btnEl.disabled = true;
-                const ok = await submitTrackRequest(track);
-                if (ok) {
-                    btnEl.innerText = 'Added ✓';
-                } else {
-                    btnEl.disabled = false;
-                }
-            });
+            btnEl.disabled = true;
+            const ok = await submitTrackRequest(track);
+            if (ok) {
+                btnEl.innerText = 'Added ✓';
+            } else {
+                btnEl.disabled = false;
+            }
         }
 
+        promptForUsernameIfNeeded();
         restoreGuestSpotifySession();
         completeGuestSpotifyLogin();
     </script>
