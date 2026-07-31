@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -351,6 +352,16 @@
                 <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
             </div>
 
+            <h3>Filler / Fallback Music</h3>
+            <div class="config-dashboard" style="margin-bottom: 15px;">
+                <div class="input-group" style="flex: 1; min-width: 260px;">
+                    <label>Spotify Playlist/Album URI</label>
+                    <input type="text" id="input-fallback-uri" placeholder="spotify:playlist:xxxxxxxxxxxx" style="width: 100%;">
+                </div>
+                <button class="save-config-btn" onclick="saveSystemRules()">Save</button>
+            </div>
+            <p style="color:#a7a7a7; font-size:0.85rem; margin-top:-8px;">When the request queue empties, the dashboard automatically starts playing this playlist on your connected device instead of going silent. Right-click a playlist/album in Spotify → Share → Copy Spotify URI.</p>
+
             <h3>Access Controls</h3>
             <div class="control-bar" style="margin-bottom: 15px;">
                 <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
@@ -500,6 +511,9 @@
                 if(document.activeElement !== document.getElementById('input-countdown')) {
                     document.getElementById('input-countdown').value = data.countdownLength;
                 }
+                if(document.activeElement !== document.getElementById('input-fallback-uri')) {
+                    document.getElementById('input-fallback-uri').value = data.fallbackPlaylistUri || '';
+                }
 
                 const toggleBtn = document.getElementById('toggle-requests');
                 requestsAllowed = data.requestsAllowed;
@@ -522,7 +536,7 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;•&nbsp; Requested by: ${song.requestedBy || 'Anonymous'}</p>
                             </div>
                         </div>
                         <div class="actions">
@@ -554,7 +568,7 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;•&nbsp; Requested by: ${song.requestedBy || 'Anonymous'}</p>
                             </div>
                         </div>
                     </div>
@@ -570,7 +584,7 @@
             if (!el) return;
 
             if (latestQueue.length === 0) {
-                el.innerHTML = '<p class="empty-placeholder">Nothing queued.</p>';
+                el.innerHTML = '<p class="empty-placeholder">Nothing queued. Hit "play next" to start (or continue) the fallback playlist.</p>';
                 return;
             }
 
@@ -597,11 +611,12 @@
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
+            const fallbackUri = document.getElementById('input-fallback-uri').value.trim();
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, fallbackPlaylistUri: fallbackUri })
             });
             if(res.ok) alert("System parameters updated successfully.");
             updateDashboard();
@@ -681,6 +696,18 @@
         let positionCapturedAt = 0;
         let progressTicker = null;
         let sdkReady = false;
+
+        // --- End-of-track / auto-advance tracking ---
+        // We can't just check "position===0 && paused" to mean "track ended" — that
+        // exact same state also flashes briefly the instant a NEW track starts, which
+        // was causing auto-advance to immediately re-trigger and race through the
+        // whole queue almost instantly. Instead we track whether the current track has
+        // actually made meaningful progress before treating a reset-to-0 as a real end,
+        // and we add a short cooldown after any advance so a burst of state events
+        // can't fire it twice.
+        let lastKnownTrackId = null;
+        let hasProgressedPastStart = false;
+        let advanceCooldownUntil = 0;
 
         function showPlayerError(message) {
             const el = document.getElementById('np-error');
@@ -798,8 +825,29 @@
 
                 if (!isPaused) startProgressTicker(); else stopProgressTicker();
 
-                const nearEnd = state.duration && state.position === 0 && state.paused;
-                if (nearEnd && autoAdvanceEnabled) playNextInQueue();
+                const incomingTrackId = track?.id || null;
+                const trackChanged = incomingTrackId !== lastKnownTrackId;
+
+                if (trackChanged) {
+                    // A genuinely new track loaded (manual play, play-next, or Spotify's own
+                    // autoplay) — this is NOT an end-of-track event, even though it can
+                    // momentarily report position 0 / paused true just like a real end does.
+                    lastKnownTrackId = incomingTrackId;
+                    hasProgressedPastStart = false;
+                } else if (state.position > 2000) {
+                    // Same track, playback has moved meaningfully past the start —
+                    // now a reset to 0 can be trusted as a real end-of-track.
+                    hasProgressedPastStart = true;
+                }
+
+                const withinCooldown = Date.now() < advanceCooldownUntil;
+                const realEndOfTrack = !trackChanged && hasProgressedPastStart && state.duration && state.position === 0 && state.paused;
+
+                if (realEndOfTrack && autoAdvanceEnabled && !withinCooldown) {
+                    advanceCooldownUntil = Date.now() + 4000;
+                    hasProgressedPastStart = false;
+                    playNextInQueue();
+                }
             });
 
             spotifyPlayer.connect().then(success => {
@@ -872,11 +920,17 @@
 
         async function playNextInQueue() {
             if (!isAuthorized) return;
+            advanceCooldownUntil = Date.now() + 4000;
             try {
                 showPlayerError('');
                 const res = await fetch('/api/admin/spotify/play-next', { method: 'POST' });
                 const data = await res.json();
-                if (!data.success) showPlayerError(data.error || 'Nothing to play — the queue may be empty, or no device is connected yet.');
+                if (!data.success) {
+                    showPlayerError(data.error || 'Nothing to play — the queue may be empty and no fallback playlist is set, or no device is connected yet.');
+                } else if (data.fallback) {
+                    document.getElementById('np-title').innerText = 'Playing filler playlist';
+                    document.getElementById('np-artist').innerText = 'Queue is empty — request a song to interrupt it';
+                }
             } catch (e) { showPlayerError('Could not reach the server to play the next track.'); }
             updateDashboard();
         }
