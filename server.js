@@ -99,7 +99,7 @@ app.get('/api/search', async (req, res) => {
 
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    const { track } = req.body;
+    const { track, username } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
     // API block safety gate against manual requests injection of explicit songs
@@ -107,11 +107,18 @@ app.post('/api/request', (req, res) => {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
 
+    // DJ-only attribution: never sent back down via /data, only via /api/admin/data
+    const requesterName = (typeof username === 'string' && username.trim() !== '')
+        ? username.trim().slice(0, 30)
+        : 'Anonymous';
+
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
         if (!existingTrack.upvoters.includes('system-generated')) {
             existingTrack.upvoters.push('system-generated');
         }
+        if (!existingTrack.requesters) existingTrack.requesters = [];
+        existingTrack.requesters.push(requesterName);
     } else {
         activeQueue.push({
             id: track.id || Date.now().toString(),
@@ -121,7 +128,8 @@ app.post('/api/request', (req, res) => {
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
             upvoters: [],
-            downvoters: []
+            downvoters: [],
+            requesters: [requesterName]
         });
     }
     res.json({ success: true });
@@ -159,6 +167,7 @@ app.post('/api/vote', (req, res) => {
     res.json({ success: true });
 });
 
+// Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
 function buildSortedQueue() {
     return activeQueue.map(t => ({
         id: t.id,
@@ -171,6 +180,23 @@ function buildSortedQueue() {
         downs: t.downvoters?.length || 0,
         upvoters: t.upvoters || [],
         downvoters: t.downvoters || []
+    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+// Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
+function buildSortedQueueForAdmin() {
+    return activeQueue.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork,
+        explicit: t.explicit,
+        duration: t.duration,
+        ups: t.upvoters?.length || 0,
+        downs: t.downvoters?.length || 0,
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || [],
+        requesters: t.requesters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
 }
 
@@ -191,7 +217,7 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        queue: buildSortedQueue(),
+        queue: buildSortedQueueForAdmin(),
         history: playedHistory
     });
 });
@@ -235,7 +261,8 @@ app.post('/api/admin/action', (req, res) => {
                 artist: track.artist,
                 artwork: track.artwork,
                 explicit: track.explicit,
-                duration: track.duration
+                duration: track.duration,
+                requesters: track.requesters || []
             });
         } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
