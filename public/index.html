@@ -72,7 +72,9 @@
         .credits-display { color: white; }
 
         .connect-spotify-btn {
+            background-color: black;
             color: var(--spotify-green);
+            border: 1px solid var(--spotify-green);
             cursor: pointer;
             display: inline-flex;
             align-items: center;
@@ -80,11 +82,11 @@
             transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
         .connect-spotify-btn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
-        .connect-spotify-btn:hover { background-color: #202020; }
+        .connect-spotify-btn:hover { background-color: #0a0a0a; }
         .connect-spotify-btn.is-connected {
             color: white;
             background-color: var(--spotify-green);
-            border-color: transparent;
+            border-color: var(--spotify-green);
         }
         .connect-spotify-btn.is-connected:hover { background-color: #1ed760; }
 
@@ -332,6 +334,45 @@
 
         .modal-loading, .modal-empty { color: #a7a7a7; text-align: center; padding: 30px 10px; font-style: italic; }
 
+        /* USERNAME PROMPT MODAL */
+        .username-modal-box {
+            background: var(--panel-bg);
+            border-radius: 16px;
+            border: 1px solid #282828;
+            width: 100%;
+            max-width: 380px;
+            padding: 24px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        .username-modal-box h3 { margin: 0 0 8px 0; font-size: 1.2rem; }
+        .username-modal-box p { margin: 0 0 16px 0; color: #a7a7a7; font-size: 0.9rem; }
+        .username-input {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 12px 16px;
+            color: white;
+            border-radius: 50px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            outline: none;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        .username-input:focus { border-color: var(--spotify-green); }
+        .username-save-btn {
+            background-color: var(--spotify-green);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1rem;
+        }
+
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
@@ -361,6 +402,16 @@
 
         <div class="section-title" id="list-title">Live Queue</div>
         <div id="main-display-list"></div>
+    </div>
+
+    <!-- USERNAME PROMPT MODAL -->
+    <div class="modal-overlay" id="username-modal">
+        <div class="username-modal-box">
+            <h3>What's your name?</h3>
+            <p>So the DJ knows who requested each song. Only the DJ can see this.</p>
+            <input type="text" id="username-input" class="username-input" placeholder="Your name" maxlength="30" onkeydown="if(event.key === 'Enter') saveUsername()">
+            <button class="username-save-btn" onclick="saveUsername()">Continue</button>
+        </div>
     </div>
 
     <!-- PLAYLIST BROWSER MODAL -->
@@ -394,6 +445,33 @@
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
         }
         const voterSignatureToken = localStorage.getItem('voterSignatureToken');
+
+        // --- Guest username (private to DJ view only) ---
+        let guestUsername = localStorage.getItem('guestUsername') || '';
+
+        function ensureUsernameCaptured(afterFn) {
+            if (guestUsername && guestUsername.trim() !== '') {
+                if (afterFn) afterFn();
+                return;
+            }
+            document.getElementById('username-modal').classList.add('is-visible');
+            window.__pendingUsernameCallback = afterFn || null;
+        }
+
+        function saveUsername() {
+            const input = document.getElementById('username-input');
+            const val = input.value.trim();
+            if (val === '') {
+                input.focus();
+                return;
+            }
+            guestUsername = val;
+            localStorage.setItem('guestUsername', guestUsername);
+            document.getElementById('username-modal').classList.remove('is-visible');
+            const cb = window.__pendingUsernameCallback;
+            window.__pendingUsernameCallback = null;
+            if (cb) cb();
+        }
 
         async function fetchSystemState() {
             try {
@@ -603,7 +681,7 @@
                 const res = await fetch('/api/request', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track })
+                    body: JSON.stringify({ track, username: guestUsername })
                 });
 
                 if (res.ok) {
@@ -625,13 +703,15 @@
         }
 
         async function submitRequestAtIndex(index) {
-            const track = globalSearchResults[index];
-            if (!track) return;
-            const ok = await submitTrackRequest(track);
-            if (ok) {
-                document.getElementById('search-input').value = "";
-                alert("Song successfully added to the queue!");
-            }
+            ensureUsernameCaptured(async () => {
+                const track = globalSearchResults[index];
+                if (!track) return;
+                const ok = await submitTrackRequest(track);
+                if (ok) {
+                    document.getElementById('search-input').value = "";
+                    alert("Song successfully added to the queue!");
+                }
+            });
         }
 
         fetchSystemState();
@@ -673,7 +753,7 @@
             const btn = document.getElementById('connect-spotify-btn');
             const label = document.getElementById('connect-spotify-label');
             btn.classList.toggle('is-connected', connected);
-            label.innerText = connected ? 'My Playlists' : 'Connect Spotify';
+            label.innerText = connected ? 'Connected' : 'Connect Spotify';
         }
 
         async function handleSpotifyConnectClick() {
@@ -885,17 +965,19 @@
         }
 
         async function requestFromPlaylist(index, btnEl) {
-            const rawTrack = (window.__currentPlaylistTracks || [])[index];
-            if (!rawTrack) return;
-            const track = mapSpotifyTrack(rawTrack);
+            ensureUsernameCaptured(async () => {
+                const rawTrack = (window.__currentPlaylistTracks || [])[index];
+                if (!rawTrack) return;
+                const track = mapSpotifyTrack(rawTrack);
 
-            btnEl.disabled = true;
-            const ok = await submitTrackRequest(track);
-            if (ok) {
-                btnEl.innerText = 'Added ✓';
-            } else {
-                btnEl.disabled = false;
-            }
+                btnEl.disabled = true;
+                const ok = await submitTrackRequest(track);
+                if (ok) {
+                    btnEl.innerText = 'Added ✓';
+                } else {
+                    btnEl.disabled = false;
+                }
+            });
         }
 
         restoreGuestSpotifySession();
