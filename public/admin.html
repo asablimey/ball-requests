@@ -421,10 +421,6 @@
                             <button class="np-icon-btn" id="np-loop-btn" onclick="toggleLoop()" title="Loop current track">
                                 <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
                             </button>
-                            <span style="color:#a7a7a7; font-size:0.8rem; display:flex; align-items:center; gap:6px;">
-                                <span style="width:8px; height:8px; border-radius:50%; background:var(--spotify-green); display:inline-block;"></span>
-                                Auto-advance: always on
-                            </span>
 
                             <div class="np-volume-row">
                                 <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
@@ -870,6 +866,7 @@
                 if (realEndOfTrack && !withinCooldown) {
                     advanceCooldownUntil = Date.now() + 4000;
                     hasProgressedPastStart = false;
+                    if (!preQueuedTrackId) showPlayerError('Gapless handoff was not armed in time — using fallback advance (may have a brief gap).');
                     playNextInQueue();
                 }
             });
@@ -891,19 +888,26 @@
                     body: JSON.stringify({ trackId: nextId })
                 });
                 const data = await res.json();
-                if (!data.success) preQueuedTrackId = null; // let the fallback handle it instead
-            } catch (e) { preQueuedTrackId = null; }
+                if (!data.success) {
+                    preQueuedTrackId = null; // let the fallback handle it instead
+                    showPlayerError(`Gapless queue-ahead failed (falling back): ${data.error || 'unknown error'}`);
+                }
+            } catch (e) {
+                preQueuedTrackId = null;
+                showPlayerError('Gapless queue-ahead failed (network error) — falling back to normal advance.');
+            }
         }
 
         async function confirmTrackStarted(trackId) {
             try {
-                await fetch('/api/admin/spotify/confirm-started', {
+                const res = await fetch('/api/admin/spotify/confirm-started', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ trackId })
                 });
+                if (!res.ok) showPlayerError(`Queue sync after gapless handoff failed (status ${res.status}).`);
                 updateDashboard();
-            } catch (e) { /* next poll will resync anyway */ }
+            } catch (e) { showPlayerError('Queue sync after gapless handoff failed (network error).'); }
         }
 
         function updatePlayIcon() {
