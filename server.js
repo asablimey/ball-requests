@@ -16,12 +16,64 @@ let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
     requestsAllowed: true,
-    explicitBlockActive: false
+    explicitBlockActive: false,
+    // Spotify playlist/album URI (e.g. spotify:playlist:xxxx) the DJ's device falls back to
+    // when the request queue is empty, so the music never just stops.
+    fallbackPlaylistUri: ""
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
+
+// --- Guest Spotify sessions (read-only "browse my playlists" login) ---
+// Completely separate from djSpotifyAuth below. Each guest gets their own
+// session, identified by an opaque cookie, so many guests can be connected
+// to their own Spotify accounts at once without colliding with each other
+// or with the DJ's playback-control connection.
+const guestSpotifySessions = new Map(); // sessionId -> { accessToken, refreshToken, expiresAt, pendingState, createdAt }
+const GUEST_SESSION_COOKIE = 'crowddj_guest_sid';
+const GUEST_SCOPES = [
+    'playlist-read-private',
+    'playlist-read-collaborative',
+    'user-library-read'
+].join(' ');
+
+function parseCookies(req) {
+    const header = req.headers.cookie;
+    const out = {};
+    if (!header) return out;
+    header.split(';').forEach(pair => {
+        const idx = pair.indexOf('=');
+        if (idx === -1) return;
+        const key = pair.slice(0, idx).trim();
+        const val = pair.slice(idx + 1).trim();
+        out[key] = decodeURIComponent(val);
+    });
+    return out;
+}
+
+function makeSessionId() {
+    return 'gs_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
+}
+
+function getOrCreateGuestSessionId(req, res) {
+    const cookies = parseCookies(req);
+    let sid = cookies[GUEST_SESSION_COOKIE];
+    if (!sid || !guestSpotifySessions.has(sid)) {
+        sid = makeSessionId();
+        res.setHeader('Set-Cookie', `${GUEST_SESSION_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 12}`);
+    }
+    return sid;
+}
+
+// Clean out stale/unfinished guest sessions periodically (12hr window).
+setInterval(() => {
+    const cutoff = Date.now() - (1000 * 60 * 60 * 12);
+    for (const [sid, sess] of guestSpotifySessions.entries()) {
+        if (!sess.createdAt || sess.createdAt < cutoff) guestSpotifySessions.delete(sid);
+    }
+}, 1000 * 60 * 30);
 
 // --- DJ's personal Spotify login (separate from the app-only search token above) ---
 // This is what lets the server actually control playback, not just search.
@@ -126,6 +178,163 @@ app.get('/api/admin/spotify-callback', async (req, res) => {
     }
 });
 
+// --- Guest Spotify login (read-only, per-guest) ---
+// Step 1: guest clicks "Connect Spotify" next to their credits.
+app.get('/api/guest/spotify-login', (req, res) => {
+    const sid = getOrCreateGuestSessionId(req, res);
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/guest/spotify-callback`;
+
+    // Use Spotify's `state` param to carry the session id through the redirect,
+    // since some mobile browsers can be picky about first-party cookies surviving
+    // a cross-site redirect chain. We double check the cookie too when possible.
+    const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: CLIENT_ID,
+        scope: GUEST_SCOPES,
+        redirect_uri: redirectUri,
+        state: sid
+    });
+    res.redirect(`https://accounts.spotify.com/authorize?${params.toString()}`);
+});
+
+// Step 2: Spotify redirects back here with a code.
+app.get('/api/guest/spotify-callback', async (req, res) => {
+    const code = req.query.code;
+    const sid = req.query.state;
+    if (!code || !sid) return res.status(400).send('Spotify login failed: missing code or session.');
+
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/guest/spotify-callback`;
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: redirectUri
+            })
+        });
+        const data = await response.json();
+        if (!data.access_token) {
+            console.error('[GUEST SPOTIFY AUTH] Token exchange failed:', data);
+            return res.status(500).send('Spotify login failed during token exchange.');
+        }
+
+        guestSpotifySessions.set(sid, {
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token,
+            expiresAt: Date.now() + (data.expires_in * 1000),
+            createdAt: Date.now()
+        });
+
+        // Make sure the cookie is set even if this landed on a fresh request context.
+        res.setHeader('Set-Cookie', `${GUEST_SESSION_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 12}`);
+        res.redirect('/?spotify=connected');
+    } catch (err) {
+        console.error('[GUEST SPOTIFY AUTH] Callback error:', err.message);
+        res.status(500).send('Spotify login failed.');
+    }
+});
+
+async function ensureGuestTokenFresh(sid) {
+    const sess = guestSpotifySessions.get(sid);
+    if (!sess || !sess.refreshToken) return null;
+    if (sess.accessToken && Date.now() < sess.expiresAt - 30000) return sess;
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: sess.refreshToken
+            })
+        });
+        const data = await response.json();
+        if (!data.access_token) return null;
+        sess.accessToken = data.access_token;
+        sess.expiresAt = Date.now() + (data.expires_in * 1000);
+        if (data.refresh_token) sess.refreshToken = data.refresh_token;
+        return sess;
+    } catch (err) {
+        console.error('[GUEST SPOTIFY AUTH] Refresh failed:', err.message);
+        return null;
+    }
+}
+
+app.get('/api/guest/spotify-status', async (req, res) => {
+    const cookies = parseCookies(req);
+    const sid = cookies[GUEST_SESSION_COOKIE];
+    if (!sid || !guestSpotifySessions.has(sid)) return res.json({ connected: false });
+    const sess = await ensureGuestTokenFresh(sid);
+    res.json({ connected: !!sess });
+});
+
+app.post('/api/guest/spotify-disconnect', (req, res) => {
+    const cookies = parseCookies(req);
+    const sid = cookies[GUEST_SESSION_COOKIE];
+    if (sid) guestSpotifySessions.delete(sid);
+    res.json({ success: true });
+});
+
+app.get('/api/guest/spotify-playlists', async (req, res) => {
+    const cookies = parseCookies(req);
+    const sid = cookies[GUEST_SESSION_COOKIE];
+    const sess = sid ? await ensureGuestTokenFresh(sid) : null;
+    if (!sess) return res.status(401).json({ error: 'Not connected to Spotify.' });
+
+    try {
+        const response = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
+            headers: { 'Authorization': `Bearer ${sess.accessToken}` }
+        });
+        const data = await response.json();
+        const playlists = (data.items || []).map(p => ({
+            id: p.id,
+            name: p.name,
+            trackCount: p.tracks?.total || 0,
+            artwork: p.images?.[0]?.url || 'https://picsum.photos/48'
+        }));
+        res.json({ playlists });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not load playlists.' });
+    }
+});
+
+app.get('/api/guest/spotify-playlist/:id/tracks', async (req, res) => {
+    const cookies = parseCookies(req);
+    const sid = cookies[GUEST_SESSION_COOKIE];
+    const sess = sid ? await ensureGuestTokenFresh(sid) : null;
+    if (!sess) return res.status(401).json({ error: 'Not connected to Spotify.' });
+
+    try {
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(req.params.id)}/tracks?limit=100`, {
+            headers: { 'Authorization': `Bearer ${sess.accessToken}` }
+        });
+        const data = await response.json();
+        const tracks = (data.items || [])
+            .map(item => item.track)
+            .filter(Boolean)
+            .map(track => ({
+                id: track.id,
+                name: track.name,
+                artist: (track.artists || []).map(a => a.name).join(', '),
+                artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48',
+                explicit: track.explicit || false,
+                duration: formatDuration(track.duration_ms || 0)
+            }));
+        res.json({ tracks });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not load playlist tracks.' });
+    }
+});
+
 // Keeps the DJ's playback token valid. Called before any playback action.
 async function ensureDjTokenFresh() {
     if (!djSpotifyAuth.refreshToken) return false;
@@ -206,6 +415,27 @@ async function playTrackOnDevice(spotifyTrackId) {
     return { success: false, error: errData.error?.message || 'Playback failed.' };
 }
 
+// Starts the DJ's configured fallback playlist/album so music keeps playing
+// when there's nothing left in the request queue.
+async function playFallbackOnDevice() {
+    const ok = await ensureDjTokenFresh();
+    if (!ok || !playbackState.deviceId) return { success: false, error: 'Not connected or no active device.' };
+    if (!systemConfigs.fallbackPlaylistUri) return { success: false, error: 'No fallback playlist configured.' };
+
+    const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${playbackState.deviceId}`, {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${djSpotifyAuth.accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ context_uri: systemConfigs.fallbackPlaylistUri })
+    });
+
+    if (response.status === 204 || response.ok) return { success: true, fallback: true };
+    const errData = await response.json().catch(() => ({}));
+    return { success: false, error: errData.error?.message || 'Fallback playback failed.' };
+}
+
 app.post('/api/admin/spotify/play', async (req, res) => {
     const { trackId } = req.body;
     if (!trackId) return res.status(400).json({ error: 'Missing trackId.' });
@@ -227,7 +457,12 @@ app.post('/api/admin/spotify/pause', async (req, res) => {
 // Used both for the manual "Play Next" button and auto-advance.
 app.post('/api/admin/spotify/play-next', async (req, res) => {
     const sorted = buildSortedQueue();
-    if (sorted.length === 0) return res.json({ success: false, error: 'Queue is empty.' });
+    if (sorted.length === 0) {
+        // Nothing queued — keep the music going with the fallback playlist instead of just stopping.
+        const fallbackResult = await playFallbackOnDevice();
+        if (fallbackResult.success) return res.json({ success: true, fallback: true, nowPlaying: null });
+        return res.json({ success: false, error: fallbackResult.error || 'Queue is empty.' });
+    }
 
     const next = sorted[0];
     const result = await playTrackOnDevice(next.id);
@@ -241,7 +476,8 @@ app.post('/api/admin/spotify/play-next', async (req, res) => {
             artist: track.artist,
             artwork: track.artwork,
             explicit: track.explicit,
-            duration: track.duration
+            duration: track.duration,
+            requestedBy: track.requestedBy || 'Anonymous'
         });
     }
     res.json({ success: true, nowPlaying: next });
@@ -288,13 +524,15 @@ app.get('/api/search', async (req, res) => {
 
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    const { track } = req.body;
+    const { track, requesterName } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
 
     // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
+
+    const cleanName = (typeof requesterName === 'string' ? requesterName.trim() : '').slice(0, 40) || 'Anonymous';
 
     const existingTrack = activeQueue.find(t => t.id === track.id);
     if (existingTrack) {
@@ -309,6 +547,7 @@ app.post('/api/request', (req, res) => {
             artwork: track.artwork || 'https://picsum.photos/48',
             explicit: track.explicit || false,
             duration: track.duration || '--:--',
+            requestedBy: cleanName, // admin-only — never sent on the guest-facing queue
             upvoters: [],
             downvoters: []
         });
@@ -356,11 +595,17 @@ function buildSortedQueue() {
         artwork: t.artwork,
         explicit: t.explicit,
         duration: t.duration,
+        requestedBy: t.requestedBy || 'Anonymous',
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
         upvoters: t.upvoters || [],
         downvoters: t.downvoters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+// Guest-facing queue must never expose who requested what.
+function stripRequesterNames(queue) {
+    return queue.map(({ requestedBy, ...rest }) => rest);
 }
 
 app.get('/data', (req, res) => {
@@ -369,7 +614,7 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
-        queue: buildSortedQueue(),
+        queue: stripRequesterNames(buildSortedQueue()),
         history: playedHistory
     });
 });
@@ -380,15 +625,17 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        fallbackPlaylistUri: systemConfigs.fallbackPlaylistUri,
         queue: buildSortedQueue(),
         history: playedHistory
     });
 });
 
 app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength } = req.body;
+    const { maxCredits, countdownLength, fallbackPlaylistUri } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
+    if (fallbackPlaylistUri !== undefined) systemConfigs.fallbackPlaylistUri = String(fallbackPlaylistUri).trim();
     res.json({ success: true });
 });
 
@@ -424,7 +671,8 @@ app.post('/api/admin/action', (req, res) => {
                 artist: track.artist,
                 artwork: track.artwork,
                 explicit: track.explicit,
-                duration: track.duration
+                duration: track.duration,
+                requestedBy: track.requestedBy || 'Anonymous'
             });
         } else if (action === 'remove') {
             activeQueue.splice(trackIndex, 1);
