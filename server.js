@@ -383,12 +383,6 @@ app.post('/api/admin/spotify-disconnect', (req, res) => {
     res.json({ success: true });
 });
 
-app.post('/api/admin/spotify-autoadvance', (req, res) => {
-    const { enabled } = req.body;
-    playbackState.autoAdvance = !!enabled;
-    res.json({ success: true });
-});
-
 // Registers which Spotify Connect device (the browser tab running the SDK) to control.
 app.post('/api/admin/spotify-device', (req, res) => {
     const { deviceId } = req.body;
@@ -462,6 +456,47 @@ app.post('/api/admin/spotify/repeat', async (req, res) => {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${djSpotifyAuth.accessToken}` }
     });
+    res.json({ success: true });
+});
+
+// Adds a track to Spotify's own native queue, ahead of time, so the device can
+// advance into it directly with no round-trip through our server — this is what
+// makes the transition sound seamless instead of a beat of silence.
+app.post('/api/admin/spotify/queue-next', async (req, res) => {
+    const { trackId } = req.body;
+    if (!trackId) return res.status(400).json({ error: 'Missing trackId.' });
+    const ok = await ensureDjTokenFresh();
+    if (!ok || !playbackState.deviceId) return res.status(400).json({ error: 'Not connected.' });
+
+    const response = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=spotify:track:${trackId}&device_id=${playbackState.deviceId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${djSpotifyAuth.accessToken}` }
+    });
+
+    if (response.status === 204 || response.ok) return res.json({ success: true });
+    const errData = await response.json().catch(() => ({}));
+    res.json({ success: false, error: errData.error?.message || 'Queue-ahead failed.' });
+});
+
+// Called once the browser detects Spotify has natively advanced into a track we
+// pre-queued. We don't call play again here (it's already playing) - we just
+// move it out of our request queue and into history to keep our data in sync.
+app.post('/api/admin/spotify/confirm-started', (req, res) => {
+    const { trackId } = req.body;
+    if (!trackId) return res.status(400).json({ error: 'Missing trackId.' });
+
+    const trackIndex = activeQueue.findIndex(t => t.id === trackId);
+    if (trackIndex !== -1) {
+        const [track] = activeQueue.splice(trackIndex, 1);
+        playedHistory.unshift({
+            title: track.title,
+            artist: track.artist,
+            artwork: track.artwork,
+            explicit: track.explicit,
+            duration: track.duration,
+            requestedBy: track.requestedBy || 'Anonymous'
+        });
+    }
     res.json({ success: true });
 });
 
