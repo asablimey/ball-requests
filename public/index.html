@@ -801,7 +801,7 @@
                         <img src="${pl.images?.[0]?.url || ''}">
                         <div>
                             <p class="pl-name">${pl.name}</p>
-                            <p class="pl-count">${pl.tracks?.total ?? 0} tracks</p>
+                            <p class="pl-count">${pl.items?.total ?? pl.tracks?.total ?? 0} tracks</p>
                         </div>
                     </div>
                 `).join('');
@@ -837,11 +837,20 @@
             body.innerHTML = '<p class="modal-loading">Loading tracks…</p>';
 
             try {
-                const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
+                const res = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`, {
                     headers: { Authorization: `Bearer ${guestSpotifyToken}` }
                 });
+
+                // Spotify only serves playlist contents for playlists you own or collaborate on.
+                // For anything you just follow, this call comes back non-OK (or with no items).
+                if (!res.ok) {
+                    body.innerHTML = '<p class="modal-empty">Sorry, you dont own the playlist</p>';
+                    return;
+                }
+
                 const data = await res.json();
-                let tracks = (data.items || []).map(i => i.track).filter(t => t && t.id);
+                // Spotify (Feb 2026 API changes) renamed each entry's "track" field to "item".
+                let tracks = (data.items || []).map(i => i.item || i.track).filter(t => t && t.id);
 
                 // Match the DJ's explicit-content rule the same way search results already do
                 if (explicitBlockActive) tracks = tracks.filter(t => !t.explicit);
