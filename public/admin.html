@@ -1,10 +1,11 @@
+ADMIN
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DJ Dashboard</title>
-
+    
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DJ Admin">
@@ -19,12 +20,12 @@
             --red-action: #e91429;
         }
 
-        body {
-            background-color: var(--spotify-black);
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            padding: 25px;
-            margin: 0;
+        body { 
+            background-color: var(--spotify-black); 
+            color: white; 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            padding: 25px; 
+            margin: 0; 
             box-sizing: border-box;
         }
 
@@ -54,7 +55,12 @@
             box-sizing: border-box;
         }
 
-        .lock-container h2 { margin-top: 0; color: white; font-size: 1.6rem; margin-bottom: 20px; }
+        .lock-container h2 {
+            margin-top: 0;
+            color: white;
+            font-size: 1.6rem;
+            margin-bottom: 20px;
+        }
 
         .lock-input {
             width: 100%;
@@ -85,13 +91,13 @@
         .lock-btn:hover { filter: brightness(1.1); }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
 
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #282828;
-            padding-bottom: 20px;
-            margin-bottom: 20px;
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #282828; 
+            padding-bottom: 20px; 
+            margin-bottom: 20px; 
             flex-wrap: wrap;
             gap: 15px;
         }
@@ -112,13 +118,13 @@
 
         .input-group { display: flex; flex-direction: column; gap: 8px; }
         .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
-        .input-group input {
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            padding: 10px 14px;
-            color: white;
-            border-radius: 6px;
-            font-size: 1rem;
+        .input-group input { 
+            background-color: var(--card-bg); 
+            border: 1px solid #333; 
+            padding: 10px 14px; 
+            color: white; 
+            border-radius: 6px; 
+            font-size: 1rem; 
             width: 140px;
             font-weight: bold;
         }
@@ -138,14 +144,20 @@
 
         .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
 
-        .toggle-btn {
-            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem;
+        .toggle-btn { 
+            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
             transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
         .fullscreen-icon-btn {
-            background: none; border: none; color: #a7a7a7; cursor: pointer; padding: 8px;
-            display: flex; align-items: center; justify-content: center;
+            background: none;
+            border: none;
+            color: #a7a7a7;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             transition: color 0.2s ease, transform 0.1s ease;
         }
         .fullscreen-icon-btn:hover { color: white; }
@@ -161,54 +173,166 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
-        /* TAB NAVIGATION */
+        /* TAB NAVIGATION STYLES */
         .tab-bar {
-            display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #282828; padding-bottom: 10px; flex-wrap: wrap;
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #282828;
+            padding-bottom: 10px;
         }
+
         .tab-button {
-            background-color: transparent; color: #a7a7a7; border: none; padding: 12px 24px;
-            font-size: 1.1rem; font-weight: 700; cursor: pointer; border-radius: 8px; transition: all 0.2s ease;
+            background-color: transparent;
+            color: #a7a7a7;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s ease;
         }
         .tab-button:hover { color: white; background-color: var(--card-bg); }
-        .tab-button.active-tab { color: white; background-color: var(--spotify-green); }
-
-        .tab-content { display: none; width: 100%; }
-        .tab-content.active-content { display: block; }
-
-        .panel {
-            width: 100%; background: var(--panel-bg); padding: 25px; border-radius: 16px; border: 1px solid #222; box-sizing: border-box;
+        .tab-button.active-tab {
+            color: white;
+            background-color: var(--spotify-green);
         }
+
+        .tab-content {
+            display: none; /* Hidden by default */
+            width: 100%;
+        }
+        .tab-content.active-content {
+            display: block; /* Visible when tab is selected */
+        }
+        
+        .panel { 
+            width: 100%;
+            background: var(--panel-bg); 
+            padding: 25px; 
+            border-radius: 16px; 
+            border: 1px solid #222; 
+            box-sizing: border-box;
+        }
+
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
-        .panel h3 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.5px; color: #a7a7a7; margin: 28px 0 14px 0; }
-        .panel h3:first-of-type { margin-top: 0; }
 
-        .song-row {
-            display: flex; justify-content: space-between; align-items: center; padding: 14px;
-            background: var(--card-bg); margin-bottom: 12px; border-radius: 10px; border: 1px solid #2c2c2c;
-            gap: 15px; box-sizing: border-box; width: 100%;
+        .song-row { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 14px; 
+            background: var(--card-bg); 
+            margin-bottom: 12px; 
+            border-radius: 10px; 
+            border: 1px solid #2c2c2c; 
+            gap: 15px;
+            box-sizing: border-box;
+            width: 100%;
         }
-        .song-details { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; }
-        .song-details img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
-        .text-container { flex: 1; min-width: 0; }
-        .title-wrapper { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .song-title { font-weight: 700; margin: 0; font-size: 1.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .song-details { 
+            display: flex; 
+            align-items: center; 
+            gap: 16px; 
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .song-details img { 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 6px; 
+            object-fit: cover; 
+            flex-shrink: 0;
+        }
+        
+        .text-container {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .title-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .song-title { 
+            font-weight: 700; 
+            margin: 0; 
+            font-size: 1.1rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         .explicit-badge {
-            background-color: #7f7f7f; color: var(--spotify-black); font-size: 0.65rem; font-weight: 700;
-            padding: 1px 4px; border-radius: 2px; text-transform: uppercase; display: inline-flex;
-            align-items: center; justify-content: center; flex-shrink: 0; line-height: 1;
+            background-color: #7f7f7f;
+            color: var(--spotify-black);
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 2px;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 1;
         }
-        .song-artist { color: #a7a7a7; margin: 4px 0 0 0; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .song-artist { 
+            color: #a7a7a7; 
+            margin: 4px 0 0 0; 
+            font-size: 0.9rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
-        .admin-vote-block { display: flex; align-items: center; gap: 12px; margin-right: 10px; }
-        .vote-display-node { display: flex; flex-direction: column; align-items: center; min-width: 28px; }
-        .vote-display-node svg { width: 18px; height: 18px; stroke-width: 2.5; }
+        .admin-vote-block {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-right: 10px;
+        }
+
+        .vote-display-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 28px;
+        }
+
+        .vote-display-node svg {
+            width: 18px;
+            height: 18px;
+            stroke-width: 2.5;
+        }
         .node-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
         .node-down svg { stroke: var(--red-action); fill: var(--red-action); }
-        .vote-display-count { font-size: 0.8rem; font-weight: 700; margin-top: 4px; color: #a7a7a7; }
+
+        .vote-display-count {
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin-top: 4px;
+            color: #a7a7a7;
+        }
         .node-up .vote-display-count { color: var(--spotify-green); }
         .node-down .vote-display-count { color: var(--red-action); }
 
-        .actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+        .actions { 
+            display: flex; 
+            gap: 10px; 
+            align-items: center;
+            flex-shrink: 0;
+            flex-wrap: wrap; 
+            justify-content: flex-end;
+        }
+        
         .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
         .btn:hover { filter: brightness(1.1); }
         .btn-top { background-color: var(--blue-action); }
@@ -219,77 +343,11 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
-        /* PLAYBACK TAB */
-        .connection-status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; color: #a7a7a7; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #666; flex-shrink: 0; }
-        .status-dot.is-connected { background: var(--spotify-green); }
-
-        /* NOW PLAYING CARD */
-        .now-playing-card {
-            display: flex; gap: 24px; align-items: center; background: var(--card-bg);
-            border-radius: 16px; padding: 24px; margin-bottom: 28px; flex-wrap: wrap;
-        }
-        .np-art { width: 140px; height: 140px; border-radius: 12px; object-fit: cover; background: #333; flex-shrink: 0; }
-        .np-info { flex: 1; min-width: 240px; }
-        .np-eyebrow { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 1px; color: var(--spotify-green); font-weight: 700; margin: 0 0 6px 0; }
-        .np-title { font-size: 1.5rem; font-weight: 800; margin: 0 0 4px 0; line-height: 1.2; }
-        .np-artist { color: #a7a7a7; font-size: 1rem; margin: 0 0 18px 0; }
-
-        .np-progress-row { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-        .np-time { font-size: 0.75rem; color: #a7a7a7; min-width: 36px; text-align: center; user-select: none; }
-        .np-progress-track { position: relative; flex: 1; height: 6px; background: #3e3e3e; border-radius: 3px; cursor: pointer; }
-        .np-progress-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: var(--spotify-green); border-radius: 3px; }
-        .np-progress-track:hover .np-progress-fill { background: #1ed760; }
-        .np-progress-handle {
-            position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: white;
-            transform: translate(-50%, -50%); left: 0%; opacity: 0; transition: opacity 0.15s ease;
-        }
-        .np-progress-track:hover .np-progress-handle { opacity: 1; }
-
-        .np-transport { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-        .np-icon-btn {
-            background: none; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center;
-            padding: 8px; border-radius: 50%; transition: transform 0.1s ease, background 0.15s ease;
-        }
-        .np-icon-btn:hover { background: rgba(255,255,255,0.1); }
-        .np-icon-btn:active { transform: scale(0.9); }
-        .np-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
-        .np-icon-btn.active-loop { color: var(--spotify-green); background: rgba(29,185,84,0.15); }
-        .np-play-btn { background: var(--spotify-green); color: white; width: 52px; height: 52px; border-radius: 50%; }
-        .np-play-btn:hover { background: #1ed760; transform: scale(1.05); }
-        .np-play-btn svg { width: 24px; height: 24px; }
-
-        .np-volume-row { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 140px; }
-        .np-volume-row svg { width: 18px; height: 18px; fill: #a7a7a7; flex-shrink: 0; }
-        .np-volume-row input[type="range"] { flex: 1; accent-color: var(--spotify-green); }
-
-        .np-error { color: var(--red-action); font-size: 0.85rem; margin-top: 14px; min-height: 1.2em; }
-        .np-idle-msg { color: #a7a7a7; font-size: 0.95rem; }
-
-        /* COMING UP LIST */
-        .coming-up-row {
-            display: flex; align-items: center; gap: 14px; padding: 10px 12px; background: var(--card-bg);
-            margin-bottom: 8px; border-radius: 8px; border: 1px solid #2c2c2c;
-        }
-        .coming-up-row img { width: 40px; height: 40px; border-radius: 5px; object-fit: cover; flex-shrink: 0; }
-        .cu-text { flex: 1; min-width: 0; }
-        .cu-title { font-weight: 700; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cu-meta { font-size: 0.78rem; color: #a7a7a7; margin: 2px 0 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cu-play-btn {
-            background: none; border: 1px solid #3e3e3e; color: var(--spotify-green); cursor: pointer;
-            width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-        }
-        .cu-play-btn:hover { background: var(--spotify-green); color: white; border-color: transparent; }
-        .cu-play-btn svg { width: 14px; height: 14px; fill: currentColor; }
-
         @media (max-width: 600px) {
             body { padding: 15px; }
             h1 { font-size: 1.8rem; }
             .song-row { flex-direction: column; align-items: flex-start; }
             .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
-            .now-playing-card { padding: 18px; gap: 16px; }
-            .np-art { width: 96px; height: 96px; }
-            .np-volume-row { margin-left: 0; width: 100%; }
         }
     </style>
 </head>
@@ -306,18 +364,37 @@
 
     <div class="header">
         <h1>Current Requests</h1>
-        <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
-            <svg viewBox="0 0 24 24" id="fullscreen-svg">
-                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-            </svg>
-        </button>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+            <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+            <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
+                <svg viewBox="0 0 24 24" id="fullscreen-svg">
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="config-dashboard">
+        <div class="input-group">
+            <label>Max Credit Bank</label>
+            <input type="number" id="input-max-credits" min="1">
+        </div>
+        <div class="input-group">
+            <label>Regen Timer (Secs)</label>
+            <input type="number" id="input-countdown" min="5">
+        </div>
+        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+    </div>
+
+    <div class="control-bar">
+        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
     </div>
 
     <div class="tab-bar">
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
-        <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
-        <button id="tab-btn-playback" class="tab-button" onclick="switchTab('playback')">Playback</button>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -334,152 +411,40 @@
         </div>
     </div>
 
-    <div id="tab-panel-settings" class="tab-content">
-        <div class="panel">
-            <h2>Settings</h2>
-
-            <h3>Request Rules</h3>
-            <div class="config-dashboard" style="margin-bottom: 15px;">
-                <div class="input-group">
-                    <label>Max Credit Bank</label>
-                    <input type="number" id="input-max-credits" min="1">
-                </div>
-                <div class="input-group">
-                    <label>Regen Timer (Secs)</label>
-                    <input type="number" id="input-countdown" min="5">
-                </div>
-                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-            </div>
-
-            <h3>Filler / Fallback Music</h3>
-            <div class="config-dashboard" style="margin-bottom: 15px;">
-                <div class="input-group" style="flex: 1; min-width: 260px;">
-                    <label>Spotify Playlist/Album URI</label>
-                    <input type="text" id="input-fallback-uri" placeholder="spotify:playlist:xxxxxxxxxxxx" style="width: 100%;">
-                </div>
-                <button class="save-config-btn" onclick="saveSystemRules()">Save</button>
-            </div>
-            <p style="color:#a7a7a7; font-size:0.85rem; margin-top:-8px;">When the request queue empties, the dashboard automatically starts playing this playlist on your connected device instead of going silent. Right-click a playlist/album in Spotify → Share → Copy Spotify URI.</p>
-
-            <h3>Access Controls</h3>
-            <div class="control-bar" style="margin-bottom: 15px;">
-                <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-                <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-            </div>
-
-            <h3>Danger Zone</h3>
-            <div class="control-bar">
-                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="tab-panel-playback" class="tab-content">
-        <div class="panel">
-            <h2>Spotify Playback</h2>
-
-            <div id="playback-disconnected" style="display:none;">
-                <p style="color:#a7a7a7;">Connect your Spotify Premium account to play requests directly from this dashboard.</p>
-                <a href="/api/admin/spotify-login"><button class="save-config-btn">Connect Spotify</button></a>
-            </div>
-
-            <div id="playback-connected" style="display:none;">
-                <div class="connection-status-row">
-                    <span class="status-dot" id="player-status-dot"></span>
-                    <span id="player-status">Initializing player…</span>
-                    <button class="utility-btn" style="margin-left:auto; padding:6px 16px; font-size:0.75rem;" onclick="disconnectSpotify()">Disconnect</button>
-                </div>
-
-                <!-- NOW PLAYING -->
-                <div class="now-playing-card">
-                    <img id="np-artwork" class="np-art" src="" alt="">
-                    <div class="np-info">
-                        <p class="np-eyebrow">Now Playing</p>
-                        <p class="np-title" id="np-title">Nothing playing yet</p>
-                        <p class="np-artist" id="np-artist">Hit "Play Next From Queue" to start</p>
-
-                        <div class="np-progress-row">
-                            <span class="np-time" id="np-elapsed">0:00</span>
-                            <div class="np-progress-track" id="np-progress-track" onclick="seekOnBar(event)">
-                                <div class="np-progress-fill" id="np-progress-fill"></div>
-                                <div class="np-progress-handle" id="np-progress-handle"></div>
-                            </div>
-                            <span class="np-time" id="np-duration">0:00</span>
-                        </div>
-
-                        <div class="np-transport">
-                            <button class="np-icon-btn np-play-btn" id="np-play-btn" onclick="togglePlayPause()" title="Play / Pause">
-                                <svg id="np-play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                            </button>
-                            <button class="np-icon-btn" onclick="stopPlayback()" title="Stop">
-                                <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
-                            </button>
-                            <button class="np-icon-btn" onclick="playNextInQueue()" title="Play next from queue">
-                                <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-                            </button>
-                            <button class="np-icon-btn" id="np-loop-btn" onclick="toggleLoop()" title="Loop current track">
-                                <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
-                            </button>
-
-                            <div class="np-volume-row">
-                                <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-                                <input type="range" id="np-volume" min="0" max="100" value="80" oninput="setPlayerVolume(this.value)">
-                            </div>
-                        </div>
-
-                        <p class="np-error" id="np-error"></p>
-                    </div>
-                </div>
-
-                <h3 style="margin-top:0;">Coming Up</h3>
-                <div id="coming-up-list"></div>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
-        let isAuthorized = false;
-        let spotifyPlayer = null;
-        let latestQueue = [];
+        let isAuthorized = false; 
 
         // Tab selection switching algorithm
         function switchTab(targetTab) {
-            const tabs = {
-                queue: { btn: 'tab-btn-queue', panel: 'tab-panel-queue' },
-                history: { btn: 'tab-btn-history', panel: 'tab-panel-history' },
-                settings: { btn: 'tab-btn-settings', panel: 'tab-panel-settings' },
-                playback: { btn: 'tab-btn-playback', panel: 'tab-panel-playback' }
-            };
+            const queueBtn = document.getElementById('tab-btn-queue');
+            const historyBtn = document.getElementById('tab-btn-history');
+            const queuePanel = document.getElementById('tab-panel-queue');
+            const historyPanel = document.getElementById('tab-panel-history');
 
-            Object.keys(tabs).forEach(key => {
-                const btn = document.getElementById(tabs[key].btn);
-                const panel = document.getElementById(tabs[key].panel);
-                if (key === targetTab) {
-                    btn.classList.add('active-tab');
-                    panel.classList.add('active-content');
-                } else {
-                    btn.classList.remove('active-tab');
-                    panel.classList.remove('active-content');
-                }
-            });
-
-            if (targetTab === 'playback') checkSpotifyStatus();
+            if (targetTab === 'queue') {
+                queueBtn.classList.add('active-tab');
+                historyBtn.classList.remove('active-tab');
+                queuePanel.classList.add('active-content');
+                historyPanel.classList.remove('active-content');
+            } else {
+                historyBtn.classList.add('active-tab');
+                queueBtn.classList.remove('active-tab');
+                historyPanel.classList.add('active-content');
+                queuePanel.classList.remove('active-content');
+            }
         }
 
         function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
-            const masterPassword = "ballDJ2026";
+            const masterPassword = "ballDJ2026"; 
 
             if (inputField.value === masterPassword) {
                 isAuthorized = true;
                 document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard();
-                checkSpotifyStatus();
+                updateDashboard(); 
             } else {
                 errorMsg.style.display = 'block';
                 inputField.value = '';
@@ -487,35 +452,19 @@
             }
         }
 
-        function parseDurationToSeconds(str) {
-            if (!str || typeof str !== 'string' || !str.includes(':')) return 0;
-            const parts = str.split(':').map(n => parseInt(n, 10) || 0);
-            return parts.length === 2 ? (parts[0] * 60 + parts[1]) : 0;
-        }
-
-        function formatEta(totalSeconds) {
-            if (totalSeconds < 60) return 'Playing now';
-            const minutes = Math.round(totalSeconds / 60);
-            return `Playing in about ${minutes} min`;
-        }
-
         async function updateDashboard() {
-            if (!isAuthorized) return;
-
+            if (!isAuthorized) return; 
+            
             try {
                 const res = await fetch('/api/admin/data');
                 if (!res.ok) return;
                 const data = await res.json();
-                latestQueue = data.queue || [];
-
+                
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
                     document.getElementById('input-max-credits').value = data.maxCredits;
                 }
                 if(document.activeElement !== document.getElementById('input-countdown')) {
                     document.getElementById('input-countdown').value = data.countdownLength;
-                }
-                if(document.activeElement !== document.getElementById('input-fallback-uri')) {
-                    document.getElementById('input-fallback-uri').value = data.fallbackPlaylistUri || '';
                 }
 
                 const toggleBtn = document.getElementById('toggle-requests');
@@ -539,7 +488,7 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;•&nbsp; Requested by: ${song.requestedBy || 'Anonymous'}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
                             </div>
                         </div>
                         <div class="actions">
@@ -571,55 +520,23 @@
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
                                 <p class="song-artist">${song.artist}</p>
-                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration} &nbsp;•&nbsp; Requested by: ${song.requestedBy || 'Anonymous'}</p>
+                                <p style="margin: 6px 0 0 0; font-size: 0.85rem; color: #a7a7a7; font-weight: 600;">Length: ${song.duration}</p>
                             </div>
                         </div>
                     </div>
                 `).join('');
-
-                renderComingUp();
             } catch(e) { console.log("Sync error."); }
-        }
-
-        // Lightweight "coming up" preview shown on the Playback tab, under the Now Playing card
-        function renderComingUp() {
-            const el = document.getElementById('coming-up-list');
-            if (!el) return;
-
-            if (latestQueue.length === 0) {
-                el.innerHTML = '<p class="empty-placeholder">Nothing queued. Hit "play next" to start (or continue) the fallback playlist.</p>';
-                return;
-            }
-
-            let cumulativeSeconds = 0;
-            el.innerHTML = latestQueue.slice(0, 8).map((song, idx) => {
-                const etaLabel = idx === 0 ? 'Up next' : formatEta(cumulativeSeconds);
-                cumulativeSeconds += parseDurationToSeconds(song.duration);
-                return `
-                    <div class="coming-up-row">
-                        <img src="${song.artwork}">
-                        <div class="cu-text">
-                            <p class="cu-title">${song.title}${song.explicit ? ' <span class="explicit-badge">E</span>' : ''}</p>
-                            <p class="cu-meta">${song.artist} — ${etaLabel}</p>
-                        </div>
-                        <button class="cu-play-btn" onclick="playSpecificTrack('${song.id}')" title="Play now">
-                            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                        </button>
-                    </div>
-                `;
-            }).join('');
         }
 
         async function saveSystemRules() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
-            const fallbackUri = document.getElementById('input-fallback-uri').value.trim();
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, fallbackPlaylistUri: fallbackUri })
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
             updateDashboard();
@@ -670,7 +587,9 @@
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen()
-                    .catch(err => { console.log(`Error enabling fullscreen: ${err.message}`); });
+                    .catch(err => {
+                        console.log(`Error enabling fullscreen: ${err.message}`);
+                    });
             } else {
                 document.exitFullscreen();
             }
@@ -679,367 +598,21 @@
         function updateFullscreenIcon() {
             const svgNode = document.getElementById('fullscreen-svg');
             if (!document.fullscreenElement) {
+                // Expand Icon
                 svgNode.innerHTML = `<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>`;
             } else {
+                // Shrink / Exit Icon
                 svgNode.innerHTML = `<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>`;
             }
         }
 
         document.addEventListener('fullscreenchange', updateFullscreenIcon);
 
-        window.onload = () => { document.getElementById('password-input').focus(); };
-
-        setInterval(updateDashboard, 3000);
-
-        // --- Spotify Playback ---
-
-        let currentTrackDuration = 0;
-        let currentPosition = 0;
-        let isPaused = true;
-        let positionCapturedAt = 0;
-        let progressTicker = null;
-        let sdkReady = false;
-
-        // --- End-of-track / auto-advance tracking ---
-        // We can't just check "position===0 && paused" to mean "track ended" — that
-        // exact same state also flashes briefly the instant a NEW track starts, which
-        // was causing auto-advance to immediately re-trigger and race through the
-        // whole queue almost instantly. Instead we track whether the current track has
-        // actually made meaningful progress before treating a reset-to-0 as a real end,
-        // and we add a short cooldown after any advance so a burst of state events
-        // can't fire it twice.
-        let lastKnownTrackId = null;
-        let hasProgressedPastStart = false;
-        let advanceCooldownUntil = 0;
-
-        function showPlayerError(message) {
-            const el = document.getElementById('np-error');
-            if (el) el.innerText = message || '';
-        }
-
-        async function checkSpotifyStatus() {
-            if (!isAuthorized) return;
-            try {
-                const res = await fetch('/api/admin/spotify-status');
-                if (!res.ok) {
-                    showPlayerError(`Status check failed (server returned ${res.status}). Is your session/token still valid?`);
-                    return;
-                }
-                const data = await res.json();
-
-                if (data.connected) {
-                    document.getElementById('playback-disconnected').style.display = 'none';
-                    document.getElementById('playback-connected').style.display = 'block';
-                    document.getElementById('player-status-dot').classList.add('is-connected');
-                    if (!spotifyPlayer && sdkReady) initSpotifyPlayer();
-                    if (!sdkReady) {
-                        document.getElementById('player-status').innerText = 'Waiting for Spotify SDK to load…';
-                    }
-                } else {
-                    document.getElementById('playback-disconnected').style.display = 'block';
-                    document.getElementById('playback-connected').style.display = 'none';
-                    document.getElementById('player-status-dot').classList.remove('is-connected');
-                }
-            } catch (e) {
-                showPlayerError('Could not reach the server to check Spotify status. Check your connection.');
-            }
-        }
-        setInterval(checkSpotifyStatus, 5000);
-
-        // Fired by the SDK script once window.Spotify actually exists.
-        // We don't build the Player here — checkSpotifyStatus() calls initSpotifyPlayer()
-        // once it knows the DJ account is connected — but we need this flag so we don't
-        // try to construct a Spotify.Player before the SDK has loaded.
-        window.onSpotifyWebPlaybackSDKReady = () => {
-            sdkReady = true;
+        window.onload = () => {
+            document.getElementById('password-input').focus();
         };
 
-        function initSpotifyPlayer() {
-            if (typeof Spotify === 'undefined') {
-                showPlayerError('Spotify SDK failed to load in this browser. Try disabling ad blockers/extensions or use Chrome.');
-                return;
-            }
-
-            spotifyPlayer = new Spotify.Player({
-                name: 'DJ Dashboard Player',
-                getOAuthToken: async (callback) => {
-                    try {
-                        const res = await fetch('/api/admin/spotify-token');
-                        if (!res.ok) { showPlayerError('Could not fetch a playback token from the server.'); return; }
-                        const data = await res.json();
-                        callback(data.accessToken);
-                    } catch (e) { showPlayerError('Could not fetch a playback token from the server.'); }
-                },
-                volume: 0.8
-            });
-
-            spotifyPlayer.addListener('ready', async ({ device_id }) => {
-                document.getElementById('player-status').innerText = 'Connected and ready.';
-                showPlayerError('');
-                try {
-                    await fetch('/api/admin/spotify-device', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ deviceId: device_id })
-                    });
-                } catch (e) { showPlayerError('Connected to Spotify, but the server failed to save the device ID.'); }
-            });
-
-            spotifyPlayer.addListener('not_ready', () => {
-                document.getElementById('player-status').innerText = 'Device went offline.';
-            });
-
-            spotifyPlayer.addListener('initialization_error', ({ message }) => {
-                document.getElementById('player-status').innerText = 'Player failed to initialize.';
-                showPlayerError(`Initialization error: ${message}`);
-            });
-            spotifyPlayer.addListener('authentication_error', ({ message }) => {
-                document.getElementById('player-status').innerText = 'Authentication failed.';
-                showPlayerError(`Auth error: ${message}. Try disconnecting and reconnecting Spotify.`);
-            });
-            spotifyPlayer.addListener('account_error', ({ message }) => {
-                document.getElementById('player-status').innerText = 'Account error.';
-                showPlayerError(`Account error (Spotify Premium is required for playback control): ${message}`);
-            });
-            spotifyPlayer.addListener('playback_error', ({ message }) => {
-                showPlayerError(`Playback error: ${message}`);
-            });
-
-            spotifyPlayer.addListener('player_state_changed', (state) => {
-                if (!state) return;
-
-                const track = state.track_window.current_track;
-                if (track) {
-                    document.getElementById('np-title').innerText = track.name;
-                    document.getElementById('np-artist').innerText = track.artists.map(a => a.name).join(', ');
-                    document.getElementById('np-artwork').src = track.album?.images?.[0]?.url || '';
-                }
-
-                currentTrackDuration = state.duration;
-                currentPosition = state.position;
-                isPaused = state.paused;
-                positionCapturedAt = Date.now();
-
-                updatePlayIcon();
-                renderProgress(currentPosition, currentTrackDuration);
-
-                if (!isPaused) startProgressTicker(); else stopProgressTicker();
-
-                const incomingTrackId = track?.id || null;
-                const trackChanged = incomingTrackId !== lastKnownTrackId;
-
-                if (trackChanged) {
-                    // If this is the track we pre-queued natively on Spotify's own queue,
-                    // Spotify already advanced into it with no gap - just sync our data,
-                    // don't call play again (that would restart it and cause a stutter).
-                    if (preQueuedTrackId && incomingTrackId === preQueuedTrackId) {
-                        confirmTrackStarted(preQueuedTrackId);
-                    }
-                    preQueuedTrackId = null;
-
-                    // A genuinely new track loaded (manual play, play-next, or Spotify's own
-                    // autoplay) — this is NOT an end-of-track event, even though it can
-                    // momentarily report position 0 / paused true just like a real end does.
-                    lastKnownTrackId = incomingTrackId;
-                    hasProgressedPastStart = false;
-                } else if (state.position > 2000) {
-                    // Same track, playback has moved meaningfully past the start —
-                    // now a reset to 0 can be trusted as a real end-of-track.
-                    hasProgressedPastStart = true;
-                }
-
-                // Gapless handoff: with ~10s left on the current track, hand the next
-                // request straight to Spotify's own queue so the device advances into
-                // it natively instead of us reactively calling play() after a gap.
-                if (!isPaused && currentTrackDuration && !preQueuedTrackId) {
-                    const remaining = currentTrackDuration - currentPosition;
-                    if (remaining > 0 && remaining <= 10000) {
-                        armGaplessHandoff();
-                    }
-                }
-
-                const withinCooldown = Date.now() < advanceCooldownUntil;
-                const realEndOfTrack = !trackChanged && hasProgressedPastStart && state.duration && state.position === 0 && state.paused;
-
-                // Fallback path — only needed if the gapless pre-queue above never fired
-                // (e.g. the queue was empty until just now, or the queue call failed).
-                if (realEndOfTrack && !withinCooldown) {
-                    advanceCooldownUntil = Date.now() + 4000;
-                    hasProgressedPastStart = false;
-                    if (!preQueuedTrackId) showPlayerError('Gapless handoff was not armed in time — using fallback advance (may have a brief gap).');
-                    playNextInQueue();
-                }
-            });
-
-            spotifyPlayer.connect().then(success => {
-                if (!success) showPlayerError('Player failed to connect. Try refreshing this tab.');
-            });
-        }
-
-        let preQueuedTrackId = null;
-        async function armGaplessHandoff() {
-            if (latestQueue.length === 0) return; // nothing waiting — fallback path will handle it at end-of-track
-            const nextId = latestQueue[0].id;
-            preQueuedTrackId = nextId; // set optimistically to avoid re-firing every progress tick
-            try {
-                const res = await fetch('/api/admin/spotify/queue-next', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ trackId: nextId })
-                });
-                const data = await res.json();
-                if (!data.success) {
-                    preQueuedTrackId = null; // let the fallback handle it instead
-                    showPlayerError(`Gapless queue-ahead failed (falling back): ${data.error || 'unknown error'}`);
-                }
-            } catch (e) {
-                preQueuedTrackId = null;
-                showPlayerError('Gapless queue-ahead failed (network error) — falling back to normal advance.');
-            }
-        }
-
-        async function confirmTrackStarted(trackId) {
-            try {
-                const res = await fetch('/api/admin/spotify/confirm-started', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ trackId })
-                });
-                if (!res.ok) showPlayerError(`Queue sync after gapless handoff failed (status ${res.status}).`);
-                updateDashboard();
-            } catch (e) { showPlayerError('Queue sync after gapless handoff failed (network error).'); }
-        }
-
-        function updatePlayIcon() {
-            const icon = document.getElementById('np-play-icon');
-            icon.innerHTML = isPaused
-                ? `<path d="M8 5v14l11-7z"/>`
-                : `<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>`;
-        }
-
-        function formatMs(ms) {
-            if (!ms || ms < 0) ms = 0;
-            const totalSeconds = Math.floor(ms / 1000);
-            const minutes = Math.floor(totalSeconds / 60);
-            const seconds = totalSeconds % 60;
-            return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-        }
-
-        function renderProgress(positionMs, durationMs) {
-            const pct = durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
-            document.getElementById('np-progress-fill').style.width = `${pct}%`;
-            document.getElementById('np-progress-handle').style.left = `${pct}%`;
-            document.getElementById('np-elapsed').innerText = formatMs(positionMs);
-            document.getElementById('np-duration').innerText = formatMs(durationMs);
-        }
-
-        function startProgressTicker() {
-            stopProgressTicker();
-            progressTicker = setInterval(() => {
-                const elapsed = Date.now() - positionCapturedAt;
-                const projected = Math.min(currentPosition + elapsed, currentTrackDuration);
-                renderProgress(projected, currentTrackDuration);
-            }, 250);
-        }
-        function stopProgressTicker() {
-            if (progressTicker) { clearInterval(progressTicker); progressTicker = null; }
-        }
-
-        async function togglePlayPause() {
-            if (!isAuthorized) return;
-            if (!spotifyPlayer) { showPlayerError('Player not connected yet — wait for "Connected and ready", or reconnect Spotify.'); return; }
-            try {
-                showPlayerError('');
-                await spotifyPlayer.togglePlay();
-            } catch (e) { showPlayerError('Play/pause failed. Make sure this browser tab is still open and Spotify is Premium.'); }
-        }
-
-        async function stopPlayback() {
-            if (!isAuthorized) return;
-            if (!spotifyPlayer) { showPlayerError('Player not connected yet.'); return; }
-            try {
-                showPlayerError('');
-                await spotifyPlayer.pause();
-                await spotifyPlayer.seek(0);
-                currentPosition = 0;
-                renderProgress(0, currentTrackDuration);
-            } catch (e) { showPlayerError('Stop failed.'); }
-        }
-
-        let loopEnabled = false;
-        async function toggleLoop() {
-            if (!isAuthorized) return;
-            loopEnabled = !loopEnabled;
-            document.getElementById('np-loop-btn').classList.toggle('active-loop', loopEnabled);
-            try {
-                await fetch('/api/admin/spotify/repeat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: loopEnabled ? 'track' : 'off' })
-                });
-            } catch (e) { showPlayerError('Loop toggle failed.'); }
-        }
-
-        function seekOnBar(evt) {
-            if (!isAuthorized || !spotifyPlayer || !currentTrackDuration) return;
-            const track = document.getElementById('np-progress-track');
-            const rect = track.getBoundingClientRect();
-            const ratio = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
-            const targetMs = Math.floor(ratio * currentTrackDuration);
-
-            currentPosition = targetMs;
-            positionCapturedAt = Date.now();
-            renderProgress(targetMs, currentTrackDuration);
-
-            spotifyPlayer.seek(targetMs).catch(() => showPlayerError('Seek failed.'));
-        }
-
-        function setPlayerVolume(value) {
-            if (!spotifyPlayer) return;
-            spotifyPlayer.setVolume(value / 100).catch(() => {});
-        }
-
-        async function playNextInQueue() {
-            if (!isAuthorized) return;
-            advanceCooldownUntil = Date.now() + 4000;
-            try {
-                showPlayerError('');
-                const res = await fetch('/api/admin/spotify/play-next', { method: 'POST' });
-                const data = await res.json();
-                if (!data.success) {
-                    showPlayerError(data.error || 'Nothing to play — the queue may be empty and no fallback playlist is set, or no device is connected yet.');
-                } else if (data.fallback) {
-                    document.getElementById('np-title').innerText = 'Playing filler playlist';
-                    document.getElementById('np-artist').innerText = 'Queue is empty — request a song to interrupt it';
-                }
-            } catch (e) { showPlayerError('Could not reach the server to play the next track.'); }
-            updateDashboard();
-        }
-
-        // Jump straight to a specific song in the queue: moves it to the top, then plays it.
-        async function playSpecificTrack(id) {
-            if (!isAuthorized) return;
-            try {
-                showPlayerError('');
-                await fetch('/api/admin/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, action: 'top' })
-                });
-                await playNextInQueue();
-            } catch (e) { showPlayerError('Could not play that track.'); }
-        }
-
-        async function disconnectSpotify() {
-            if (!isAuthorized) return;
-            if (!confirm('Disconnect Spotify playback?')) return;
-            await fetch('/api/admin/spotify-disconnect', { method: 'POST' });
-            if (spotifyPlayer) {
-                spotifyPlayer.disconnect();
-                spotifyPlayer = null;
-            }
-            checkSpotifyStatus();
-        }
+        setInterval(updateDashboard, 3000);
     </script>
 </body>
 </html>
