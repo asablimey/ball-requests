@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -691,7 +690,9 @@
                 const data = await res.json();
                 currentPlaylistTracks = data.tracks || [];
                 let html = '<span class="back-link" onclick="loadGuestPlaylists()">‹ Back to playlists</span>';
-                if (currentPlaylistTracks.length === 0) {
+                if (data.unavailable) {
+                    html += '<p class="empty-placeholder">Spotify only shares track details for playlists you own or collaborate on. Try one of your own playlists instead.</p>';
+                } else if (currentPlaylistTracks.length === 0) {
                     html += '<p class="empty-placeholder">No tracks in this playlist.</p>';
                 } else {
                     html += currentPlaylistTracks.map((track, idx) => `
