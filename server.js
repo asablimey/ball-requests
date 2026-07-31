@@ -298,7 +298,8 @@ app.get('/api/guest/spotify-playlists', async (req, res) => {
         const playlists = (data.items || []).map(p => ({
             id: p.id,
             name: p.name,
-            trackCount: p.tracks?.total || 0,
+            // Spotify's Feb 2026 API migration renamed playlist.tracks -> playlist.items
+            trackCount: p.items?.total ?? p.tracks?.total ?? 0,
             artwork: p.images?.[0]?.url || 'https://picsum.photos/48'
         }));
         res.json({ playlists });
@@ -314,12 +315,21 @@ app.get('/api/guest/spotify-playlist/:id/tracks', async (req, res) => {
     if (!sess) return res.status(401).json({ error: 'Not connected to Spotify.' });
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(req.params.id)}/tracks?limit=100`, {
+        // Spotify's Feb 2026 migration renamed this from /tracks to /items, and the
+        // response shape from `tracks: [{ track }]` to `items: [{ item }]`. It's also
+        // now only populated for playlists the user owns or collaborates on - for
+        // others, `items` is simply absent from the response.
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(req.params.id)}/items?limit=100`, {
             headers: { 'Authorization': `Bearer ${sess.accessToken}` }
         });
         const data = await response.json();
+
+        if (!data.items) {
+            return res.json({ tracks: [], unavailable: true });
+        }
+
         const tracks = (data.items || [])
-            .map(item => item.track)
+            .map(entry => entry.item)
             .filter(Boolean)
             .map(track => ({
                 id: track.id,
