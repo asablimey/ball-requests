@@ -529,6 +529,7 @@
             <div class="control-bar" style="margin-bottom: 30px;">
                 <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
                 <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+                <button id="toggle-guest-spotify" class="toggle-btn open-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: ON</button>
             </div>
 
             <div class="settings-section-label">System Rules</div>
@@ -574,6 +575,26 @@
             <div class="settings-section-label">Export</div>
             <div class="control-bar" style="margin-bottom: 30px;">
                 <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
+            </div>
+
+            <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
+            <p class="filter-hint" style="margin-top: -6px; margin-bottom: 14px;">
+                Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
+            </p>
+            <div class="control-bar" style="margin-bottom: 16px;">
+                <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
+                <button id="toggle-kiosk-spotify" class="toggle-btn open-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: ON</button>
+            </div>
+            <div class="config-dashboard" style="margin-bottom: 30px;">
+                <div class="input-group">
+                    <label>Kiosk Max Credit Bank</label>
+                    <input type="number" id="input-kiosk-max-credits" min="1">
+                </div>
+                <div class="input-group">
+                    <label>Kiosk Regen Timer (Secs)</label>
+                    <input type="number" id="input-kiosk-countdown" min="5">
+                </div>
+                <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
             </div>
 
             <div class="settings-section-label">Danger Zone</div>
@@ -629,6 +650,9 @@
         let requestsAllowed = true;
         let explicitBlockActive = false;
         let queueCapEnabled = false;
+        let guestSpotifyEnabled = true;
+        let kioskRequestsAllowed = true;
+        let kioskSpotifyEnabled = true;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -768,6 +792,49 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function toggleGuestSpotify() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-guest-spotify', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !guestSpotifyEnabled })
+            });
+            updateDashboard();
+        }
+
+        async function toggleKioskRequests() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/kiosk/toggle', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ allow: !kioskRequestsAllowed })
+            });
+            updateDashboard();
+        }
+
+        async function toggleKioskSpotify() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/kiosk/toggle-spotify', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !kioskSpotifyEnabled })
+            });
+            updateDashboard();
+        }
+
+        async function saveKioskConfig() {
+            if (!isAuthorized) return;
+            const maxVal = document.getElementById('input-kiosk-max-credits').value;
+            const downVal = document.getElementById('input-kiosk-countdown').value;
+            const res = await fetch('/api/admin/kiosk/config', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
+            });
+            if (res.ok) alert("Kiosk rules updated.");
+            updateDashboard();
+        }
+
         function csvEscape(value) {
             const str = String(value ?? '');
             return /[",\n\r]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
@@ -843,6 +910,30 @@ async function verifyPassword() {
                 document.getElementById('queue-cap-status-text').innerText = queueCapEnabled
                     ? `Current queue: ${data.queue.length} / ${data.maxQueueLength}${data.queueFull ? ' — FULL, requests auto-closed until it drains' : ''}`
                     : "Cap is off — the queue can grow without limit.";
+
+                const guestSpotifyBtn = document.getElementById('toggle-guest-spotify');
+                guestSpotifyEnabled = data.guestSpotifyConnectEnabled !== false;
+                guestSpotifyBtn.innerText = guestSpotifyEnabled ? "Guest Spotify Connect: ON" : "Guest Spotify Connect: OFF";
+                guestSpotifyBtn.className = guestSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                if (data.kiosk) {
+                    const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
+                    kioskRequestsAllowed = data.kiosk.requestsAllowed;
+                    kioskReqBtn.innerText = kioskRequestsAllowed ? "Kiosk Requests: OPEN" : "Kiosk Requests: CLOSED";
+                    kioskReqBtn.className = kioskRequestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    const kioskSpotifyBtn = document.getElementById('toggle-kiosk-spotify');
+                    kioskSpotifyEnabled = data.kiosk.spotifyConnectEnabled !== false;
+                    kioskSpotifyBtn.innerText = kioskSpotifyEnabled ? "Kiosk Spotify Connect: ON" : "Kiosk Spotify Connect: OFF";
+                    kioskSpotifyBtn.className = kioskSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    if (document.activeElement !== document.getElementById('input-kiosk-max-credits')) {
+                        document.getElementById('input-kiosk-max-credits').value = data.kiosk.maxCredits;
+                    }
+                    if (document.activeElement !== document.getElementById('input-kiosk-countdown')) {
+                        document.getElementById('input-kiosk-countdown').value = data.kiosk.countdownLength;
+                    }
+                }
 
                 if (!filtersInitialized) {
                     selectedGenres = data.genreFilter || [];
