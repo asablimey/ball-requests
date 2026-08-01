@@ -609,6 +609,9 @@
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
 
+                const spotifyBtn = document.getElementById('connect-spotify-btn');
+                if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
+
                 const nameHeader = document.getElementById('event-name-header');
                 const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
                 if (nameHeader.innerText !== newName) {
