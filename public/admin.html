@@ -498,20 +498,29 @@
             });
         }
 
-        function verifyPassword() {
+let adminPassword = '';
+
+async function verifyPassword() {
             const inputField = document.getElementById('password-input');
             const errorMsg = document.getElementById('lock-error-msg');
-            const masterPassword = "ballDJ2026"; 
+            const attempt = inputField.value;
 
-            if (inputField.value === masterPassword) {
-                isAuthorized = true;
-                document.getElementById('admin-lock-screen').style.display = 'none';
-                updateDashboard(); 
-            } else {
-                errorMsg.style.display = 'block';
-                inputField.value = '';
-                inputField.focus();
-            }
+            // Verified against the server now, not a hardcoded value in this file -
+            // that hardcoded value used to be visible to anyone via "View Source".
+            try {
+                const res = await fetch('/api/admin/data', { headers: { 'x-admin-password': attempt } });
+                if (res.ok) {
+                    adminPassword = attempt;
+                    isAuthorized = true;
+                    document.getElementById('admin-lock-screen').style.display = 'none';
+                    updateDashboard();
+                    return;
+                }
+            } catch (e) { /* fall through to error state below */ }
+
+            errorMsg.style.display = 'block';
+            inputField.value = '';
+            inputField.focus();
         }
 
         // Builds the DJ-only "Requested by" badge HTML for a track's requesters list.
@@ -520,14 +529,33 @@
             const label = requesters.length > 1
                 ? `${requesters[0]} +${requesters.length - 1} more`
                 : requesters[0];
-            return `<span class="requester-badge"><svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 8 1.34 8 4v2H4v-2c0-2.66 5.3-4 8-4zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>${label}</span>`;
+            // Guest usernames are free text - escape before inserting via innerHTML,
+            // otherwise a guest could set a name like <img onerror=...> and run
+            // arbitrary JS in the DJ's own browser the next time the queue renders.
+            return `<span class="requester-badge"><svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 8 1.34 8 4v2H4v-2c0-2.66 5.3-4 8-4zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>${escapeHtml(label)}</span>`;
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Every authenticated admin call goes through this so the password header
+        // is never forgotten on a new fetch.
+        function adminHeaders(extra) {
+            return Object.assign({ 'x-admin-password': adminPassword }, extra || {});
         }
 
         async function updateDashboard() {
             if (!isAuthorized) return; 
             
             try {
-                const res = await fetch('/api/admin/data');
+                const res = await fetch('/api/admin/data', { headers: adminHeaders() });
                 if (!res.ok) return;
                 const data = await res.json();
                 
@@ -558,10 +586,10 @@
                             <img src="${song.artwork}">
                             <div class="text-container">
                                 <div class="title-wrapper">
-                                    <p class="song-title">${song.title}</p>
+                                    <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
-                                <p class="song-artist">${song.artist}</p>
+                                <p class="song-artist">${escapeHtml(song.artist)}</p>
                                 <div class="length-requester-row">
                                     <span class="length-text">Length: ${song.duration}</span>
                                     ${buildRequesterBadge(song.requesters)}
@@ -593,10 +621,10 @@
                             <img src="${song.artwork}">
                             <div class="text-container">
                                 <div class="title-wrapper">
-                                    <p class="song-title">${song.title}</p>
+                                    <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
-                                <p class="song-artist">${song.artist}</p>
+                                <p class="song-artist">${escapeHtml(song.artist)}</p>
                                 <div class="length-requester-row">
                                     <span class="length-text">Length: ${song.duration}</span>
                                     ${buildRequesterBadge(song.requesters)}
@@ -616,7 +644,7 @@
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
@@ -627,7 +655,7 @@
             if (!isAuthorized) return;
             await fetch('/api/admin/action', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ id, action })
             });
             updateDashboard();
@@ -638,7 +666,7 @@
             if (confirm(message)) {
                 await fetch('/api/admin/action', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ id: null, action: actionType })
                 });
                 updateDashboard();
@@ -649,7 +677,7 @@
             if (!isAuthorized) return;
             await fetch('/api/admin/toggle', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ allow: !requestsAllowed })
             });
             updateDashboard();
@@ -659,7 +687,7 @@
             if (!isAuthorized) return;
             await fetch('/api/admin/toggle-explicit', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ blockExplicit: !explicitBlockActive })
             });
             updateDashboard();
