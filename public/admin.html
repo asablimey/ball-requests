@@ -115,6 +115,14 @@
             flex-wrap: wrap;
         }
 
+        .event-name-box {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
         .input-group { display: flex; flex-direction: column; gap: 8px; }
         .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
         .input-group input { 
@@ -443,11 +451,13 @@
             </div>
 
             <div class="settings-section-label">System Rules</div>
-            <div class="config-dashboard" style="margin-bottom: 30px;">
-                <div class="input-group" style="flex: 1; min-width: 200px;">
+            <div class="event-name-box">
+                <div class="input-group" style="width: 100%;">
                     <label>Event Name</label>
                     <input type="text" id="input-event-name" placeholder="Song Requests" maxlength="60" style="width: 100%;">
                 </div>
+            </div>
+            <div class="config-dashboard" style="margin-bottom: 30px;">
                 <div class="input-group">
                     <label>Max Credit Bank</label>
                     <input type="number" id="input-max-credits" min="1">
