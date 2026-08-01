@@ -175,6 +175,57 @@
             font-weight: 700;
         }
 
+        .section-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .section-title-row .section-title { margin-bottom: 0; }
+
+        .my-requests-btn {
+            background-color: transparent;
+            color: #a7a7a7;
+            border: 1px solid #333;
+            padding: 7px 16px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }
+        .my-requests-btn:hover { color: white; border-color: #555; }
+
+        .my-request-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: var(--card-bg);
+        }
+        .my-request-row img { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .my-request-text { flex: 1; min-width: 0; }
+        .my-request-text p { margin: 0; }
+        .my-request-title { font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .my-request-artist { color: #a7a7a7; font-size: 0.8rem; margin-top: 2px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        .status-pill {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 20px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .status-queued { background-color: rgba(29, 185, 84, 0.15); color: var(--spotify-green); }
+        .status-played { background-color: rgba(167, 167, 167, 0.15); color: #a7a7a7; }
+        .status-removed { background-color: rgba(233, 20, 41, 0.15); color: var(--red-action); }
+
         .song-row {
             display: flex;
             justify-content: space-between;
@@ -432,7 +483,7 @@
 
     <div class="container">
         <div class="header">
-            <h1>Song Requests</h1>
+            <h1 id="event-name-header">Song Requests</h1>
             <div class="credits-container">
                 <div class="top-pill-row">
                     <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
@@ -452,8 +503,24 @@
             <button type="button" id="inline-playlists-btn" class="inline-playlists-btn" onclick="openPlaylistModal()">My Playlists</button>
         </div>
 
-        <div class="section-title" id="list-title">Live Queue</div>
+        <div class="section-title-row">
+            <div class="section-title" id="list-title">Live Queue</div>
+            <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
+        </div>
         <div id="main-display-list"></div>
+    </div>
+
+    <!-- MY REQUESTS MODAL -->
+    <div class="modal-overlay" id="my-requests-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">My Requests</div>
+                <button class="modal-close-btn" onclick="closeMyRequestsModal()">✕</button>
+            </div>
+            <div class="modal-body" id="my-requests-body">
+                <p class="modal-loading">Loading your requests…</p>
+            </div>
+        </div>
     </div>
 
     <!-- USERNAME PROMPT MODAL -->
@@ -529,6 +596,13 @@
                 currentServerDuration = data.countdownLength;
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
+
+                const nameHeader = document.getElementById('event-name-header');
+                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
+                if (nameHeader.innerText !== newName) {
+                    nameHeader.innerText = newName;
+                    document.title = newName;
+                }
 
                 setupLocalCredits();
                 manageCountdownVisibility();
@@ -727,7 +801,7 @@
                 const res = await fetch('/api/request', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track, username: guestUsername })
+                    body: JSON.stringify({ track, username: guestUsername, voterId: voterSignatureToken })
                 });
 
                 if (res.ok) {
@@ -904,6 +978,56 @@
         }
         function closePlaylistModal() {
             document.getElementById('playlist-modal').classList.remove('is-visible');
+        }
+
+        // --- My Requests (guest-only view of their own request status) ---
+        function statusLabel(status) {
+            if (status === 'played') return 'Played';
+            if (status === 'removed') return 'Dropped';
+            return 'In Queue';
+        }
+        function statusClass(status) {
+            if (status === 'played') return 'status-played';
+            if (status === 'removed') return 'status-removed';
+            return 'status-queued';
+        }
+
+        async function openMyRequestsModal() {
+            document.getElementById('my-requests-modal').classList.add('is-visible');
+            const body = document.getElementById('my-requests-body');
+            body.innerHTML = '<p class="modal-loading">Loading your requests…</p>';
+
+            try {
+                const res = await fetch(`/api/my-requests?voterId=${encodeURIComponent(voterSignatureToken)}`);
+                if (!res.ok) {
+                    body.innerHTML = '<p class="modal-empty">Could not load your requests. Try again.</p>';
+                    return;
+                }
+                const data = await res.json();
+                const requests = data.requests || [];
+
+                if (requests.length === 0) {
+                    body.innerHTML = '<p class="modal-empty">You haven\'t requested any songs yet.</p>';
+                    return;
+                }
+
+                body.innerHTML = requests.map(r => `
+                    <div class="my-request-row">
+                        <img src="${r.artwork}">
+                        <div class="my-request-text">
+                            <p class="my-request-title">${r.title}</p>
+                            <p class="my-request-artist">${r.artist}</p>
+                        </div>
+                        <span class="status-pill ${statusClass(r.status)}">${statusLabel(r.status)}</span>
+                    </div>
+                `).join('');
+            } catch (e) {
+                body.innerHTML = '<p class="modal-empty">Could not load your requests. Try again.</p>';
+            }
+        }
+
+        function closeMyRequestsModal() {
+            document.getElementById('my-requests-modal').classList.remove('is-visible');
         }
 
         async function showPlaylistGrid() {
