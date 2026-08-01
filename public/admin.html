@@ -397,6 +397,49 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
+        .stat-grid { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+        .stat-card {
+            flex: 1; min-width: 140px;
+            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
+            padding: 20px; text-align: center;
+        }
+        .stat-number { font-size: 2.2rem; font-weight: 800; color: var(--spotify-green); }
+        .stat-label { color: #a7a7a7; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+        .stat-box {
+            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
+            margin-bottom: 14px; overflow: hidden;
+        }
+        .stat-box summary {
+            padding: 16px 20px; cursor: pointer; font-weight: 700; font-size: 1.05rem;
+            list-style: none; display: flex; align-items: center; justify-content: space-between;
+        }
+        .stat-box summary::-webkit-details-marker { display: none; }
+        .stat-box summary::after { content: '▾'; color: #a7a7a7; transition: transform 0.15s ease; }
+        .stat-box[open] summary::after { transform: rotate(180deg); }
+        .stat-box summary:hover { background: rgba(255,255,255,0.03); }
+        .stat-box-body { padding: 0 16px 16px; max-height: 420px; overflow-y: auto; }
+
+        .stat-row {
+            display: flex; align-items: center; gap: 14px; padding: 10px 8px;
+            border-bottom: 1px solid #262626;
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+        .stat-row-text { flex: 1; min-width: 0; }
+        .stat-row-title { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stat-row-artist { color: #a7a7a7; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stat-count { font-weight: 700; font-size: 0.9rem; color: #a7a7a7; flex-shrink: 0; }
+        .stat-count.up { color: var(--spotify-green); }
+        .stat-count.down { color: var(--red-action); }
+
+        .outcome-badge {
+            display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 4px; margin-top: 3px;
+        }
+        .outcome-badge.played { background: rgba(29,185,84,0.15); color: var(--spotify-green); }
+        .outcome-badge.dropped { background: rgba(233,20,41,0.15); color: var(--red-action); }
+
         @media (max-width: 600px) {
             body { padding: 15px; }
             h1 { font-size: 1.8rem; }
@@ -429,6 +472,7 @@
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
         <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
+        <button id="tab-btn-stats" class="tab-button" onclick="switchTab('stats')">Stats</button>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -482,12 +526,53 @@
         </div>
     </div>
 
+    <div id="tab-panel-stats" class="tab-content">
+        <div class="panel">
+            <h2>Stats</h2>
+
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-played">0</div>
+                    <div class="stat-label">Songs Played</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-dropped">0</div>
+                    <div class="stat-label">Songs Dropped</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-queued">0</div>
+                    <div class="stat-label">Still Queued</div>
+                </div>
+            </div>
+
+            <details class="stat-box" open>
+                <summary>👍 Top Liked Songs</summary>
+                <div id="stat-top-liked" class="stat-box-body"></div>
+            </details>
+
+            <details class="stat-box">
+                <summary>👎 Top Disliked Songs</summary>
+                <div id="stat-top-disliked" class="stat-box-body"></div>
+            </details>
+
+            <details class="stat-box">
+                <summary>🏆 Requesters Leaderboard</summary>
+                <div id="stat-requesters" class="stat-box-body"></div>
+            </details>
+
+            <details class="stat-box">
+                <summary>📜 All Requests</summary>
+                <div id="stat-all-requests" class="stat-box-body"></div>
+            </details>
+        </div>
+    </div>
+
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
         let isAuthorized = false; 
 
-        const TAB_NAMES = ['queue', 'history', 'settings'];
+        const TAB_NAMES = ['queue', 'history', 'settings', 'stats'];
 
         // Tab selection switching algorithm
         function switchTab(targetTab) {
@@ -496,6 +581,7 @@
                 document.getElementById(`tab-btn-${name}`).classList.toggle('active-tab', isActive);
                 document.getElementById(`tab-panel-${name}`).classList.toggle('active-content', isActive);
             });
+            if (targetTab === 'stats') loadStats();
         }
 
 let adminPassword = '';
@@ -691,6 +777,66 @@ async function verifyPassword() {
                 body: JSON.stringify({ blockExplicit: !explicitBlockActive })
             });
             updateDashboard();
+        }
+
+        function statSongRow(entry, rightSideHtml) {
+            return `
+                <div class="stat-row">
+                    <img src="${entry.artwork || 'https://picsum.photos/48'}">
+                    <div class="stat-row-text">
+                        <div class="stat-row-title">${escapeHtml(entry.title)}</div>
+                        <div class="stat-row-artist">${escapeHtml(entry.artist)}</div>
+                    </div>
+                    ${rightSideHtml}
+                </div>`;
+        }
+
+        async function loadStats() {
+            if (!isAuthorized) return;
+            try {
+                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+
+                document.getElementById('stat-played').innerText = data.totals.played;
+                document.getElementById('stat-dropped').innerText = data.totals.dropped;
+                document.getElementById('stat-queued').innerText = data.totals.stillQueued;
+
+                const likedEl = document.getElementById('stat-top-liked');
+                likedEl.innerHTML = data.topLiked.length === 0
+                    ? '<p class="empty-placeholder">No liked songs yet.</p>'
+                    : data.topLiked.map(e => statSongRow(e, `<div class="stat-count up">👍 ${e.count}</div>`)).join('');
+
+                const dislikedEl = document.getElementById('stat-top-disliked');
+                dislikedEl.innerHTML = data.topDisliked.length === 0
+                    ? '<p class="empty-placeholder">No disliked songs yet.</p>'
+                    : data.topDisliked.map(e => statSongRow(e, `<div class="stat-count down">👎 ${e.count}</div>`)).join('');
+
+                const reqEl = document.getElementById('stat-requesters');
+                reqEl.innerHTML = data.topRequesters.length === 0
+                    ? '<p class="empty-placeholder">No requests yet.</p>'
+                    : data.topRequesters.map(r => `
+                        <div class="stat-row">
+                            <div class="stat-row-text">
+                                <div class="stat-row-title">${escapeHtml(r.username)}</div>
+                            </div>
+                            <div class="stat-count">${r.count} song${r.count === 1 ? '' : 's'}</div>
+                        </div>`).join('');
+
+                const allEl = document.getElementById('stat-all-requests');
+                allEl.innerHTML = data.allRequests.length === 0
+                    ? '<p class="empty-placeholder">No requests yet.</p>'
+                    : data.allRequests.map(r => {
+                        const badge = r.outcome === 'played'
+                            ? '<span class="outcome-badge played">Played</span>'
+                            : '<span class="outcome-badge dropped">Dropped</span>';
+                        return statSongRow(r, `
+                            <div class="stat-row-text" style="text-align:right; flex:0;">
+                                <div class="stat-row-title">${escapeHtml(r.username)}</div>
+                                ${badge}
+                            </div>`);
+                    }).join('');
+            } catch (e) { console.log('Stats load failed.'); }
         }
 
         function toggleFullscreen() {
