@@ -20,12 +20,57 @@ let systemConfigs = {
     maxCredits: 3,
     countdownLength: 60,
     requestsAllowed: true,
-    explicitBlockActive: false
+    explicitBlockActive: false,
+    eventName: ''
 };
 
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
+
+// --- Abuse/spam control state ---
+// Server-authoritative credits per guest (voterId), mirrors the client's local display
+// but can't be bypassed by clearing localStorage credits, only by generating a brand
+// new voterId (a much higher bar than editing one number in devtools).
+let voterCreditState = new Map(); // voterId -> { available, lastRefill }
+let voterLastVoteAt = new Map(); // voterId -> timestamp of last vote action
+const MIN_VOTE_INTERVAL_MS = 400;
+
+function getOrCreateVoterCreditState(voterId) {
+    let state = voterCreditState.get(voterId);
+    if (!state) {
+        state = { available: systemConfigs.maxCredits, lastRefill: Date.now() };
+        voterCreditState.set(voterId, state);
+    }
+    return state;
+}
+
+function refillVoterCredits(state) {
+    const now = Date.now();
+    const cycleMs = Math.max(1, systemConfigs.countdownLength) * 1000;
+    const elapsed = now - state.lastRefill;
+    const cycles = Math.floor(elapsed / cycleMs);
+    if (cycles > 0) {
+        state.available = Math.min(systemConfigs.maxCredits, state.available + cycles);
+        state.lastRefill += cycles * cycleMs;
+    }
+    if (state.available > systemConfigs.maxCredits) state.available = systemConfigs.maxCredits;
+}
+
+// --- Guest "My Requests" log ---
+// Independent of activeQueue/playedHistory so a guest can still see a song's fate
+// (played or dropped) even after it leaves the live queue entirely.
+let requestLog = [];
+
+function markRequestLogStatus(trackId, newStatus) {
+    requestLog.forEach(entry => {
+        if (entry.trackId === trackId && entry.status === 'queued') {
+            entry.status = newStatus;
+            entry.resolvedAt = Date.now();
+        }
+    });
+}
+
 
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
@@ -99,20 +144,32 @@ app.get('/api/search', async (req, res) => {
 
 app.post('/api/request', (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    const { track, username } = req.body;
+    const { track, username, voterId } = req.body;
     if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
 
     // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && track.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
 
+    // Server-authoritative credit check (abuse/spam control) - separate from the
+    // client's own locally-displayed credit counter, can't be bypassed client-side.
+    const creditState = getOrCreateVoterCreditState(voterId);
+    refillVoterCredits(creditState);
+    if (creditState.available <= 0) {
+        return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
+    }
+    creditState.available -= 1;
+
     // DJ-only attribution: never sent back down via /data, only via /api/admin/data
     const requesterName = (typeof username === 'string' && username.trim() !== '')
         ? username.trim().slice(0, 30)
         : 'Anonymous';
 
-    const existingTrack = activeQueue.find(t => t.id === track.id);
+    const trackId = track.id || Date.now().toString();
+
+    const existingTrack = activeQueue.find(t => t.id === trackId);
     if (existingTrack) {
         if (!existingTrack.upvoters.includes('system-generated')) {
             existingTrack.upvoters.push('system-generated');
@@ -121,7 +178,7 @@ app.post('/api/request', (req, res) => {
         existingTrack.requesters.push(requesterName);
     } else {
         activeQueue.push({
-            id: track.id || Date.now().toString(),
+            id: trackId,
             title: track.name,
             artist: track.artist || 'Unknown Artist',
             artwork: track.artwork || 'https://picsum.photos/48',
@@ -132,12 +189,33 @@ app.post('/api/request', (req, res) => {
             requesters: [requesterName]
         });
     }
+
+    requestLog.push({
+        trackId,
+        title: track.name,
+        artist: track.artist || 'Unknown Artist',
+        artwork: track.artwork || 'https://picsum.photos/48',
+        explicit: track.explicit || false,
+        voterId,
+        status: 'queued',
+        requestedAt: Date.now()
+    });
+    // Keep the log from growing forever on a long night
+    if (requestLog.length > 2000) requestLog = requestLog.slice(-2000);
+
     res.json({ success: true });
 });
 
 app.post('/api/vote', (req, res) => {
     const { id, type, voterId } = req.body;
     if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+
+    // Abuse/spam control: block rapid-fire vote-button mashing per guest
+    const lastVoteAt = voterLastVoteAt.get(voterId) || 0;
+    if (Date.now() - lastVoteAt < MIN_VOTE_INTERVAL_MS) {
+        return res.status(429).json({ error: "Please slow down." });
+    }
+    voterLastVoteAt.set(voterId, Date.now());
 
     const track = activeQueue.find(t => t.id === id);
     if (!track) return res.status(404).json({ error: "Track missing from live pool." });
@@ -206,6 +284,7 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        eventName: systemConfigs.eventName || '',
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -217,15 +296,40 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        eventName: systemConfigs.eventName || '',
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
     });
 });
 
+// Guest-only lookup of their own request history/status, keyed by their own voterId.
+// Never exposes other guests' identities or requests.
+app.get('/api/my-requests', (req, res) => {
+    const voterId = req.query.voterId;
+    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+
+    const mine = requestLog
+        .filter(entry => entry.voterId === voterId)
+        .sort((a, b) => b.requestedAt - a.requestedAt)
+        .slice(0, 25)
+        .map(entry => ({
+            trackId: entry.trackId,
+            title: entry.title,
+            artist: entry.artist,
+            artwork: entry.artwork,
+            explicit: entry.explicit,
+            status: entry.status,
+            requestedAt: entry.requestedAt
+        }));
+
+    res.json({ requests: mine });
+});
+
 app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength } = req.body;
+    const { maxCredits, countdownLength, eventName } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
+    if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
     res.json({ success: true });
 });
 
@@ -243,7 +347,11 @@ app.post('/api/admin/toggle-explicit', (req, res) => {
 
 app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
-    if (action === 'clearQueue') { activeQueue = []; return res.json({ success: true }); }
+    if (action === 'clearQueue') {
+        activeQueue.forEach(t => markRequestLogStatus(t.id, 'removed'));
+        activeQueue = [];
+        return res.json({ success: true });
+    }
     if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
 
     const trackIndex = activeQueue.findIndex(t => t.id === id);
@@ -256,6 +364,7 @@ app.post('/api/admin/action', (req, res) => {
             track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
         } else if (action === 'played') {
             const [track] = activeQueue.splice(trackIndex, 1);
+            markRequestLogStatus(track.id, 'played');
             playedHistory.unshift({
                 title: track.title,
                 artist: track.artist,
@@ -265,7 +374,8 @@ app.post('/api/admin/action', (req, res) => {
                 requesters: track.requesters || []
             });
         } else if (action === 'remove') {
-            activeQueue.splice(trackIndex, 1);
+            const [track] = activeQueue.splice(trackIndex, 1);
+            markRequestLogStatus(track.id, 'removed');
         }
     }
     res.json({ success: true });
