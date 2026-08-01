@@ -10,6 +10,22 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
+// Real, server-side admin auth. Previously the "password" only gated the UI in
+// admin.html client-side - the API routes underneath had no check at all, so
+// anyone could call them directly with no password. This closes that gap.
+// Set ADMIN_PASSWORD in your Render environment variables; falls back to the
+// existing password only if that's not set, so this doesn't break on deploy.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ballDJ2026';
+
+function requireAdminAuth(req, res, next) {
+    const provided = req.headers['x-admin-password'];
+    if (provided !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    next();
+}
+app.use('/api/admin', requireAdminAuth);
+
 // The guest page's "Connect Spotify" button needs the Client ID (not the secret) to run
 // its own PKCE login. Client IDs aren't sensitive - this is safe to expose publicly.
 app.get('/api/public-config', (req, res) => {
@@ -142,14 +158,45 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-app.post('/api/request', (req, res) => {
+app.post('/api/request', async (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     const { track, username, voterId } = req.body;
-    if (!track || !track.name) return res.status(400).json({ error: "Missing metadata." });
+    if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
     if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
 
+    // Spotify track IDs are always 22-character base62 strings - reject anything
+    // that isn't even shaped like one before spending an API call on it.
+    if (!/^[A-Za-z0-9]{22}$/.test(track.id)) {
+        return res.status(400).json({ error: "Invalid track ID." });
+    }
+
+    // Re-fetch the track from Spotify's own catalog rather than trusting whatever
+    // name/artist/artwork/duration the client sent - otherwise anyone could POST
+    // fabricated metadata (offensive titles, arbitrary image URLs) straight into
+    // the live queue without it ever being a real, searchable track.
+    let verifiedTrack;
+    try {
+        if (!spotifyAccessToken) await getSpotifyToken();
+        const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        if (!lookupRes.ok) return res.status(400).json({ error: "Track not found on Spotify." });
+        const t = await lookupRes.json();
+        if (!t || !t.id) return res.status(400).json({ error: "Track not found on Spotify." });
+        verifiedTrack = {
+            id: t.id,
+            name: t.name,
+            artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            explicit: t.explicit || false,
+            duration: formatDuration(t.duration_ms || 0)
+        };
+    } catch (err) {
+        return res.status(500).json({ error: "Could not verify track with Spotify." });
+    }
+
     // API block safety gate against manual requests injection of explicit songs
-    if (systemConfigs.explicitBlockActive && track.explicit) {
+    if (systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
     }
 
@@ -167,7 +214,7 @@ app.post('/api/request', (req, res) => {
         ? username.trim().slice(0, 30)
         : 'Anonymous';
 
-    const trackId = track.id || Date.now().toString();
+    const trackId = verifiedTrack.id;
 
     const existingTrack = activeQueue.find(t => t.id === trackId);
     if (existingTrack) {
@@ -179,11 +226,11 @@ app.post('/api/request', (req, res) => {
     } else {
         activeQueue.push({
             id: trackId,
-            title: track.name,
-            artist: track.artist || 'Unknown Artist',
-            artwork: track.artwork || 'https://picsum.photos/48',
-            explicit: track.explicit || false,
-            duration: track.duration || '--:--',
+            title: verifiedTrack.name,
+            artist: verifiedTrack.artist,
+            artwork: verifiedTrack.artwork,
+            explicit: verifiedTrack.explicit,
+            duration: verifiedTrack.duration,
             upvoters: [],
             downvoters: [],
             requesters: [requesterName]
@@ -192,10 +239,10 @@ app.post('/api/request', (req, res) => {
 
     requestLog.push({
         trackId,
-        title: track.name,
-        artist: track.artist || 'Unknown Artist',
-        artwork: track.artwork || 'https://picsum.photos/48',
-        explicit: track.explicit || false,
+        title: verifiedTrack.name,
+        artist: verifiedTrack.artist,
+        artwork: verifiedTrack.artwork,
+        explicit: verifiedTrack.explicit,
         voterId,
         status: 'queued',
         requestedAt: Date.now()
