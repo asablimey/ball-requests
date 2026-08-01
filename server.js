@@ -1,10 +1,54 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Render (and most hosts) terminate HTTPS at a proxy in front of your app -
+// needed so secure cookies and req.protocol behave correctly.
+app.set('trust proxy', 1);
+
 app.use(express.json());
+
+const VOTER_COOKIE = 'crowddj_vid';
+
+function parseCookies(req) {
+    const header = req.headers.cookie;
+    const out = {};
+    if (!header) return out;
+    header.split(';').forEach(pair => {
+        const idx = pair.indexOf('=');
+        if (idx === -1) return;
+        out[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+    });
+    return out;
+}
+
+// Assigns every guest a server-issued, HttpOnly identity cookie on first visit.
+// This is what credits/votes/request-history are now keyed on, instead of the
+// voterId the client generates and sends itself - a value the client fully
+// controls can be reset just by clearing localStorage, which defeats the point
+// of a "credit limit". An HttpOnly cookie can't be read or forged by page JS,
+// and clearing it requires clearing site cookies specifically, not just
+// localStorage - a meaningfully higher bar, though still not unbeatable by
+// someone using a private window each time.
+app.use((req, res, next) => {
+    const cookies = parseCookies(req);
+    let vid = cookies[VOTER_COOKIE];
+    if (!vid) {
+        vid = crypto.randomUUID();
+        res.cookie(VOTER_COOKIE, vid, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax',
+            maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
+        });
+    }
+    req.serverVoterId = vid;
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
@@ -160,9 +204,11 @@ app.get('/api/search', async (req, res) => {
 
 app.post('/api/request', async (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    const { track, username, voterId } = req.body;
+    const { track, username } = req.body;
     if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
-    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+    // Identity now comes from the server-issued cookie, not a client-supplied
+    // value - see the cookie middleware near the top of this file.
+    const voterId = req.serverVoterId;
 
     // Spotify track IDs are always 22-character base62 strings - reject anything
     // that isn't even shaped like one before spending an API call on it.
@@ -254,8 +300,8 @@ app.post('/api/request', async (req, res) => {
 });
 
 app.post('/api/vote', (req, res) => {
-    const { id, type, voterId } = req.body;
-    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+    const { id, type } = req.body;
+    const voterId = req.serverVoterId;
 
     // Abuse/spam control: block rapid-fire vote-button mashing per guest
     const lastVoteAt = voterLastVoteAt.get(voterId) || 0;
@@ -349,11 +395,12 @@ app.get('/api/admin/data', (req, res) => {
     });
 });
 
-// Guest-only lookup of their own request history/status, keyed by their own voterId.
-// Never exposes other guests' identities or requests.
+// Guest-only lookup of their own request history/status, keyed by their own
+// server-issued cookie identity (previously a client-supplied ?voterId= query
+// param, which meant anyone could view anyone else's request history just by
+// reusing their token in the URL).
 app.get('/api/my-requests', (req, res) => {
-    const voterId = req.query.voterId;
-    if (!voterId) return res.status(400).json({ error: "Missing voter validation token." });
+    const voterId = req.serverVoterId;
 
     const mine = requestLog
         .filter(entry => entry.voterId === voterId)
