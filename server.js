@@ -81,8 +81,62 @@ let systemConfigs = {
     countdownLength: 60,
     requestsAllowed: true,
     explicitBlockActive: false,
-    eventName: ''
+    eventName: '',
+    // Queue length cap: once activeQueue.length hits maxQueueLength, requests
+    // auto-close. Nothing is "stuck closed" here - it's recomputed from the
+    // live queue length on every request, so it reopens on its own as the
+    // queue drains, with no separate flag that could get out of sync.
+    queueCapEnabled: false,
+    maxQueueLength: 50,
+    // Genre/decade filters: DJ-configurable allow-lists for theme nights.
+    // Empty array = no restriction (everything allowed) for that filter.
+    genreFilter: [],   // array of GENRE_CATEGORIES keys, e.g. ['pop', 'rock']
+    decadeFilter: []   // array of decade-start years, e.g. [1980, 1990]
 };
+
+function isQueueFull() {
+    return systemConfigs.queueCapEnabled && activeQueue.length >= systemConfigs.maxQueueLength;
+}
+
+// Curated genre buckets mapped to the keywords Spotify actually uses in an
+// artist's `genres` array (which is a long tail of very specific micro-genres,
+// e.g. "chicago rap" - matching by substring against a curated list is far
+// more usable for a DJ than trying to expose Spotify's raw genre taxonomy.
+const GENRE_CATEGORIES = {
+    pop: ['pop'],
+    hiphop: ['hip hop', 'rap', 'trap'],
+    rock: ['rock', 'metal', 'punk', 'grunge'],
+    rnb: ['r&b', 'soul', 'funk'],
+    country: ['country'],
+    electronic: ['edm', 'house', 'techno', 'electro', 'dance', 'dubstep', 'trance', 'drum and bass'],
+    latin: ['latin', 'reggaeton', 'salsa', 'bachata', 'cumbia'],
+    indie: ['indie', 'alternative'],
+    jazz: ['jazz', 'blues'],
+    classical: ['classical', 'orchestra', 'opera'],
+    reggae: ['reggae', 'dancehall', 'ska'],
+    kpop: ['k-pop', 'korean pop'],
+    afrobeats: ['afrobeat', 'afro pop', 'afrobeats']
+};
+
+// Batch-fetches genres for a list of artist IDs. Track objects from Spotify's
+// search endpoint don't include genre info directly - only the artist objects
+// do - so genre filtering costs one extra API call per search (only made when
+// a genre filter is actually active).
+async function getArtistGenres(artistIds) {
+    const map = new Map();
+    if (!artistIds || artistIds.length === 0) return map;
+    if (!spotifyAccessToken) await getSpotifyToken();
+    try {
+        const res = await fetch(`https://api.spotify.com/v1/artists?ids=${artistIds.slice(0, 50).join(',')}`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await res.json();
+        (data.artists || []).forEach(a => { if (a && a.id) map.set(a.id, a.genres || []); });
+    } catch (err) {
+        console.error("[SPOTIFY] Artist genre lookup failed:", err.message);
+    }
+    return map;
+}
 
 let activeQueue = [];
 let playedHistory = [];
@@ -187,7 +241,7 @@ setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // SEARCH ROUTE - Now strictly blocked if DJ turns off requests
 app.get('/api/search', async (req, res) => {
-    if (!systemConfigs.requestsAllowed) {
+    if (!systemConfigs.requestsAllowed || isQueueFull()) {
         return res.json({ tracks: [] }); 
     }
 
@@ -203,13 +257,17 @@ app.get('/api/search', async (req, res) => {
         const trackItems = data.tracks?.items || [];
         
         let tracks = trackItems.map(track => {
+            const releaseYear = parseInt((track.album?.release_date || '').slice(0, 4), 10) || null;
             return {
                 id: track.id,
                 name: track.name,
                 artist: track.artists.map(a => a.name).join(', '),
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms)
+                duration: formatDuration(track.duration_ms),
+                // Internal-only fields used for filtering below, stripped before response.
+                _releaseYear: releaseYear,
+                _primaryArtistId: track.artists?.[0]?.id || null
             };
         });
         
@@ -217,6 +275,29 @@ app.get('/api/search', async (req, res) => {
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
         }
+
+        // Decade filter (DJ-configured, e.g. theme night restricted to the 90s/2000s)
+        if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
+            tracks = tracks.filter(track => {
+                if (!track._releaseYear) return false;
+                const decade = Math.floor(track._releaseYear / 10) * 10;
+                return systemConfigs.decadeFilter.includes(decade);
+            });
+        }
+
+        // Genre filter (DJ-configured allow-list, matched against the primary artist's genres)
+        if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0 && tracks.length > 0) {
+            const artistIds = [...new Set(tracks.map(t => t._primaryArtistId).filter(Boolean))];
+            const genresByArtist = await getArtistGenres(artistIds);
+            const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+            tracks = tracks.filter(track => {
+                const artistGenres = genresByArtist.get(track._primaryArtistId) || [];
+                return artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
+            });
+        }
+
+        // Strip internal filtering-only fields before sending to the client.
+        tracks = tracks.map(({ _releaseYear, _primaryArtistId, ...publicFields }) => publicFields);
 
         res.json({ tracks });
     } catch (err) {
@@ -226,6 +307,7 @@ app.get('/api/search', async (req, res) => {
 
 app.post('/api/request', async (req, res) => {
     if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    if (isQueueFull()) return res.status(403).json({ error: `Queue is full (max ${systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
     const { track, username } = req.body;
     if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
     // Identity now comes from the server-issued cookie, not a client-supplied
@@ -243,6 +325,8 @@ app.post('/api/request', async (req, res) => {
     // fabricated metadata (offensive titles, arbitrary image URLs) straight into
     // the live queue without it ever being a real, searchable track.
     let verifiedTrack;
+    let releaseYear = null;
+    let primaryArtistId = null;
     try {
         if (!spotifyAccessToken) await getSpotifyToken();
         const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
@@ -259,6 +343,8 @@ app.post('/api/request', async (req, res) => {
             explicit: t.explicit || false,
             duration: formatDuration(t.duration_ms || 0)
         };
+        releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
+        primaryArtistId = t.artists?.[0]?.id || null;
     } catch (err) {
         return res.status(500).json({ error: "Could not verify track with Spotify." });
     }
@@ -266,6 +352,25 @@ app.post('/api/request', async (req, res) => {
     // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+    }
+
+    // Same idea as the explicit gate above, but for genre/decade theme-night
+    // restrictions - re-checked here so a guest can't bypass the DJ's filters
+    // by POSTing a track ID directly instead of going through /api/search.
+    if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
+        const decade = releaseYear ? Math.floor(releaseYear / 10) * 10 : null;
+        if (decade === null || !systemConfigs.decadeFilter.includes(decade)) {
+            return res.status(403).json({ error: "That song's decade isn't part of tonight's theme." });
+        }
+    }
+    if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0) {
+        const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
+        const artistGenres = genresByArtist.get(primaryArtistId) || [];
+        const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+        const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
+        if (!matches) {
+            return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
+        }
     }
 
     // Server-authoritative credit check (abuse/spam control) - separate from the
@@ -400,6 +505,11 @@ app.get('/data', (req, res) => {
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
         eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -412,6 +522,11 @@ app.get('/api/admin/data', (req, res) => {
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
         eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
     });
@@ -492,10 +607,26 @@ app.get('/api/my-requests', (req, res) => {
 });
 
 app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength, eventName } = req.body;
+    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
     if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
+    if (maxQueueLength !== undefined) {
+        const parsed = parseInt(maxQueueLength);
+        if (parsed > 0) systemConfigs.maxQueueLength = parsed;
+    }
+    if (Array.isArray(genreFilter)) {
+        systemConfigs.genreFilter = genreFilter.filter(key => Object.prototype.hasOwnProperty.call(GENRE_CATEGORIES, key));
+    }
+    if (Array.isArray(decadeFilter)) {
+        systemConfigs.decadeFilter = decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
+    }
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-queue-cap', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.queueCapEnabled = enabled;
     res.json({ success: true });
 });
 
