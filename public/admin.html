@@ -397,6 +397,38 @@
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
+        .neutral-status { background-color: #3e3e3e; color: white; }
+
+        .filter-panel {
+            background-color: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 12px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .filter-hint { color: #a7a7a7; font-size: 0.85rem; margin: 0 0 14px 0; }
+        .filter-group-label { font-size: 0.8rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
+        .filter-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+        .filter-chip {
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            color: #ccc;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.15s ease;
+        }
+        .filter-chip:hover { border-color: var(--spotify-green); }
+        .filter-chip.is-selected {
+            background-color: var(--spotify-green);
+            color: white;
+            border-color: var(--spotify-green);
+        }
+        .queue-cap-status-text { width: 100%; color: #a7a7a7; font-size: 0.85rem; margin-top: 6px; }
+
         .stat-grid { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
         .stat-card {
             flex: 1; min-width: 140px;
@@ -418,21 +450,17 @@
         .stat-box summary::after { content: '▾'; color: #a7a7a7; transition: transform 0.15s ease; }
         .stat-box[open] summary::after { transform: rotate(180deg); }
         .stat-box summary:hover { background: rgba(255,255,255,0.03); }
-        .stat-box-body { padding: 0 16px 16px; max-height: 420px; overflow-y: auto; overflow-x: hidden; }
+        .stat-box-body { padding: 0 16px 16px; max-height: 420px; overflow-y: auto; }
 
         .stat-row {
             display: flex; align-items: center; gap: 14px; padding: 10px 8px;
-            border-bottom: 1px solid #262626; min-width: 0;
+            border-bottom: 1px solid #262626;
         }
         .stat-row:last-child { border-bottom: none; }
         .stat-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
         .stat-row-text { flex: 1; min-width: 0; }
         .stat-row-title { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .stat-row-artist { color: #a7a7a7; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stat-row-requester {
-            flex: 0 0 auto; width: 110px; text-align: right;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
         .stat-count { font-weight: 700; font-size: 0.9rem; color: #a7a7a7; flex-shrink: 0; }
         .stat-count.up { color: var(--spotify-green); }
         .stat-count.down { color: var(--red-action); }
@@ -522,6 +550,32 @@
                 <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
             </div>
 
+            <div class="settings-section-label">Queue Length Cap</div>
+            <div class="config-dashboard" style="margin-bottom: 30px;">
+                <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
+                <div class="input-group">
+                    <label>Max Queue Length</label>
+                    <input type="number" id="input-max-queue" min="1" value="50">
+                </div>
+                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+                <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
+            </div>
+
+            <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
+            <div class="filter-panel" style="margin-bottom: 30px;">
+                <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
+                <div class="filter-group-label">Genres</div>
+                <div class="filter-chip-row" id="genre-filter-chips"></div>
+                <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
+                <div class="filter-chip-row" id="decade-filter-chips"></div>
+                <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
+            </div>
+
+            <div class="settings-section-label">Export</div>
+            <div class="control-bar" style="margin-bottom: 30px;">
+                <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
+            </div>
+
             <div class="settings-section-label">Danger Zone</div>
             <div class="control-bar">
                 <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
@@ -574,7 +628,33 @@
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
+        let queueCapEnabled = false;
         let isAuthorized = false; 
+
+        // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
+        const GENRE_OPTIONS = [
+            { key: 'pop', label: 'Pop' },
+            { key: 'hiphop', label: 'Hip-Hop/Rap' },
+            { key: 'rock', label: 'Rock/Metal' },
+            { key: 'rnb', label: 'R&B/Soul' },
+            { key: 'country', label: 'Country' },
+            { key: 'electronic', label: 'Electronic/Dance' },
+            { key: 'latin', label: 'Latin' },
+            { key: 'indie', label: 'Indie/Alt' },
+            { key: 'jazz', label: 'Jazz/Blues' },
+            { key: 'classical', label: 'Classical' },
+            { key: 'reggae', label: 'Reggae' },
+            { key: 'kpop', label: 'K-Pop' },
+            { key: 'afrobeats', label: 'Afrobeats' }
+        ];
+        const DECADE_OPTIONS = [1960, 1970, 1980, 1990, 2000, 2010, 2020];
+
+        let selectedGenres = [];
+        let selectedDecades = [];
+        // Only seed the two arrays above from the server once - otherwise the
+        // 3-second polling in updateDashboard would wipe out a DJ's in-progress
+        // chip selection before they hit "Save Filters".
+        let filtersInitialized = false;
 
         const TAB_NAMES = ['queue', 'history', 'settings', 'stats'];
 
@@ -641,6 +721,90 @@ async function verifyPassword() {
             return Object.assign({ 'x-admin-password': adminPassword }, extra || {});
         }
 
+        function renderFilterChips() {
+            const genreEl = document.getElementById('genre-filter-chips');
+            genreEl.innerHTML = GENRE_OPTIONS.map(g => `
+                <div class="filter-chip ${selectedGenres.includes(g.key) ? 'is-selected' : ''}" onclick="toggleGenreChip('${g.key}')">${g.label}</div>
+            `).join('');
+
+            const decadeEl = document.getElementById('decade-filter-chips');
+            decadeEl.innerHTML = DECADE_OPTIONS.map(d => `
+                <div class="filter-chip ${selectedDecades.includes(d) ? 'is-selected' : ''}" onclick="toggleDecadeChip(${d})">${d}s</div>
+            `).join('');
+        }
+
+        function toggleGenreChip(key) {
+            selectedGenres = selectedGenres.includes(key)
+                ? selectedGenres.filter(g => g !== key)
+                : [...selectedGenres, key];
+            renderFilterChips();
+        }
+
+        function toggleDecadeChip(decade) {
+            selectedDecades = selectedDecades.includes(decade)
+                ? selectedDecades.filter(d => d !== decade)
+                : [...selectedDecades, decade];
+            renderFilterChips();
+        }
+
+        async function saveFilters() {
+            if (!isAuthorized) return;
+            const res = await fetch('/api/admin/config', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ genreFilter: selectedGenres, decadeFilter: selectedDecades })
+            });
+            if (res.ok) alert("Filters updated.");
+            updateDashboard();
+        }
+
+        async function toggleQueueCap() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-queue-cap', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !queueCapEnabled })
+            });
+            updateDashboard();
+        }
+
+        function csvEscape(value) {
+            const str = String(value ?? '');
+            return /[",\n\r]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+        }
+
+        // Reads from /api/admin/stats (rather than whatever's currently rendered in
+        // the Stats tab) so this works correctly even if the DJ never opened that
+        // tab this session.
+        async function exportStatsCSV() {
+            if (!isAuthorized) return;
+            try {
+                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
+                if (!res.ok) { alert("Could not load stats to export."); return; }
+                const data = await res.json();
+
+                const rows = [['Title', 'Artist', 'Requested By', 'Outcome', 'Timestamp']];
+                data.allRequests.forEach(r => {
+                    rows.push([r.title, r.artist, r.username, r.outcome, new Date(r.timestamp).toLocaleString()]);
+                });
+                const csvContent = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const eventSlug = (document.getElementById('input-event-name').value || 'song-requests')
+                    .trim().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'song-requests';
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${eventSlug}-stats-${new Date().toISOString().slice(0, 10)}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert("Export failed.");
+            }
+        }
+
         async function updateDashboard() {
             if (!isAuthorized) return; 
             
@@ -668,6 +832,24 @@ async function verifyPassword() {
                 explicitBlockActive = data.explicitBlockActive || false;
                 explicitBtn.innerText = explicitBlockActive ? "Explicit: BLOCKED" : "Explicit: ALLOWED";
                 explicitBtn.className = explicitBlockActive ? "toggle-btn closed-status" : "toggle-btn open-status";
+
+                if (document.activeElement !== document.getElementById('input-max-queue')) {
+                    document.getElementById('input-max-queue').value = data.maxQueueLength;
+                }
+                const capBtn = document.getElementById('toggle-queue-cap');
+                queueCapEnabled = data.queueCapEnabled || false;
+                capBtn.innerText = queueCapEnabled ? "Queue Cap: ON" : "Queue Cap: OFF";
+                capBtn.className = queueCapEnabled ? "toggle-btn open-status" : "toggle-btn neutral-status";
+                document.getElementById('queue-cap-status-text').innerText = queueCapEnabled
+                    ? `Current queue: ${data.queue.length} / ${data.maxQueueLength}${data.queueFull ? ' — FULL, requests auto-closed until it drains' : ''}`
+                    : "Cap is off — the queue can grow without limit.";
+
+                if (!filtersInitialized) {
+                    selectedGenres = data.genreFilter || [];
+                    selectedDecades = data.decadeFilter || [];
+                    filtersInitialized = true;
+                }
+                renderFilterChips();
 
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
@@ -731,11 +913,12 @@ async function verifyPassword() {
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
             const eventNameVal = document.getElementById('input-event-name').value;
+            const maxQueueVal = document.getElementById('input-max-queue').value;
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal })
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal, maxQueueLength: maxQueueVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
             updateDashboard();
@@ -834,10 +1017,9 @@ async function verifyPassword() {
                         const badge = r.outcome === 'played'
                             ? '<span class="outcome-badge played">Played</span>'
                             : '<span class="outcome-badge dropped">Dropped</span>';
-                        const name = (r.username && r.username.trim()) ? r.username : 'Anonymous';
                         return statSongRow(r, `
-                            <div class="stat-row-requester">
-                                <div class="stat-row-title" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+                            <div class="stat-row-text" style="text-align:right; flex:0;">
+                                <div class="stat-row-title">${escapeHtml(r.username)}</div>
                                 ${badge}
                             </div>`);
                     }).join('');
