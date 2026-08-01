@@ -569,6 +569,7 @@
         let globalSearchResults = [];
         let systemRequestsAllowed = true; // Local tracker for global toggling
         let explicitBlockActive = false;
+        let queueIsFull = false; // Auto-close from the DJ's queue length cap, distinct from a manual close
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -606,6 +607,7 @@
                 currentServerDuration = data.countdownLength;
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
+                queueIsFull = data.queueFull || false;
 
                 const nameHeader = document.getElementById('event-name-header');
                 const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
@@ -617,12 +619,17 @@
                 setupLocalCredits();
                 manageCountdownVisibility();
 
-                // Live lock/unlock layout handling
+                // Live lock/unlock layout handling. Requests can be closed two ways:
+                // the DJ manually pausing them, or the queue length cap auto-closing
+                // once it hits the configured max - each gets its own message.
                 const searchInput = document.getElementById('search-input');
-                if (!systemRequestsAllowed) {
+                const effectivelyOpen = systemRequestsAllowed && !queueIsFull;
+                if (!effectivelyOpen) {
                     searchInput.disabled = true;
                     searchInput.value = "";
-                    searchInput.placeholder = "Song submissions are currently paused by the DJ.";
+                    searchInput.placeholder = queueIsFull
+                        ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
+                        : "Song submissions are currently paused by the DJ.";
                     document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
                 } else {
@@ -749,7 +756,7 @@
         }
 
         function executeSearch() {
-            if (!systemRequestsAllowed) return; // Prevent querying if system is locked down
+            if (!systemRequestsAllowed || queueIsFull) return; // Prevent querying if system is locked down
 
             clearTimeout(searchTimeout);
             const query = document.getElementById('search-input').value.trim();
@@ -801,6 +808,10 @@
         async function submitTrackRequest(track) {
             if (!systemRequestsAllowed) {
                 alert("Submissions are currently closed.");
+                return false;
+            }
+            if (queueIsFull) {
+                alert("Queue is full right now — wait for a song or two to play, it'll reopen automatically.");
                 return false;
             }
             if (availableCredits <= 0) {
