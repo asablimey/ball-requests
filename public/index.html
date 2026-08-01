@@ -919,13 +919,21 @@
                 sessionStorage.setItem('guest_pkce_verifier', verifier);
                 const challenge = await pkceChallengeFromVerifier(verifier);
 
+                // A random state value tied to this specific login attempt, checked
+                // again when Spotify redirects back - without it, an attacker could
+                // craft their own authorize link and trick a guest into completing
+                // a login the guest never actually started (CSRF on the login flow).
+                const state = randomPkceString(32);
+                sessionStorage.setItem('guest_pkce_state', state);
+
                 const params = new URLSearchParams({
                     response_type: 'code',
                     client_id: config.spotifyClientId,
                     scope: GUEST_SPOTIFY_SCOPES,
                     redirect_uri: guestRedirectUri(),
                     code_challenge_method: 'S256',
-                    code_challenge: challenge
+                    code_challenge: challenge,
+                    state: state
                 });
                 window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
             } catch (e) {
@@ -936,13 +944,23 @@
         async function completeGuestSpotifyLogin() {
             const params = new URLSearchParams(window.location.search);
             const code = params.get('code');
+            const returnedState = params.get('state');
             if (!code) return;
 
-            // Clean the ?code=... out of the URL either way, so a refresh doesn't re-trigger this
+            // Clean the ?code=...&state=... out of the URL either way, so a refresh doesn't re-trigger this
             window.history.replaceState({}, document.title, guestRedirectUri());
 
             const verifier = sessionStorage.getItem('guest_pkce_verifier');
+            const expectedState = sessionStorage.getItem('guest_pkce_state');
+            sessionStorage.removeItem('guest_pkce_state');
             if (!verifier) return;
+
+            // If the state doesn't match what this browser actually started, this
+            // isn't a login we initiated - bail out rather than completing it.
+            if (!expectedState || returnedState !== expectedState) {
+                console.log('Spotify login state mismatch - aborting.');
+                return;
+            }
 
             try {
                 const configRes = await fetch('/api/public-config');
