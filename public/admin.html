@@ -217,6 +217,15 @@
 
         .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
+        .settings-section-label {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: #a7a7a7;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
         .song-row { 
             display: flex; 
             justify-content: space-between; 
@@ -396,37 +405,17 @@
 
     <div class="header">
         <h1>Current Requests</h1>
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-            <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-            <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
-                <svg viewBox="0 0 24 24" id="fullscreen-svg">
-                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-                </svg>
-            </button>
-        </div>
-    </div>
-
-    <div class="config-dashboard">
-        <div class="input-group">
-            <label>Max Credit Bank</label>
-            <input type="number" id="input-max-credits" min="1">
-        </div>
-        <div class="input-group">
-            <label>Regen Timer (Secs)</label>
-            <input type="number" id="input-countdown" min="5">
-        </div>
-        <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-    </div>
-
-    <div class="control-bar">
-        <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-        <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+        <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
+            <svg viewBox="0 0 24 24" id="fullscreen-svg">
+                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+            </svg>
+        </button>
     </div>
 
     <div class="tab-bar">
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
+        <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -443,29 +432,55 @@
         </div>
     </div>
 
+    <div id="tab-panel-settings" class="tab-content">
+        <div class="panel">
+            <h2>Settings</h2>
+
+            <div class="settings-section-label">Access Controls</div>
+            <div class="control-bar" style="margin-bottom: 30px;">
+                <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+                <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+            </div>
+
+            <div class="settings-section-label">System Rules</div>
+            <div class="config-dashboard" style="margin-bottom: 30px;">
+                <div class="input-group" style="flex: 1; min-width: 200px;">
+                    <label>Event Name</label>
+                    <input type="text" id="input-event-name" placeholder="Song Requests" maxlength="60" style="width: 100%;">
+                </div>
+                <div class="input-group">
+                    <label>Max Credit Bank</label>
+                    <input type="number" id="input-max-credits" min="1">
+                </div>
+                <div class="input-group">
+                    <label>Regen Timer (Secs)</label>
+                    <input type="number" id="input-countdown" min="5">
+                </div>
+                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+            </div>
+
+            <div class="settings-section-label">Danger Zone</div>
+            <div class="control-bar">
+                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let requestsAllowed = true;
         let explicitBlockActive = false;
         let isAuthorized = false; 
 
+        const TAB_NAMES = ['queue', 'history', 'settings'];
+
         // Tab selection switching algorithm
         function switchTab(targetTab) {
-            const queueBtn = document.getElementById('tab-btn-queue');
-            const historyBtn = document.getElementById('tab-btn-history');
-            const queuePanel = document.getElementById('tab-panel-queue');
-            const historyPanel = document.getElementById('tab-panel-history');
-
-            if (targetTab === 'queue') {
-                queueBtn.classList.add('active-tab');
-                historyBtn.classList.remove('active-tab');
-                queuePanel.classList.add('active-content');
-                historyPanel.classList.remove('active-content');
-            } else {
-                historyBtn.classList.add('active-tab');
-                queueBtn.classList.remove('active-tab');
-                historyPanel.classList.add('active-content');
-                queuePanel.classList.remove('active-content');
-            }
+            TAB_NAMES.forEach(name => {
+                const isActive = name === targetTab;
+                document.getElementById(`tab-btn-${name}`).classList.toggle('active-tab', isActive);
+                document.getElementById(`tab-panel-${name}`).classList.toggle('active-content', isActive);
+            });
         }
 
         function verifyPassword() {
@@ -501,6 +516,9 @@
                 if (!res.ok) return;
                 const data = await res.json();
                 
+                if(document.activeElement !== document.getElementById('input-event-name')) {
+                    document.getElementById('input-event-name').value = data.eventName || '';
+                }
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
                     document.getElementById('input-max-credits').value = data.maxCredits;
                 }
@@ -579,11 +597,12 @@
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
+            const eventNameVal = document.getElementById('input-event-name').value;
 
             const res = await fetch('/api/admin/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal })
             });
             if(res.ok) alert("System parameters updated successfully.");
             updateDashboard();
