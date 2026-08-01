@@ -122,6 +122,11 @@ function refillVoterCredits(state) {
 // (played or dropped) even after it leaves the live queue entirely.
 let requestLog = [];
 
+// Every song that leaves the active queue (played or dropped) gets one entry
+// here, with its final vote counts and requester list captured before that
+// data would otherwise be lost. This is what the Stats tab reads from.
+let queueHistoryLog = [];
+
 function markRequestLogStatus(trackId, newStatus) {
     requestLog.forEach(entry => {
         if (entry.trackId === trackId && entry.status === 'queued') {
@@ -129,6 +134,23 @@ function markRequestLogStatus(trackId, newStatus) {
             entry.resolvedAt = Date.now();
         }
     });
+}
+
+function logDepartedTrack(track, outcome) {
+    queueHistoryLog.push({
+        title: track.title,
+        artist: track.artist,
+        artwork: track.artwork,
+        // "system-generated" is an internal marker (see /api/request) for a
+        // duplicate request re-upvoting an existing queue entry, not a real guest.
+        ups: (track.upvoters || []).filter(v => v !== 'system-generated' && v !== 'forced-admin-boost').length,
+        downs: (track.downvoters || []).length,
+        requesters: track.requesters || [],
+        outcome, // 'played' | 'dropped'
+        timestamp: Date.now()
+    });
+    // Keep this from growing forever across a long-running server.
+    if (queueHistoryLog.length > 3000) queueHistoryLog = queueHistoryLog.slice(-3000);
 }
 
 
@@ -395,6 +417,56 @@ app.get('/api/admin/data', (req, res) => {
     });
 });
 
+app.get('/api/admin/stats', (req, res) => {
+    // 1. Every song ever requested, one row per requester, newest first.
+    const allRequests = [];
+    queueHistoryLog.forEach(entry => {
+        const names = entry.requesters.length > 0 ? entry.requesters : ['Anonymous'];
+        names.forEach(name => {
+            allRequests.push({
+                title: entry.title,
+                artist: entry.artist,
+                artwork: entry.artwork,
+                username: name,
+                outcome: entry.outcome,
+                timestamp: entry.timestamp
+            });
+        });
+    });
+    allRequests.sort((a, b) => b.timestamp - a.timestamp);
+
+    // 2. Requester leaderboard - song count per username.
+    const usernameCounts = new Map();
+    allRequests.forEach(r => {
+        usernameCounts.set(r.username, (usernameCounts.get(r.username) || 0) + 1);
+    });
+    const topRequesters = [...usernameCounts.entries()]
+        .map(([username, count]) => ({ username, count }))
+        .sort((a, b) => b.count - a.count);
+
+    // 3. Played vs dropped totals.
+    const totals = {
+        played: queueHistoryLog.filter(e => e.outcome === 'played').length,
+        dropped: queueHistoryLog.filter(e => e.outcome === 'dropped').length,
+        stillQueued: activeQueue.length
+    };
+
+    // 4. Top liked / disliked songs by final vote count.
+    const topLiked = [...queueHistoryLog]
+        .filter(e => e.ups > 0)
+        .sort((a, b) => b.ups - a.ups)
+        .slice(0, 5)
+        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.ups }));
+
+    const topDisliked = [...queueHistoryLog]
+        .filter(e => e.downs > 0)
+        .sort((a, b) => b.downs - a.downs)
+        .slice(0, 5)
+        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.downs }));
+
+    res.json({ allRequests, topRequesters, totals, topLiked, topDisliked });
+});
+
 // Guest-only lookup of their own request history/status, keyed by their own
 // server-issued cookie identity (previously a client-supplied ?voterId= query
 // param, which meant anyone could view anyone else's request history just by
@@ -467,9 +539,11 @@ app.post('/api/admin/action', (req, res) => {
                 duration: track.duration,
                 requesters: track.requesters || []
             });
+            logDepartedTrack(track, 'played');
         } else if (action === 'remove') {
             const [track] = activeQueue.splice(trackIndex, 1);
             markRequestLogStatus(track.id, 'removed');
+            logDepartedTrack(track, 'dropped');
         }
     }
     res.json({ success: true });
