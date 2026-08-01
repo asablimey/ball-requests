@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CrowdDJ</title>
+    <title>Kiosk</title>
     <style>
         :root {
             --spotify-green: #1DB954;
@@ -505,33 +505,13 @@
 
         <div class="section-title-row">
             <div class="section-title" id="list-title">Live Queue</div>
-            <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
         </div>
         <div id="main-display-list"></div>
     </div>
 
-    <!-- MY REQUESTS MODAL -->
-    <div class="modal-overlay" id="my-requests-modal">
-        <div class="modal-box">
-            <div class="modal-header">
-                <div class="modal-title">My Requests</div>
-                <button class="modal-close-btn" onclick="closeMyRequestsModal()">✕</button>
-            </div>
-            <div class="modal-body" id="my-requests-body">
-                <p class="modal-loading">Loading your requests…</p>
-            </div>
-        </div>
-    </div>
+    <!-- MY REQUESTS MODAL removed on kiosk - not needed for a shared device -->
 
-    <!-- USERNAME PROMPT MODAL -->
-    <div class="modal-overlay" id="username-modal">
-        <div class="username-modal-box">
-            <h3>What's your name?</h3>
-            <p>So the DJ knows who requested each song. Only the DJ can see this.</p>
-            <input type="text" id="username-input" class="username-input" placeholder="Your name" maxlength="30" onkeydown="if(event.key === 'Enter') saveUsername()">
-            <button class="username-save-btn" onclick="saveUsername()">Continue</button>
-        </div>
-    </div>
+    <!-- USERNAME PROMPT MODAL removed on kiosk - always requests as android_kiosk -->
 
     <!-- PLAYLIST BROWSER MODAL -->
     <div class="modal-overlay" id="playlist-modal">
@@ -576,26 +556,8 @@
         }
         const voterSignatureToken = localStorage.getItem('voterSignatureToken');
 
-        // --- Guest username (private to DJ view only) ---
-        let guestUsername = localStorage.getItem('guestUsername') || '';
-
-        function promptForUsernameIfNeeded() {
-            if (!guestUsername || guestUsername.trim() === '') {
-                document.getElementById('username-modal').classList.add('is-visible');
-            }
-        }
-
-        function saveUsername() {
-            const input = document.getElementById('username-input');
-            const val = input.value.trim();
-            if (val === '') {
-                input.focus();
-                return;
-            }
-            guestUsername = val;
-            localStorage.setItem('guestUsername', guestUsername);
-            document.getElementById('username-modal').classList.remove('is-visible');
-        }
+        // --- Kiosk identity: fixed, no per-guest prompt (this is a shared device) ---
+        let guestUsername = 'android_kiosk';
 
         async function fetchSystemState() {
             try {
@@ -616,7 +578,8 @@
                 const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
                 if (nameHeader.innerText !== newName) {
                     nameHeader.innerText = newName;
-                    document.title = newName;
+                    // Tab title stays "Kiosk" here (unlike the guest page) so it's
+                    // easy to spot this tab among others on the kiosk device.
                 }
 
                 setupLocalCredits();
@@ -1201,7 +1164,7 @@
             }
         }
 
-        promptForUsernameIfNeeded();
+
         restoreGuestSpotifySession();
         completeGuestSpotifyLogin();
     </script>
