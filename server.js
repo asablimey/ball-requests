@@ -91,7 +91,23 @@ let systemConfigs = {
     // Genre/decade filters: DJ-configurable allow-lists for theme nights.
     // Empty array = no restriction (everything allowed) for that filter.
     genreFilter: [],   // array of GENRE_CATEGORIES keys, e.g. ['pop', 'rock']
-    decadeFilter: []   // array of decade-start years, e.g. [1980, 1990]
+    decadeFilter: [],  // array of decade-start years, e.g. [1980, 1990]
+    // Whether regular guests (index.html) see the "Connect Spotify" button at
+    // all - independent of the kiosk page's own version of the same toggle.
+    guestSpotifyConnectEnabled: true
+};
+
+// Separate, independently-configurable settings for kiosk.html - a DJ-attended
+// device (e.g. a tablet on a stand) as opposed to guests' own phones. Requests
+// on/off, the Spotify Connect button, and credit rules are all controlled
+// separately here from the regular guest page. The live queue, explicit
+// filter, genre/decade filters, and queue cap are still shared/global - those
+// describe the event itself, not which device someone's requesting from.
+let kioskConfigs = {
+    requestsAllowed: true,
+    spotifyConnectEnabled: true,
+    maxCredits: 3,
+    countdownLength: 60
 };
 
 function isQueueFull() {
@@ -150,25 +166,25 @@ let voterCreditState = new Map(); // voterId -> { available, lastRefill }
 let voterLastVoteAt = new Map(); // voterId -> timestamp of last vote action
 const MIN_VOTE_INTERVAL_MS = 400;
 
-function getOrCreateVoterCreditState(voterId) {
+function getOrCreateVoterCreditState(voterId, maxCredits) {
     let state = voterCreditState.get(voterId);
     if (!state) {
-        state = { available: systemConfigs.maxCredits, lastRefill: Date.now() };
+        state = { available: maxCredits, lastRefill: Date.now() };
         voterCreditState.set(voterId, state);
     }
     return state;
 }
 
-function refillVoterCredits(state) {
+function refillVoterCredits(state, maxCredits, countdownLength) {
     const now = Date.now();
-    const cycleMs = Math.max(1, systemConfigs.countdownLength) * 1000;
+    const cycleMs = Math.max(1, countdownLength) * 1000;
     const elapsed = now - state.lastRefill;
     const cycles = Math.floor(elapsed / cycleMs);
     if (cycles > 0) {
-        state.available = Math.min(systemConfigs.maxCredits, state.available + cycles);
+        state.available = Math.min(maxCredits, state.available + cycles);
         state.lastRefill += cycles * cycleMs;
     }
-    if (state.available > systemConfigs.maxCredits) state.available = systemConfigs.maxCredits;
+    if (state.available > maxCredits) state.available = maxCredits;
 }
 
 // --- Guest "My Requests" log ---
@@ -306,9 +322,15 @@ app.get('/api/search', async (req, res) => {
 });
 
 app.post('/api/request', async (req, res) => {
-    if (!systemConfigs.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    const { track, username, isKiosk } = req.body;
+    // Kiosk devices (kiosk.html) and regular guests (index.html) have their
+    // own independent requestsAllowed toggle and credit rules, set separately
+    // in the admin dashboard - everything else (explicit filter, genre/decade
+    // filters, queue cap) is shared, since those describe the event itself.
+    const modeConfig = isKiosk === true ? kioskConfigs : systemConfigs;
+
+    if (!modeConfig.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
     if (isQueueFull()) return res.status(403).json({ error: `Queue is full (max ${systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
-    const { track, username } = req.body;
     if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
     // Identity now comes from the server-issued cookie, not a client-supplied
     // value - see the cookie middleware near the top of this file.
@@ -375,8 +397,12 @@ app.post('/api/request', async (req, res) => {
 
     // Server-authoritative credit check (abuse/spam control) - separate from the
     // client's own locally-displayed credit counter, can't be bypassed client-side.
-    const creditState = getOrCreateVoterCreditState(voterId);
-    refillVoterCredits(creditState);
+    // Kiosk and guest each use their own maxCredits/countdownLength, but the
+    // per-device tracking mechanism (keyed by the voter cookie) is identical -
+    // each physical kiosk device naturally gets its own independent credit
+    // bank, same as any guest's phone would.
+    const creditState = getOrCreateVoterCreditState(voterId, modeConfig.maxCredits);
+    refillVoterCredits(creditState, modeConfig.maxCredits, modeConfig.countdownLength);
     if (creditState.available <= 0) {
         return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
     }
@@ -510,6 +536,28 @@ app.get('/data', (req, res) => {
         queueFull: isQueueFull(),
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
+        spotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        queue: buildSortedQueue(),
+        history: playedHistory
+    });
+});
+
+// Same shape as /data, but sourcing requestsAllowed/spotifyConnectEnabled/
+// credit rules from kioskConfigs instead - everything else (queue, explicit
+// filter, genre/decade filters, queue cap) is shared with regular guests.
+app.get('/kiosk-data', (req, res) => {
+    res.json({
+        maxCredits: kioskConfigs.maxCredits,
+        countdownLength: kioskConfigs.countdownLength,
+        requestsAllowed: kioskConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
+        eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
+        spotifyConnectEnabled: kioskConfigs.spotifyConnectEnabled,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -527,6 +575,8 @@ app.get('/api/admin/data', (req, res) => {
         queueFull: isQueueFull(),
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
+        guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
     });
@@ -630,6 +680,12 @@ app.post('/api/admin/toggle-queue-cap', (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/api/admin/toggle-guest-spotify', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.guestSpotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
 app.post('/api/admin/toggle', (req, res) => {
     const { allow } = req.body;
     if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
@@ -639,6 +695,27 @@ app.post('/api/admin/toggle', (req, res) => {
 app.post('/api/admin/toggle-explicit', (req, res) => {
     const { blockExplicit } = req.body;
     if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
+    res.json({ success: true });
+});
+
+// Kiosk-specific equivalents of the toggles above - independent from the
+// guest page's settings.
+app.post('/api/admin/kiosk/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') kioskConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/kiosk/toggle-spotify', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') kioskConfigs.spotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/kiosk/config', (req, res) => {
+    const { maxCredits, countdownLength } = req.body;
+    if (maxCredits !== undefined) kioskConfigs.maxCredits = parseInt(maxCredits) || kioskConfigs.maxCredits;
+    if (countdownLength !== undefined) kioskConfigs.countdownLength = parseInt(countdownLength) || kioskConfigs.countdownLength;
     res.json({ success: true });
 });
 
