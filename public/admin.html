@@ -570,19 +570,11 @@
             <div class="control-bar" style="margin-bottom: 10px;">
                 <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
                 <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
-                <button id="toggle-live-spotify-queue" class="toggle-btn closed-status" onclick="toggleLiveSpotifyQueue()">Live Spotify Queue: OFF</button>
             </div>
-            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:10px; max-width:600px;">
+            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
                 When connected, every newly-accepted request is automatically added to your live Spotify app queue.
                 This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
                 device (open Spotify and play something first). Click to (re)connect.
-            </p>
-            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
-                <strong>Live Spotify Queue</strong> replaces the vote-sorted "Live Queue" on all three pages (guest,
-                kiosk, and this dashboard) with Spotify's real play order, and switches new requests to insert
-                at the very front of that queue instead of the end - since Spotify's API can't reorder an existing
-                queue, this works by replaying your current track with the new order attached, which also means it
-                overwrites anything you personally queued from the Spotify app itself.
             </p>
 
             <div class="settings-section-label">System Rules</div>
@@ -879,56 +871,6 @@ async function verifyPassword() {
             updateDashboard();
         }
 
-        let liveSpotifyQueueEnabled = false;
-        async function toggleLiveSpotifyQueue() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-live-spotify-queue', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !liveSpotifyQueueEnabled })
-            });
-            updateDashboard();
-        }
-
-        // Read-only: Spotify's actual play order. No Top/Played/Drop buttons here -
-        // Spotify's API has no way to reorder or remove a specific item from an
-        // already-live queue, only add to it, so those actions wouldn't do anything.
-        async function loadLiveSpotifyQueueForAdmin() {
-            const queueList = document.getElementById('queue-list');
-            try {
-                const res = await fetch('/api/spotify-queue');
-                const data = await res.json();
-                if (!data.connected) {
-                    queueList.innerHTML = '<p class="empty-placeholder">Spotify isn\'t connected right now.</p>';
-                    return;
-                }
-                const items = [];
-                if (data.currentlyPlaying) items.push(Object.assign({}, data.currentlyPlaying, { __nowPlaying: true }));
-                (data.queue || []).forEach(t => items.push(t));
-
-                queueList.innerHTML = items.length === 0 ? '<p class="empty-placeholder">Nothing queued on Spotify right now.</p>' : items.map(song => `
-                    <div class="song-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div class="text-container">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${escapeHtml(song.title)}</p>
-                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    ${song.__nowPlaying ? '<span class="explicit-badge" style="background:var(--spotify-green); color:white;">NOW PLAYING</span>' : ''}
-                                </div>
-                                <p class="song-artist">${escapeHtml(song.artist)}</p>
-                                <div class="length-requester-row">
-                                    <span class="length-text">Length: ${song.duration}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (e) {
-                queueList.innerHTML = '<p class="empty-placeholder">Could not load the live queue.</p>';
-            }
-        }
-
         async function toggleGuestSpotify() {
             if (!isAuthorized) return;
             await fetch('/api/admin/toggle-guest-spotify', {
@@ -1062,11 +1004,6 @@ async function verifyPassword() {
                 autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
                 autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
-                const liveQueueBtn = document.getElementById('toggle-live-spotify-queue');
-                liveSpotifyQueueEnabled = data.liveSpotifyQueueEnabled || false;
-                liveQueueBtn.innerText = liveSpotifyQueueEnabled ? "Live Spotify Queue: ON" : "Live Spotify Queue: OFF";
-                liveQueueBtn.className = liveSpotifyQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
                     kioskRequestsAllowed = data.kiosk.requestsAllowed;
@@ -1094,9 +1031,6 @@ async function verifyPassword() {
                 renderFilterChips();
 
                 const queueList = document.getElementById('queue-list');
-                if (liveSpotifyQueueEnabled) {
-                    loadLiveSpotifyQueueForAdmin();
-                } else {
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
                     <div class="song-row">
                         <div class="song-details">
@@ -1130,7 +1064,6 @@ async function verifyPassword() {
                         </div>
                     </div>
                 `).join('');
-                }
 
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
