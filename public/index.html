@@ -155,6 +155,29 @@
             margin-top: 2px;
         }
 
+        /* Spotify attribution footer - required whenever we display Spotify
+           metadata/artwork (which we do throughout this page). White since
+           the page background is near-black. Icon kept at Spotify's stated
+           21px minimum digital size for icon-only use. */
+        .spotify-attribution {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin: 40px 0 10px;
+            padding-top: 20px;
+            border-top: 1px solid #282828;
+            color: #ffffff;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .spotify-attribution svg,
+        .spotify-attribution img {
+            height: 22px;
+            width: auto;
+            flex-shrink: 0;
+        }
+
         .search-bar-wrapper {
             position: relative;
             width: 100%;
@@ -574,6 +597,11 @@
             <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
         </div>
         <div id="main-display-list"></div>
+
+        <div class="spotify-attribution">
+            <span>Powered by</span>
+            <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
+        </div>
     </div>
 
     <!-- MY REQUESTS MODAL -->
