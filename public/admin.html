@@ -19,6 +19,7 @@
             --red-action: #e91429;
         }
 
+        html { overflow-x: hidden; }
         body { 
             background-color: var(--spotify-black); 
             color: white; 
@@ -26,7 +27,14 @@
             padding: 25px; 
             margin: 0; 
             box-sizing: border-box;
+            overflow-x: hidden;
+            /* Safety net: any text that isn't explicitly truncated (song
+               titles, usernames, etc.) wraps onto a new line instead of
+               pushing its box wider than the screen. */
+            overflow-wrap: break-word;
+            word-break: break-word;
         }
+        * { box-sizing: border-box; }
 
         #admin-lock-screen {
             position: fixed;
@@ -40,6 +48,9 @@
             justify-content: center;
             align-items: center;
             z-index: 9999;
+            overflow-y: auto;
+            padding: 20px;
+            box-sizing: border-box;
         }
 
         .lock-container {
@@ -192,6 +203,10 @@
             margin-bottom: 20px;
             border-bottom: 2px solid #282828;
             padding-bottom: 10px;
+            /* 4 tab buttons don't fit narrow phones - scroll horizontally
+               instead of overflowing the page. */
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .tab-button {
@@ -203,6 +218,8 @@
             font-weight: 700;
             cursor: pointer;
             border-radius: 8px;
+            flex-shrink: 0;
+            white-space: nowrap;
             transition: all 0.2s ease;
         }
         .tab-button:hover { color: white; background-color: var(--card-bg); }
