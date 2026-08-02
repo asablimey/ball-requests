@@ -563,6 +563,7 @@
             <div class="control-bar" style="margin-bottom: 30px;">
                 <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
                 <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+                <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
                 <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
             </div>
 
@@ -711,6 +712,7 @@
         }
         let requestsAllowed = true;
         let explicitBlockActive = false;
+        let radioEditsOnly = false;
         let queueCapEnabled = false;
         let guestSpotifyEnabled = false;
         let kioskRequestsAllowed = true;
@@ -979,6 +981,11 @@ async function verifyPassword() {
                 explicitBtn.innerText = explicitBlockActive ? "Explicit: BLOCKED" : "Explicit: ALLOWED";
                 explicitBtn.className = explicitBlockActive ? "toggle-btn closed-status" : "toggle-btn open-status";
 
+                const radioEditsBtn = document.getElementById('toggle-radio-edits');
+                radioEditsOnly = data.radioEditsOnly || false;
+                radioEditsBtn.innerText = radioEditsOnly ? "Radio Edits Only: ON" : "Radio Edits Only: OFF";
+                radioEditsBtn.className = radioEditsOnly ? "toggle-btn closed-status" : "toggle-btn open-status";
+
                 if (document.activeElement !== document.getElementById('input-max-queue')) {
                     document.getElementById('input-max-queue').value = data.maxQueueLength;
                 }
@@ -1141,6 +1148,16 @@ async function verifyPassword() {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ blockExplicit: !explicitBlockActive })
+            });
+            updateDashboard();
+        }
+
+        async function toggleRadioEditsOnly() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-radio-edits', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ radioEditsOnly: !radioEditsOnly })
             });
             updateDashboard();
         }
