@@ -151,7 +151,6 @@
             font-size: 0.62rem;
             font-weight: 700;
             letter-spacing: 0.5px;
-            text-transform: uppercase;
             color: #a7a7a7;
             margin-top: 2px;
         }
@@ -626,7 +625,7 @@
             // owns this same label and writes the countdown into it instead - so the
             // two never fight over what's displayed there.
             if (count >= maxCredits) {
-                labelEl.innerText = count === 1 ? 'Credit' : 'Credits';
+                labelEl.innerText = count === 1 ? 'CREDIT' : 'CREDITS';
             }
         }
         function escapeHtml(str) {
