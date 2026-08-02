@@ -42,8 +42,8 @@
             justify-content: space-between;
             align-items: flex-start;
             border-bottom: 1px solid #282828;
-            padding-bottom: 15px;
-            margin-bottom: 25px;
+            padding-bottom: 18px;
+            margin-bottom: 28px;
             flex-wrap: nowrap;
             gap: 15px;
         }
@@ -62,6 +62,45 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+
+        /* Wraps the title + the attribution/credit lines now living underneath
+           it, while staying the flexible left-hand item in .header next to the
+           credits box on the right. */
+        .header-title-block {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        /* Compact version of the Spotify attribution, sized to sit directly
+           under the venue title rather than as a full-width page footer. */
+        .spotify-attribution-inline {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 6px;
+            color: #b3b3b3;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .spotify-attribution-inline img {
+            height: 13px;
+            width: auto;
+            flex-shrink: 0;
+        }
+
+        .site-credit {
+            margin-top: 4px;
+            font-size: 0.7rem;
+            color: #555;
+        }
+        .site-credit a {
+            color: #555;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        .site-credit a:hover { color: #888; }
 
         .credits-container {
             display: flex;
@@ -155,28 +194,9 @@
             margin-top: 2px;
         }
 
-        /* Spotify attribution footer - required whenever we display Spotify
-           metadata/artwork (which we do throughout this page). White since
-           the page background is near-black. Icon kept at Spotify's stated
-           21px minimum digital size for icon-only use. */
-        .spotify-attribution {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            margin: 40px 0 10px;
-            padding-top: 20px;
-            border-top: 1px solid #282828;
-            color: #ffffff;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        .spotify-attribution svg,
-        .spotify-attribution img {
-            height: 22px;
-            width: auto;
-            flex-shrink: 0;
-        }
+        /* Spotify attribution now lives inline under the title (see
+           .spotify-attribution-inline above) - required whenever we display
+           Spotify metadata/artwork, which we do throughout this page. */
 
         .search-bar-wrapper {
             position: relative;
@@ -486,6 +506,27 @@
 
         .modal-body { overflow-y: auto; padding: 16px 20px; }
 
+        /* Privacy policy modal body text styling */
+        .privacy-body h4 {
+            margin: 20px 0 8px;
+            font-size: 0.95rem;
+            color: var(--spotify-green);
+        }
+        .privacy-body h4:first-of-type { margin-top: 0; }
+        .privacy-body p, .privacy-body li {
+            font-size: 0.85rem;
+            color: #d0d0d0;
+            line-height: 1.5;
+        }
+        .privacy-body ul { margin: 6px 0; padding-left: 20px; }
+        .privacy-body li { margin-bottom: 6px; }
+        .privacy-body a { color: var(--spotify-green); }
+        .privacy-updated {
+            font-size: 0.75rem;
+            color: #666;
+            margin-bottom: 16px;
+        }
+
         .playlist-row {
             display: flex;
             align-items: center;
@@ -570,7 +611,14 @@
 
     <div class="container">
         <div class="header">
-            <h1 id="event-name-header">Song Requests</h1>
+            <div class="header-title-block">
+                <h1 id="event-name-header">Song Requests</h1>
+                <div class="spotify-attribution-inline">
+                    <span>Powered by</span>
+                    <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
+                </div>
+                <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
+            </div>
             <div class="credits-container">
                 <div class="top-pill-row">
                     <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
@@ -597,11 +645,6 @@
             <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
         </div>
         <div id="main-display-list"></div>
-
-        <div class="spotify-attribution">
-            <span>Powered by</span>
-            <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
-        </div>
     </div>
 
     <!-- MY REQUESTS MODAL -->
@@ -624,6 +667,48 @@
             <p>So the DJ knows who requested each song. Only the DJ can see this.</p>
             <input type="text" id="username-input" class="username-input" placeholder="Your name" maxlength="30" onkeydown="if(event.key === 'Enter') saveUsername()">
             <button class="username-save-btn" onclick="saveUsername()">Continue</button>
+        </div>
+    </div>
+
+    <!-- PRIVACY POLICY MODAL -->
+    <div class="modal-overlay" id="privacy-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">Privacy Policy</div>
+                <button class="modal-close-btn" onclick="closePrivacyModal()">✕</button>
+            </div>
+            <div class="modal-body privacy-body">
+                <p class="privacy-updated">Last updated: August 2026</p>
+
+                <h4>What this site is</h4>
+                <p>This is a small, independent song-request tool built for live events. It's not a company product - there's no ad tracking, no data resale, and no account system beyond what's described below.</p>
+
+                <h4>What we collect</h4>
+                <ul>
+                    <li><strong>The name you type in</strong> when you make your first request. It's shown to the DJ/admin so they know who requested each song - that's the only reason it's collected.</li>
+                    <li><strong>A random anonymous ID</strong>, generated in your browser and stored locally on your device, used only to stop the same device from voting on a song more than once. It isn't linked to your name or any personal info.</li>
+                    <li><strong>Your song requests and votes themselves</strong> (title, artist, timestamp), so the queue can function and the DJ can see request history for the event.</li>
+                </ul>
+
+                <h4>If you use "Connect Spotify"</h4>
+                <p>This is optional and only used to let you browse your own Spotify playlists to find songs to request. When you connect, your browser talks directly to Spotify - your login and access token never pass through or get stored on this site's server. The token is kept temporarily in your browser (session storage) and is automatically discarded when it expires or you close your browser.</p>
+
+                <h4>What we don't do</h4>
+                <ul>
+                    <li>We don't require an account, email, or password to use this site.</li>
+                    <li>We don't sell, share, or use your data for advertising.</li>
+                    <li>We don't use tracking cookies. The only browser storage used is described above, and it's functional, not for tracking you across other sites.</li>
+                </ul>
+
+                <h4>How long data is kept</h4>
+                <p>Requests, votes, and names are kept only for the duration of the event and are cleared when the server restarts between events. Nothing here is stored in a long-term database.</p>
+
+                <h4>Third parties</h4>
+                <p>Song search and playback use the Spotify API. Spotify's own handling of your data (if you log in) is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's Privacy Policy</a>, not this one.</p>
+
+                <h4>Questions</h4>
+                <p>This site is made and maintained by Sam B. If you have questions about how it works, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
+            </div>
         </div>
     </div>
 
@@ -1200,6 +1285,13 @@
 
         function closeMyRequestsModal() {
             document.getElementById('my-requests-modal').classList.remove('is-visible');
+        }
+
+        function openPrivacyModal() {
+            document.getElementById('privacy-modal').classList.add('is-visible');
+        }
+        function closePrivacyModal() {
+            document.getElementById('privacy-modal').classList.remove('is-visible');
         }
 
         async function showPlaylistGrid() {
