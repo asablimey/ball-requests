@@ -245,7 +245,7 @@ let systemConfigs = {
     decadeFilter: [],  // array of decade-start years, e.g. [1980, 1990]
     // Whether regular guests (index.html) see the "Connect Spotify" button at
     // all - independent of the kiosk page's own version of the same toggle.
-    guestSpotifyConnectEnabled: true,
+    guestSpotifyConnectEnabled: false,
     // Master on/off for relaying accepted requests into the DJ's live Spotify
     // queue. Independent of whether a DJ account is actually connected - this
     // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
@@ -262,7 +262,7 @@ let systemConfigs = {
 // describe the event itself, not which device someone's requesting from.
 let kioskConfigs = {
     requestsAllowed: true,
-    spotifyConnectEnabled: true,
+    spotifyConnectEnabled: false,
     maxCredits: 3,
     countdownLength: 60
 };
