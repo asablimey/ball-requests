@@ -535,6 +535,7 @@
             <div class="settings-section-label">Spotify Queue Relay</div>
             <div class="control-bar" style="margin-bottom: 10px;">
                 <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
+                <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
             </div>
             <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
                 When connected, every newly-accepted request is automatically added to your live Spotify app queue.
@@ -808,6 +809,17 @@ async function verifyPassword() {
             window.location.href = '/admin/spotify-login?password=' + encodeURIComponent(adminPassword);
         }
 
+        let spotifyAutoQueueEnabled = true;
+        async function toggleSpotifyAutoQueue() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/toggle-spotify-auto-queue', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !spotifyAutoQueueEnabled })
+            });
+            updateDashboard();
+        }
+
         async function toggleGuestSpotify() {
             if (!isAuthorized) return;
             await fetch('/api/admin/toggle-guest-spotify', {
@@ -935,6 +947,11 @@ async function verifyPassword() {
                 const relayBtn = document.getElementById('spotify-relay-status');
                 relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Queue Relay: CONNECTED (click to reconnect)" : "Spotify Queue Relay: NOT CONNECTED (click to connect)";
                 relayBtn.className = data.djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                const autoQueueBtn = document.getElementById('toggle-spotify-auto-queue');
+                spotifyAutoQueueEnabled = data.spotifyAutoQueueEnabled !== false;
+                autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
+                autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
