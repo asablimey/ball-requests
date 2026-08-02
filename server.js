@@ -245,7 +245,13 @@ let systemConfigs = {
     decadeFilter: [],  // array of decade-start years, e.g. [1980, 1990]
     // Whether regular guests (index.html) see the "Connect Spotify" button at
     // all - independent of the kiosk page's own version of the same toggle.
-    guestSpotifyConnectEnabled: true
+    guestSpotifyConnectEnabled: true,
+    // Master on/off for relaying accepted requests into the DJ's live Spotify
+    // queue. Independent of whether a DJ account is actually connected - this
+    // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
+    // a run of troll requests) without disconnecting Spotify or closing requests
+    // entirely. Requests still land in the local site queue either way.
+    spotifyAutoQueueEnabled: true
 };
 
 // Separate, independently-configurable settings for kiosk.html - a DJ-attended
@@ -589,7 +595,9 @@ app.post('/api/request', async (req, res) => {
         // a duplicate request just upvotes the existing local entry above, it
         // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
         // let a slow/failed Spotify call delay or fail the guest's request.
-        queueTrackOnSpotify(trackId);
+        if (systemConfigs.spotifyAutoQueueEnabled) {
+            queueTrackOnSpotify(trackId);
+        }
     }
 
     requestLog.push({
@@ -732,6 +740,7 @@ app.get('/api/admin/data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
         djSpotifyQueueConnected: !!djRefreshToken,
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
@@ -840,6 +849,12 @@ app.post('/api/admin/toggle-queue-cap', (req, res) => {
 app.post('/api/admin/toggle-guest-spotify', (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled === 'boolean') systemConfigs.guestSpotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
     res.json({ success: true });
 });
 
