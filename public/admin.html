@@ -532,6 +532,16 @@
                 <button id="toggle-guest-spotify" class="toggle-btn open-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: ON</button>
             </div>
 
+            <div class="settings-section-label">Spotify Queue Relay</div>
+            <div class="control-bar" style="margin-bottom: 10px;">
+                <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
+            </div>
+            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
+                When connected, every newly-accepted request is automatically added to your live Spotify app queue.
+                This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
+                device (open Spotify and play something first). Click to (re)connect.
+            </p>
+
             <div class="settings-section-label">System Rules</div>
             <div class="event-name-box">
                 <div class="input-group" style="width: 100%;">
@@ -792,6 +802,12 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        function connectDjSpotify() {
+            // Plain navigation (not fetch) since this needs to become a real
+            // browser redirect through Spotify's login page and back.
+            window.location.href = '/admin/spotify-login?password=' + encodeURIComponent(adminPassword);
+        }
+
         async function toggleGuestSpotify() {
             if (!isAuthorized) return;
             await fetch('/api/admin/toggle-guest-spotify', {
@@ -915,6 +931,10 @@ async function verifyPassword() {
                 guestSpotifyEnabled = data.guestSpotifyConnectEnabled !== false;
                 guestSpotifyBtn.innerText = guestSpotifyEnabled ? "Guest Spotify Connect: ON" : "Guest Spotify Connect: OFF";
                 guestSpotifyBtn.className = guestSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                const relayBtn = document.getElementById('spotify-relay-status');
+                relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Queue Relay: CONNECTED (click to reconnect)" : "Spotify Queue Relay: NOT CONNECTED (click to connect)";
+                relayBtn.className = data.djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
