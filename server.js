@@ -232,6 +232,10 @@ let systemConfigs = {
     countdownLength: 60,
     requestsAllowed: true,
     explicitBlockActive: false,
+    // When on, extended/club/dub/instrumental-style mixes are filtered out of
+    // search results and blocked from being requested directly - see
+    // isExtendedOrClubMix() below for exactly what counts as one.
+    radioEditsOnly: false,
     eventName: '',
     // Queue length cap: once activeQueue.length hits maxQueueLength, requests
     // auto-close. Nothing is "stuck closed" here - it's recomputed from the
@@ -387,6 +391,17 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
+// Detects extended/club/dub/DJ-style mixes by the descriptor Spotify usually
+// puts in the track title, e.g. "Song Name - Extended Mix" or "(Club Mix)".
+// Deliberately does NOT flag "radio edit"/"radio mix"/"radio version" or plain
+// titles with no descriptor at all - those are exactly what should stay
+// available when this filter is on.
+const EXTENDED_MIX_PATTERN = /\b(extended|club|dub|instrumental|maxi[\s-]?mix|12["']?\s*mix|full[\s-]?length|uncut|dj\s*mix|extended\s*version|extended\s*edit)\b/i;
+function isExtendedOrClubMix(trackName) {
+    if (!trackName) return false;
+    return EXTENDED_MIX_PATTERN.test(trackName);
+}
+
 async function getSpotifyToken() {
     if (!CLIENT_ID || !CLIENT_SECRET) {
         console.error("[SPOTIFY] Missing credentials in environment.");
@@ -469,6 +484,12 @@ app.get('/api/search', async (req, res) => {
         // Filter out explicit tracks if explicit restriction lock is active
         if (systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
+        }
+
+        // Radio-edits-only filter: strip extended/club/dub/instrumental mixes,
+        // keeping plain/radio-length versions.
+        if (systemConfigs.radioEditsOnly) {
+            tracks = tracks.filter(track => !isExtendedOrClubMix(track.name));
         }
 
         // Decade filter (DJ-configured, e.g. theme night restricted to the 90s/2000s)
@@ -554,6 +575,12 @@ app.post('/api/request', async (req, res) => {
     // API block safety gate against manual requests injection of explicit songs
     if (systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
         return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+    }
+
+    // Same idea, for extended/club/dub mixes when radio-edits-only is active -
+    // re-checked here so it can't be bypassed by POSTing a track ID directly.
+    if (systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
+        return res.status(403).json({ error: "Only radio edits are currently allowed - try searching for the standard version." });
     }
 
     // Same idea as the explicit gate above, but for genre/decade theme-night
@@ -717,6 +744,7 @@ app.get('/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
         eventName: systemConfigs.eventName || '',
         queueCapEnabled: systemConfigs.queueCapEnabled,
         maxQueueLength: systemConfigs.maxQueueLength,
@@ -738,6 +766,7 @@ app.get('/kiosk-data', (req, res) => {
         countdownLength: kioskConfigs.countdownLength,
         requestsAllowed: kioskConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
         eventName: systemConfigs.eventName || '',
         queueCapEnabled: systemConfigs.queueCapEnabled,
         maxQueueLength: systemConfigs.maxQueueLength,
@@ -756,6 +785,7 @@ app.get('/api/admin/data', (req, res) => {
         countdownLength: systemConfigs.countdownLength,
         requestsAllowed: systemConfigs.requestsAllowed,
         explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
         eventName: systemConfigs.eventName || '',
         queueCapEnabled: systemConfigs.queueCapEnabled,
         maxQueueLength: systemConfigs.maxQueueLength,
@@ -890,6 +920,12 @@ app.post('/api/admin/toggle', (req, res) => {
 app.post('/api/admin/toggle-explicit', (req, res) => {
     const { blockExplicit } = req.body;
     if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-radio-edits', (req, res) => {
+    const { radioEditsOnly } = req.body;
+    if (typeof radioEditsOnly === 'boolean') systemConfigs.radioEditsOnly = radioEditsOnly;
     res.json({ success: true });
 });
 
