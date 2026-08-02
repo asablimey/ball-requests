@@ -40,21 +40,35 @@
         .header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
             border-bottom: 1px solid #282828;
             padding-bottom: 15px;
             margin-bottom: 25px;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
             gap: 15px;
         }
 
-        h1 { margin: 0; font-size: 1.8rem; font-weight: 800; }
+        /* min-width: 0 + ellipsis lets the title shrink/truncate on narrow
+           screens instead of wrapping onto a new line - that wrap was what
+           pushed the credits box down below the title. Truncating keeps the
+           credits box pinned in the header row, top-right, at every width. */
+        h1 {
+            margin: 0;
+            font-size: 1.8rem;
+            font-weight: 800;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
 
         .credits-container {
             display: flex;
             flex-direction: column;
             align-items: flex-end;
             gap: 6px;
+            flex-shrink: 0;
         }
 
         .top-pill-row {
@@ -140,14 +154,6 @@
             text-transform: uppercase;
             color: #a7a7a7;
             margin-top: 2px;
-        }
-
-        .countdown-display {
-            font-size: 0.7rem;
-            color: #a7a7a7;
-            font-weight: 600;
-            display: none;
-            text-align: center;
         }
 
         .search-bar-wrapper {
@@ -517,7 +523,6 @@
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
-            .credits-container { align-items: center; width: 100%; }
             .pill-btn { padding: 9px 14px; font-size: 0.9rem; width: 150px; }
         }
 
@@ -555,7 +560,6 @@
                             <div id="credit-badge-number" class="credit-badge-number">--</div>
                             <div id="credit-badge-label" class="credit-badge-label">Credits</div>
                         </div>
-                        <div id="countdown-status" class="countdown-display">Next Credit: --s</div>
                     </div>
                 </div>
             </div>
@@ -638,7 +642,12 @@
             const labelEl = document.getElementById('credit-badge-label');
             if (!numEl || !labelEl) return;
             numEl.innerText = count;
-            labelEl.innerText = count === 1 ? 'Credit' : 'Credits';
+            // Only touch the label when full. While recharging, startLocalCountdown()
+            // owns this same label and writes the countdown into it instead - so the
+            // two never fight over what's displayed there.
+            if (count >= maxCredits) {
+                labelEl.innerText = count === 1 ? 'Credit' : 'Credits';
+            }
         }
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -754,25 +763,29 @@
         }
 
         function manageCountdownVisibility() {
-            const countdownEl = document.getElementById('countdown-status');
-
             if (availableCredits >= maxCredits) {
-                countdownEl.style.display = 'none';
                 if (countdownTimer) {
                     clearInterval(countdownTimer);
                     countdownTimer = null;
                 }
+                updateCreditBadge(availableCredits); // makes sure the Credit(s) word is showing
             } else {
-                countdownEl.style.display = 'block';
                 startLocalCountdown();
             }
         }
 
+        // Writes the recharge countdown straight into the badge's label spot
+        // (where "Credit"/"Credits" normally sits), so it's just a bare
+        // number-of-seconds like "43s" - no "Next Credit:" prefix. Once
+        // credits refill back to max, the label reverts to the word via
+        // updateCreditBadge().
         function startLocalCountdown() {
             if (countdownTimer) return;
 
+            const labelEl = document.getElementById('credit-badge-label');
+            const numEl = document.getElementById('credit-badge-number');
             timeRemaining = currentServerDuration;
-            document.getElementById('countdown-status').innerText = `Next Credit: ${timeRemaining}s`;
+            if (labelEl) labelEl.innerText = `${timeRemaining}s`;
 
             countdownTimer = setInterval(() => {
                 timeRemaining--;
@@ -782,16 +795,16 @@
                     if (availableCredits < maxCredits) {
                         availableCredits++;
                         localStorage.setItem('userCredits', availableCredits);
-                        updateCreditBadge(availableCredits);
+                        if (numEl) numEl.innerText = availableCredits;
                     }
                 }
 
                 if (availableCredits >= maxCredits) {
-                    document.getElementById('countdown-status').style.display = 'none';
                     clearInterval(countdownTimer);
                     countdownTimer = null;
-                } else {
-                    document.getElementById('countdown-status').innerText = `Next Credit: ${timeRemaining}s`;
+                    updateCreditBadge(availableCredits);
+                } else if (labelEl) {
+                    labelEl.innerText = `${timeRemaining}s`;
                 }
             }, 1000);
         }
