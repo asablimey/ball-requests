@@ -423,19 +423,34 @@ app.get('/api/search', async (req, res) => {
     if (!spotifyAccessToken) await getSpotifyToken();
 
     try {
-        const response = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=25`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-        });
-        const data = await response.json();
-        if (!response.ok) {
-            console.error('[SEARCH] Spotify rejected the request:', response.status, JSON.stringify(data));
+        // Spotify's Feb 2026 API changes capped a single search request's `limit`
+        // at 10 (down from 50). To still return a longer result list (25, i.e.
+        // 2.5x the old default of 10), page through with `offset` across 3
+        // parallel requests instead of one bigger one.
+        const PAGE_SIZE = 10;
+        const TOTAL_RESULTS = 25;
+        const offsets = [];
+        for (let offset = 0; offset < TOTAL_RESULTS; offset += PAGE_SIZE) offsets.push(offset);
+
+        const responses = await Promise.all(offsets.map(offset =>
+            fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${PAGE_SIZE}&offset=${offset}`, {
+                headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+            })
+        ));
+
+        const failed = responses.find(r => !r.ok);
+        if (failed) {
+            const errBody = await failed.json().catch(() => ({}));
+            console.error('[SEARCH] Spotify rejected the request:', failed.status, JSON.stringify(errBody));
             // Token may have gone bad mid-session - force a fresh one on the *next*
             // search rather than silently returning empty results every time.
             spotifyAccessToken = null;
             return res.status(502).json({ error: "Spotify search temporarily unavailable." });
         }
-        const trackItems = data.tracks?.items || [];
-        
+
+        const pages = await Promise.all(responses.map(r => r.json()));
+        const trackItems = pages.flatMap(page => page.tracks?.items || []).slice(0, TOTAL_RESULTS);
+
         let tracks = trackItems.map(track => {
             const releaseYear = parseInt((track.album?.release_date || '').slice(0, 4), 10) || null;
             return {
