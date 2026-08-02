@@ -126,7 +126,7 @@ async function queueTrackOnSpotify(trackId) {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.status === 204) {
+        if (res.status === 204 || res.status === 200) {
             console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
         } else if (res.status === 404) {
             console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
@@ -474,6 +474,7 @@ app.get('/api/search', async (req, res) => {
 
         res.json({ tracks });
     } catch (err) {
+        console.error('[SEARCH] Failed:', err.message);
         res.status(500).json({ error: "Search feature unavailable" });
     }
 });
