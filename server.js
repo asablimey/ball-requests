@@ -876,6 +876,24 @@ app.post('/api/admin/kiosk/config', (req, res) => {
     res.json({ success: true });
 });
 
+// Shared by the admin "Played" button and the auto-sync poller below - moves a
+// track out of the live local queue into playedHistory/stats. trackIndex must
+// already be a valid index into activeQueue.
+function markTrackPlayedByIndex(trackIndex) {
+    const [track] = activeQueue.splice(trackIndex, 1);
+    markRequestLogStatus(track.id, 'played');
+    playedHistory.unshift({
+        title: track.title,
+        artist: track.artist,
+        artwork: track.artwork,
+        explicit: track.explicit,
+        duration: track.duration,
+        requesters: track.requesters || []
+    });
+    logDepartedTrack(track, 'played');
+    return track;
+}
+
 app.post('/api/admin/action', (req, res) => {
     const { id, action } = req.body;
     if (action === 'clearQueue') {
@@ -894,17 +912,7 @@ app.post('/api/admin/action', (req, res) => {
             track.downvoters = [];
             track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
         } else if (action === 'played') {
-            const [track] = activeQueue.splice(trackIndex, 1);
-            markRequestLogStatus(track.id, 'played');
-            playedHistory.unshift({
-                title: track.title,
-                artist: track.artist,
-                artwork: track.artwork,
-                explicit: track.explicit,
-                duration: track.duration,
-                requesters: track.requesters || []
-            });
-            logDepartedTrack(track, 'played');
+            markTrackPlayedByIndex(trackIndex);
         } else if (action === 'remove') {
             const [track] = activeQueue.splice(trackIndex, 1);
             markRequestLogStatus(track.id, 'removed');
@@ -913,6 +921,37 @@ app.post('/api/admin/action', (req, res) => {
     }
     res.json({ success: true });
 });
+
+// --- Auto-sync: remove a request from the local queue the moment Spotify
+// actually starts playing it, so the DJ doesn't have to manually click
+// "Played" for every guest request. Only touches tracks that are still in
+// activeQueue - the DJ's regular playlist tracks never match anything here,
+// so this has no effect when nothing requested is currently playing.
+let lastSyncedNowPlayingId = null;
+async function syncNowPlayingWithQueue() {
+    const token = await getDjAccessToken();
+    if (!token) return;
+    try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204 || res.status === 404) return; // nothing playing
+        if (!res.ok) return;
+        const data = await res.json();
+        const nowPlayingId = data?.item?.id;
+        if (!nowPlayingId || nowPlayingId === lastSyncedNowPlayingId) return;
+        lastSyncedNowPlayingId = nowPlayingId;
+
+        const trackIndex = activeQueue.findIndex(t => t.id === nowPlayingId);
+        if (trackIndex !== -1) {
+            const track = markTrackPlayedByIndex(trackIndex);
+            console.log('[SPOTIFY SYNC] Now playing, removed from local queue:', track.title);
+        }
+    } catch (err) {
+        console.error('[SPOTIFY SYNC] Poll failed:', err.message);
+    }
+}
+setInterval(syncNowPlayingWithQueue, 5000);
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
