@@ -427,6 +427,13 @@ app.get('/api/search', async (req, res) => {
             headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
         });
         const data = await response.json();
+        if (!response.ok) {
+            console.error('[SEARCH] Spotify rejected the request:', response.status, JSON.stringify(data));
+            // Token may have gone bad mid-session - force a fresh one on the *next*
+            // search rather than silently returning empty results every time.
+            spotifyAccessToken = null;
+            return res.status(502).json({ error: "Spotify search temporarily unavailable." });
+        }
         const trackItems = data.tracks?.items || [];
         
         let tracks = trackItems.map(track => {
