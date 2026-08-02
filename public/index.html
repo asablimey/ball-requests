@@ -114,13 +114,36 @@
             flex-direction: column;
             align-items: center;
             gap: 6px;
-            width: min(190px, 44vw);
-            min-width: 0;
+        }
+
+        /* Compact "number over label" badge, e.g. a big "1" over small "CREDIT" -
+           replaces the old full-width "Credits: X / Y" pill. */
+        .credit-badge {
+            background-color: #1c1c1c;
+            border: 1px solid #2c2c2c;
+            border-radius: 12px;
+            padding: 8px 18px;
+            text-align: center;
+            min-width: 56px;
             box-sizing: border-box;
+        }
+        .credit-badge-number {
+            font-size: 1.5rem;
+            font-weight: 800;
+            line-height: 1.1;
+            color: white;
+        }
+        .credit-badge-label {
+            font-size: 0.62rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: #a7a7a7;
+            margin-top: 2px;
         }
 
         .countdown-display {
-            font-size: 0.85rem;
+            font-size: 0.7rem;
             color: #a7a7a7;
             font-weight: 600;
             display: none;
@@ -496,7 +519,6 @@
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
             .credits-container { align-items: center; width: 100%; }
             .pill-btn { padding: 9px 14px; font-size: 0.9rem; width: 150px; }
-            .credit-block { width: 150px; }
         }
 
         /* Toast notifications - replace blocking alert() popups */
@@ -529,7 +551,10 @@
                         <span id="connect-spotify-label">Connect Spotify</span>
                     </button>
                     <div class="credit-block">
-                        <div id="credits-status" class="pill-btn credits-display">Credits: -- / --</div>
+                        <div id="credits-status" class="credit-badge">
+                            <div id="credit-badge-number" class="credit-badge-number">--</div>
+                            <div id="credit-badge-label" class="credit-badge-label">Credits</div>
+                        </div>
                         <div id="countdown-status" class="countdown-display">Next Credit: --s</div>
                     </div>
                 </div>
@@ -604,6 +629,16 @@
                 toast.classList.remove("toast-visible");
                 setTimeout(() => toast.remove(), 300);
             }, 3500);
+        }
+
+        // Updates the compact "number over label" credit badge - singular/plural
+        // aware, matching the "1 / CREDIT" style badge design.
+        function updateCreditBadge(count) {
+            const numEl = document.getElementById('credit-badge-number');
+            const labelEl = document.getElementById('credit-badge-label');
+            if (!numEl || !labelEl) return;
+            numEl.innerText = count;
+            labelEl.innerText = count === 1 ? 'Credit' : 'Credits';
         }
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -715,7 +750,7 @@
                 localStorage.setItem('userCredits', availableCredits);
             }
 
-            document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+            updateCreditBadge(availableCredits);
         }
 
         function manageCountdownVisibility() {
@@ -747,7 +782,7 @@
                     if (availableCredits < maxCredits) {
                         availableCredits++;
                         localStorage.setItem('userCredits', availableCredits);
-                        document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+                        updateCreditBadge(availableCredits);
                     }
                 }
 
@@ -886,7 +921,7 @@
                 if (res.ok) {
                     availableCredits--;
                     localStorage.setItem('userCredits', availableCredits);
-                    document.getElementById('credits-status').innerText = `Credits: ${availableCredits} / ${maxCredits}`;
+                    updateCreditBadge(availableCredits);
                     manageCountdownVisibility();
                     await fetchSystemState();
                     return true;
