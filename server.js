@@ -145,6 +145,114 @@ async function queueTrackOnSpotify(trackId) {
 // their own Spotify account. Gated by the same admin password as everything else
 // in /api/admin, but this route can't live under that prefix since it needs to be
 // a plain browser navigation (redirects can't carry a custom header).
+// "Priority mode" alternative to queueTrackOnSpotify above. Spotify's API has no
+// endpoint to insert into, reorder, or remove from an existing live queue - the
+// only way to change what plays next is to replace the whole thing via
+// PUT /me/player/play with an explicit uris list. So to put a new request at the
+// FRONT of what's coming up, we: read what's currently playing (to resume it at
+// the same position, not restart it) and what's already queued (so we don't lose
+// it), then replay with [current, newTrack, ...restOfOldQueue].
+//
+// Trade-off worth knowing: this REPLACES Spotify's live queue outright, which
+// means anything the DJ personally queued from their own Spotify app (outside
+// this system) gets wiped in the process. Also requires an active device with
+// something already playing - if nothing's playing yet, it just starts the new
+// track immediately instead of "inserting" it.
+async function insertTrackAtTopOfSpotifyQueue(trackId) {
+    const token = await getDjAccessToken();
+    if (!token) return;
+
+    try {
+        const stateRes = await fetch('https://api.spotify.com/v1/me/player', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        const newUri = `spotify:track:${trackId}`;
+
+        if (stateRes.status === 204 || !stateRes.ok) {
+            // Nothing currently playing / no readable state - nothing to preserve,
+            // so just start this track now rather than silently failing.
+            console.warn('[SPOTIFY QUEUE] No current playback state - starting the new request directly instead of inserting.');
+            await fetch('https://api.spotify.com/v1/me/player/play', {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uris: [newUri] })
+            });
+            return;
+        }
+
+        const state = await stateRes.json();
+        const deviceId = state.device?.id;
+        const currentUri = state.item?.uri;
+        const positionMs = state.progress_ms || 0;
+
+        if (!deviceId) {
+            console.warn('[SPOTIFY QUEUE] No active device found - open Spotify and play something first.');
+            return;
+        }
+
+        // Pull the rest of what's already queued so it isn't lost, just pushed back one.
+        let restOfQueueUris = [];
+        try {
+            const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (queueRes.ok) {
+                const queueData = await queueRes.json();
+                restOfQueueUris = (queueData.queue || []).map(t => t.uri).filter(uri => uri && uri !== newUri);
+            }
+        } catch (e) { /* non-fatal - proceed without the rest of the old queue rather than fail the insert */ }
+
+        const orderedUris = [currentUri, newUri, ...restOfQueueUris].filter(Boolean);
+
+        const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uris: orderedUris, position_ms: positionMs })
+        });
+
+        if (playRes.status === 204 || playRes.ok) {
+            console.log('[SPOTIFY QUEUE] Inserted at top of live queue:', trackId);
+        } else {
+            const body = await playRes.text();
+            console.error('[SPOTIFY QUEUE] Insert-at-top failed', playRes.status, body);
+        }
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Insert-at-top request failed:', err.message);
+    }
+}
+
+// Reads Spotify's actual live queue (real play order, not our vote-sorted local
+// list) for display. Returns null if not configured/connected so callers can
+// distinguish "feature off" from "temporarily empty."
+async function fetchLiveSpotifyQueue() {
+    const token = await getDjAccessToken();
+    if (!token) return null;
+    try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/queue', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const mapTrack = (t) => ({
+            id: t.id,
+            title: t.name,
+            artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            explicit: t.explicit || false,
+            duration: formatDuration(t.duration_ms || 0)
+        });
+        return {
+            currentlyPlaying: data.currently_playing ? mapTrack(data.currently_playing) : null,
+            queue: (data.queue || []).slice(0, 10).map(mapTrack)
+        };
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Live queue fetch failed:', err.message);
+        return null;
+    }
+}
+
+
 app.get('/admin/spotify-login', (req, res) => {
     if (req.query.password !== ADMIN_PASSWORD) {
         return res.status(401).send('Unauthorized.');
@@ -251,7 +359,13 @@ let systemConfigs = {
     // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
     // a run of troll requests) without disconnecting Spotify or closing requests
     // entirely. Requests still land in the local site queue either way.
-    spotifyAutoQueueEnabled: true
+    spotifyAutoQueueEnabled: true,
+    // "Priority mode": when on, each new unique request is inserted at the very
+    // front of the DJ's live Spotify queue (see insertTrackAtTopOfSpotifyQueue),
+    // and all three pages show Spotify's actual next-10 as the live queue. When
+    // off, falls back to the original behavior above (appended to the end via
+    // spotifyAutoQueueEnabled, vote-sorted local list shown instead).
+    liveSpotifyQueueEnabled: false
 };
 
 // Separate, independently-configurable settings for kiosk.html - a DJ-attended
@@ -595,7 +709,9 @@ app.post('/api/request', async (req, res) => {
         // a duplicate request just upvotes the existing local entry above, it
         // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
         // let a slow/failed Spotify call delay or fail the guest's request.
-        if (systemConfigs.spotifyAutoQueueEnabled) {
+        if (systemConfigs.liveSpotifyQueueEnabled) {
+            insertTrackAtTopOfSpotifyQueue(trackId);
+        } else if (systemConfigs.spotifyAutoQueueEnabled) {
             queueTrackOnSpotify(trackId);
         }
     }
@@ -688,6 +804,18 @@ function buildSortedQueueForAdmin() {
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
 }
 
+// Read-only, public: Spotify's actual next-10 in real play order. Used by all
+// three front-ends when the DJ has liveSpotifyQueueEnabled on. Never exposes
+// tokens - just track metadata, same shape as the local queue's song objects.
+app.get('/api/spotify-queue', async (req, res) => {
+    if (!systemConfigs.liveSpotifyQueueEnabled) {
+        return res.json({ enabled: false, currentlyPlaying: null, queue: [] });
+    }
+    const live = await fetchLiveSpotifyQueue();
+    if (!live) return res.json({ enabled: true, connected: false, currentlyPlaying: null, queue: [] });
+    res.json({ enabled: true, connected: true, ...live });
+});
+
 app.get('/data', (req, res) => {
     res.json({
         maxCredits: systemConfigs.maxCredits,
@@ -701,6 +829,7 @@ app.get('/data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        liveSpotifyQueueEnabled: systemConfigs.liveSpotifyQueueEnabled,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -722,6 +851,7 @@ app.get('/kiosk-data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: kioskConfigs.spotifyConnectEnabled,
+        liveSpotifyQueueEnabled: systemConfigs.liveSpotifyQueueEnabled,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -741,6 +871,7 @@ app.get('/api/admin/data', (req, res) => {
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
         spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
+        liveSpotifyQueueEnabled: systemConfigs.liveSpotifyQueueEnabled,
         djSpotifyQueueConnected: !!djRefreshToken,
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
@@ -855,6 +986,12 @@ app.post('/api/admin/toggle-guest-spotify', (req, res) => {
 app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-live-spotify-queue', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.liveSpotifyQueueEnabled = enabled;
     res.json({ success: true });
 });
 
