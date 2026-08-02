@@ -54,6 +54,157 @@ app.use(express.static(path.join(__dirname, 'public')));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
+// --- DJ Spotify Queue Relay ---
+// Separate from the client-credentials token above (which only reads the public
+// catalog for search) and separate from guests' own read-only PKCE login. This is
+// a one-time Authorization Code login as the DJ's own Spotify account, which is
+// the only kind of token Spotify accepts for POST /me/player/queue - adding to
+// *your* actual playback queue requires the user-modify-playback-state scope,
+// which can only be granted by that account logging in, not by an app-only token.
+//
+// Required env vars:
+//   SPOTIFY_REDIRECT_URI - e.g. https://your-app.onrender.com/admin/spotify-callback
+//                           Must be registered exactly (including https and path)
+//                           in your Spotify Developer Dashboard app settings.
+//   SPOTIFY_REFRESH_TOKEN - filled in after the one-time login below; without it,
+//                           auto-queueing is silently skipped (guest requests still
+//                           work normally, they just don't relay to Spotify).
+const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI;
+const DJ_QUEUE_SCOPES = 'user-modify-playback-state user-read-playback-state';
+
+let djRefreshToken = process.env.SPOTIFY_REFRESH_TOKEN || null;
+let djAccessToken = null;
+let djAccessTokenExpiresAt = 0;
+let pendingLoginState = null; // basic CSRF check for the single-admin login flow
+
+// Exchanges the stored DJ refresh token for a fresh access token, caching it
+// until shortly before it expires. Returns null (rather than throwing) if DJ
+// queueing isn't set up yet, so callers can treat "not configured" and
+// "temporarily failed" the same way: just skip queueing, never block a guest's request.
+async function getDjAccessToken() {
+    if (!djRefreshToken) return null;
+    if (djAccessToken && Date.now() < djAccessTokenExpiresAt - 30000) return djAccessToken;
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(djRefreshToken)
+        });
+        const data = await response.json();
+        if (!data.access_token) {
+            console.error('[SPOTIFY QUEUE] Refresh failed:', data.error_description || data.error);
+            return null;
+        }
+        djAccessToken = data.access_token;
+        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+        // Spotify occasionally rotates the refresh token on use. If it does, the
+        // old one stops working - swap in-memory so this session keeps running,
+        // but flag it loudly since the Render env var is now stale.
+        if (data.refresh_token && data.refresh_token !== djRefreshToken) {
+            djRefreshToken = data.refresh_token;
+            console.warn('[SPOTIFY QUEUE] Spotify issued a new refresh token. Update SPOTIFY_REFRESH_TOKEN in Render to:', djRefreshToken);
+        }
+        return djAccessToken;
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Token refresh error:', err.message);
+        return null;
+    }
+}
+
+// Adds a track to the DJ's live Spotify playback queue. Fails silently (logged,
+// not thrown) so a guest's request always succeeds locally even if the DJ's
+// Spotify isn't open, isn't Premium, or hasn't been connected yet.
+async function queueTrackOnSpotify(trackId) {
+    const token = await getDjAccessToken();
+    if (!token) return;
+    try {
+        const uri = `spotify:track:${trackId}`;
+        const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204) {
+            console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
+        } else if (res.status === 404) {
+            console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
+        } else if (res.status === 403) {
+            console.warn('[SPOTIFY QUEUE] Forbidden - this usually means the account is not Spotify Premium.');
+        } else {
+            const body = await res.text();
+            console.error('[SPOTIFY QUEUE] Unexpected response', res.status, body);
+        }
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Request failed:', err.message);
+    }
+}
+
+// One-time login: DJ opens this (from the admin dashboard) and authorizes with
+// their own Spotify account. Gated by the same admin password as everything else
+// in /api/admin, but this route can't live under that prefix since it needs to be
+// a plain browser navigation (redirects can't carry a custom header).
+app.get('/admin/spotify-login', (req, res) => {
+    if (req.query.password !== ADMIN_PASSWORD) {
+        return res.status(401).send('Unauthorized.');
+    }
+    if (!SPOTIFY_REDIRECT_URI) {
+        return res.status(500).send('SPOTIFY_REDIRECT_URI is not set in your environment variables. Set it to this app\'s URL + /admin/spotify-callback, add that exact URL to your Spotify Developer Dashboard app\'s Redirect URIs, then try again.');
+    }
+    pendingLoginState = crypto.randomUUID();
+    const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: CLIENT_ID,
+        scope: DJ_QUEUE_SCOPES,
+        redirect_uri: SPOTIFY_REDIRECT_URI,
+        state: pendingLoginState
+    });
+    res.redirect(`https://accounts.spotify.com/authorize?${params.toString()}`);
+});
+
+app.get('/admin/spotify-callback', async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) return res.status(400).send(`Spotify login failed: ${error}`);
+    if (!state || state !== pendingLoginState) return res.status(400).send('State mismatch - please restart the login from the admin dashboard.');
+    pendingLoginState = null;
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: SPOTIFY_REDIRECT_URI
+            }).toString()
+        });
+        const data = await response.json();
+        if (!data.refresh_token) {
+            return res.status(500).send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
+        }
+        djRefreshToken = data.refresh_token;
+        djAccessToken = data.access_token;
+        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+
+        res.send(`
+            <html><body style="font-family: sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.5;">
+                <h2>Spotify connected ✅</h2>
+                <p>Auto-queueing is now active for the rest of this server session.</p>
+                <p><strong>To make this survive restarts/redeploys</strong>, copy the value below into your Render environment variables as <code>SPOTIFY_REFRESH_TOKEN</code>, then redeploy:</p>
+                <textarea readonly style="width:100%; height:80px; font-family: monospace; padding:8px;">${djRefreshToken}</textarea>
+                <p style="color:#666; font-size:0.9em;">This value is sensitive - treat it like a password. Don't post it anywhere public.</p>
+            </body></html>
+        `);
+    } catch (err) {
+        res.status(500).send('Token exchange failed: ' + err.message);
+    }
+});
+
+
 // Real, server-side admin auth. Previously the "password" only gated the UI in
 // admin.html client-side - the API routes underneath had no check at all, so
 // anyone could call them directly with no password. This closes that gap.
@@ -434,6 +585,11 @@ app.post('/api/request', async (req, res) => {
             downvoters: [],
             requesters: [requesterName]
         });
+        // Relay to the DJ's actual Spotify playback queue. Only on first entry -
+        // a duplicate request just upvotes the existing local entry above, it
+        // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
+        // let a slow/failed Spotify call delay or fail the guest's request.
+        queueTrackOnSpotify(trackId);
     }
 
     requestLog.push({
@@ -576,6 +732,7 @@ app.get('/api/admin/data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        djSpotifyQueueConnected: !!djRefreshToken,
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
