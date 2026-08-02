@@ -696,7 +696,6 @@
         let systemRequestsAllowed = true; // Local tracker for global toggling
         let explicitBlockActive = false;
         let queueIsFull = false; // Auto-close from the DJ's queue length cap, distinct from a manual close
-        let liveSpotifyQueueEnabled = false;
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -735,7 +734,6 @@
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
-                liveSpotifyQueueEnabled = data.liveSpotifyQueueEnabled || false;
 
                 const spotifyBtn = document.getElementById('connect-spotify-btn');
                 if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
@@ -762,7 +760,7 @@
                         ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
                         : "Song submissions are currently paused by the DJ.";
                     document.getElementById('list-title').innerText = "Live Queue";
-                    refreshQueueDisplay(data.queue);
+                    renderQueue(data.queue);
                 } else {
                     if (searchInput.disabled) {
                         searchInput.disabled = false;
@@ -771,7 +769,7 @@
 
                     if (searchInput.value.trim() === "") {
                         document.getElementById('list-title').innerText = "Live Queue";
-                        refreshQueueDisplay(data.queue);
+                        renderQueue(data.queue);
                     }
                 }
             } catch (e) { console.log("State sync failure."); }
@@ -836,62 +834,6 @@
                     labelEl.innerText = `${timeRemaining}s`;
                 }
             }, 1000);
-        }
-
-        // Picks between the local vote-sorted queue and Spotify's real live queue,
-        // based on the DJ's "Live Spotify Queue" toggle in admin settings.
-        function refreshQueueDisplay(localQueue) {
-            if (liveSpotifyQueueEnabled) {
-                loadLiveSpotifyQueue();
-            } else {
-                renderQueue(localQueue);
-            }
-        }
-
-        async function loadLiveSpotifyQueue() {
-            try {
-                const res = await fetch('/api/spotify-queue');
-                const data = await res.json();
-                renderLiveSpotifyQueue(data);
-            } catch (e) {
-                document.getElementById('main-display-list').innerHTML = '<p class="empty-placeholder">Could not load the live queue.</p>';
-            }
-        }
-
-        // Real Spotify play order - no voting here, since Spotify's API has no way
-        // to reorder or remove from an already-live queue (see the DJ's server-side
-        // notes on insertTrackAtTopOfSpotifyQueue for why).
-        function renderLiveSpotifyQueue(data) {
-            const display = document.getElementById('main-display-list');
-            if (!data.connected) {
-                display.innerHTML = '<p class="empty-placeholder">Spotify isn\'t connected right now.</p>';
-                return;
-            }
-
-            const items = [];
-            if (data.currentlyPlaying) items.push(Object.assign({}, data.currentlyPlaying, { __nowPlaying: true }));
-            (data.queue || []).forEach(t => items.push(t));
-
-            if (items.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">Nothing queued on Spotify right now.</p>';
-                return;
-            }
-
-            display.innerHTML = items.map(song => `
-                <div class="song-row">
-                    <div class="song-details">
-                        <img src="${song.artwork}">
-                        <div class="text-block">
-                            <div class="title-wrapper">
-                                <p class="song-title">${escapeHtml(song.title)}</p>
-                                ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                ${song.__nowPlaying ? '<span class="explicit-badge" style="background:var(--spotify-green); color:white;">NOW PLAYING</span>' : ''}
-                            </div>
-                            <p class="song-artist">${escapeHtml(song.artist)}</p>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
         }
 
         function renderQueue(queue) {
