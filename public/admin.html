@@ -529,7 +529,7 @@
             <div class="control-bar" style="margin-bottom: 30px;">
                 <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
                 <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-                <button id="toggle-guest-spotify" class="toggle-btn open-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: ON</button>
+                <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
             </div>
 
             <div class="settings-section-label">Spotify Queue Relay</div>
@@ -594,7 +594,7 @@
             </p>
             <div class="control-bar" style="margin-bottom: 16px;">
                 <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
-                <button id="toggle-kiosk-spotify" class="toggle-btn open-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: ON</button>
+                <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
             </div>
             <div class="config-dashboard" style="margin-bottom: 30px;">
                 <div class="input-group">
@@ -661,9 +661,9 @@
         let requestsAllowed = true;
         let explicitBlockActive = false;
         let queueCapEnabled = false;
-        let guestSpotifyEnabled = true;
+        let guestSpotifyEnabled = false;
         let kioskRequestsAllowed = true;
-        let kioskSpotifyEnabled = true;
+        let kioskSpotifyEnabled = false;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
