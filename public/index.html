@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
     <title>CrowdDJ</title>
     <style>
         :root {
@@ -73,13 +74,13 @@
             min-width: 0;
         }
 
-        /* Compact version of the Spotify attribution, sized to sit directly
-           under the venue title rather than as a full-width page footer. */
+        /* Now used inside .page-footer at the bottom of the page (in normal
+           flow, not fixed), rather than under the venue title. */
         .spotify-attribution-inline {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
-            margin-top: 6px;
             color: #ffffff;
             font-size: 0.8rem;
             font-weight: 600;
@@ -91,7 +92,6 @@
         }
 
         .site-credit {
-            margin-top: 4px;
             font-size: 0.7rem;
             color: #555;
         }
@@ -101,6 +101,17 @@
             cursor: pointer;
         }
         .site-credit a:hover { color: #888; }
+
+        .page-footer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #282828;
+        }
 
         .credits-container {
             display: flex;
@@ -613,11 +624,6 @@
         <div class="header">
             <div class="header-title-block">
                 <h1 id="event-name-header">Song Requests</h1>
-                <div class="spotify-attribution-inline">
-                    <span>Powered by</span>
-                    <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
-                </div>
-                <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
             </div>
             <div class="credits-container">
                 <div class="top-pill-row">
@@ -645,6 +651,17 @@
             <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
         </div>
         <div id="main-display-list"></div>
+
+        <!-- Sits in normal page flow (not fixed), so it naturally moves down
+             as search results or the queue list grow/shrink, rather than
+             overlapping content or staying pinned in one spot. -->
+        <div class="page-footer">
+            <div class="spotify-attribution-inline">
+                <span>Powered by</span>
+                <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
+            </div>
+            <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
+        </div>
     </div>
 
     <!-- MY REQUESTS MODAL -->
@@ -893,7 +910,22 @@
         // updateCreditBadge().
         function startLocalCountdown() {
             if (countdownTimer) return;
+            beginCountdownTimer();
+        }
 
+        // Forces the countdown back to the full duration, even if one was
+        // already running - used right after a credit is actually spent, so
+        // using a second credit mid-countdown resets the wait instead of
+        // keeping whatever time was left.
+        function restartLocalCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            beginCountdownTimer();
+        }
+
+        function beginCountdownTimer() {
             const labelEl = document.getElementById('credit-badge-label');
             const numEl = document.getElementById('credit-badge-number');
             timeRemaining = currentServerDuration;
@@ -1047,7 +1079,7 @@
                     availableCredits--;
                     localStorage.setItem('userCredits', availableCredits);
                     updateCreditBadge(availableCredits);
-                    manageCountdownVisibility();
+                    restartLocalCountdown();
                     await fetchSystemState();
                     return true;
                 } else {
