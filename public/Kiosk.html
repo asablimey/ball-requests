@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
     <title>Kiosk</title>
     <style>
         :root {
@@ -743,7 +744,22 @@
         // updateCreditBadge().
         function startLocalCountdown() {
             if (countdownTimer) return;
+            beginCountdownTimer();
+        }
 
+        // Forces the countdown back to the full duration, even if one was
+        // already running - used right after a credit is actually spent, so
+        // using a second credit mid-countdown resets the wait instead of
+        // keeping whatever time was left.
+        function restartLocalCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            beginCountdownTimer();
+        }
+
+        function beginCountdownTimer() {
             const labelEl = document.getElementById('credit-badge-label');
             const numEl = document.getElementById('credit-badge-number');
             timeRemaining = currentServerDuration;
@@ -897,7 +913,7 @@
                     availableCredits--;
                     localStorage.setItem('userCredits', availableCredits);
                     updateCreditBadge(availableCredits);
-                    manageCountdownVisibility();
+                    restartLocalCountdown();
                     await fetchSystemState();
                     return true;
                 } else {
