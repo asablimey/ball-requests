@@ -573,11 +573,25 @@
                 <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
                 <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
             </div>
-            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
+            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:20px; max-width:600px;">
                 When connected, every newly-accepted request is automatically added to your live Spotify app queue.
                 This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
                 device (open Spotify and play something first). Click to (re)connect.
             </p>
+
+            <div class="config-dashboard" style="margin-bottom: 30px;">
+                <div class="input-group" style="width: 100%; max-width: 460px;">
+                    <label>Fallback Playlist (Spotify link)</label>
+                    <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
+                </div>
+                <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
+            </div>
+            <p style="color:#888; font-size:0.78rem; margin-top:-20px; margin-bottom:8px; max-width:600px;">
+                Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
+                replaced. If a request happens to be playing right now, this will interrupt it, so best used
+                between songs.
+            </p>
+            <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin-top:0; margin-bottom:30px;"></p>
 
             <div class="settings-section-label">System Rules</div>
             <div class="event-name-box">
@@ -618,23 +632,6 @@
                 <div class="filter-chip-row" id="decade-filter-chips"></div>
                 <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
             </div>
-
-            <div class="settings-section-label">Fallback / Theme Playlist</div>
-            <div class="event-name-box" style="margin-bottom: 12px;">
-                <div class="input-group" style="width: 100%;">
-                    <label>Spotify Playlist Link or URI</label>
-                    <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
-                </div>
-            </div>
-            <div class="control-bar" style="margin-bottom: 10px;">
-                <button class="save-config-btn" onclick="saveFallbackPlaylist()">Save Playlist</button>
-            </div>
-            <p class="filter-hint" style="margin-bottom: 30px; max-width: 600px;">
-                Whenever real guest requests don't fill the Live Queue, tracks from this playlist pad out the rest
-                so it never just sits empty. Real requests always come first and are never bumped - this only fills
-                empty slots below the fill target (10). It's display-only: these filler tracks don't get pushed to
-                your Spotify device queue automatically, they just show up in the list. Leave blank to turn this off.
-            </p>
 
             <div class="settings-section-label">Export</div>
             <div class="control-bar" style="margin-bottom: 30px;">
@@ -1029,6 +1026,14 @@ async function verifyPassword() {
                 autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
                 autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
+                if (data.lastSwitchedPlaylist) {
+                    const fallbackInput = document.getElementById('input-fallback-playlist');
+                    if (document.activeElement !== fallbackInput && !fallbackInput.value) {
+                        fallbackInput.value = data.lastSwitchedPlaylist;
+                    }
+                    document.getElementById('fallback-playlist-status').innerText = `Currently playing from: ${data.lastSwitchedPlaylist}`;
+                }
+
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
                     kioskRequestsAllowed = data.kiosk.requestsAllowed;
@@ -1055,10 +1060,6 @@ async function verifyPassword() {
                 }
                 renderFilterChips();
 
-                if (document.activeElement !== document.getElementById('input-fallback-playlist')) {
-                    document.getElementById('input-fallback-playlist').value = data.fallbackPlaylistUri || '';
-                }
-
                 const queueList = document.getElementById('queue-list');
                 queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
                     <div class="song-row">
@@ -1068,17 +1069,15 @@ async function verifyPassword() {
                                 <div class="title-wrapper">
                                     <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    ${song.fromPlaylist ? '<span class="explicit-badge" style="background:var(--spotify-green); color:white;">FROM PLAYLIST</span>' : ''}
                                 </div>
                                 <p class="song-artist">${escapeHtml(song.artist)}</p>
                                 <div class="length-requester-row">
                                     <span class="length-text">Length: ${song.duration}</span>
-                                    ${song.fromPlaylist ? '' : buildRequesterBadge(song.requesters)}
+                                    ${buildRequesterBadge(song.requesters)}
                                 </div>
                             </div>
                         </div>
                         <div class="actions">
-                            ${song.fromPlaylist ? '' : `
                             <div class="admin-vote-block">
                                 <div class="vote-display-node node-up">
                                     <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
@@ -1092,7 +1091,6 @@ async function verifyPassword() {
                             <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
                             <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
                             <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
-                            `}
                         </div>
                     </div>
                 `).join('');
@@ -1117,18 +1115,6 @@ async function verifyPassword() {
                     </div>
                 `).join('');
             } catch(e) { console.log("Sync error."); }
-        }
-
-        async function saveFallbackPlaylist() {
-            if (!isAuthorized) return;
-            const value = document.getElementById('input-fallback-playlist').value;
-            const res = await fetch('/api/admin/config', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ fallbackPlaylist: value })
-            });
-            if (res.ok) alert(value.trim() === '' ? "Fallback playlist cleared." : "Fallback playlist saved - it may take a few seconds to load.");
-            updateDashboard();
         }
 
         async function saveSystemRules() {
@@ -1197,6 +1183,34 @@ async function verifyPassword() {
                 body: JSON.stringify({ radioEditsOnly: !radioEditsOnly })
             });
             updateDashboard();
+        }
+
+        async function switchFallbackPlaylist() {
+            if (!isAuthorized) return;
+            const input = document.getElementById('input-fallback-playlist');
+            const statusEl = document.getElementById('fallback-playlist-status');
+            const url = input.value.trim();
+            if (!url) { showToast('Paste a Spotify playlist link first.', 'error'); return; }
+
+            statusEl.innerText = 'Switching…';
+            try {
+                const res = await fetch('/api/admin/switch-playlist', {
+                    method: 'POST',
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ playlistUrl: url })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Switched to the new playlist.', 'success');
+                    statusEl.innerText = `Currently playing from: ${url}`;
+                } else {
+                    showToast(data.error || 'Could not switch playlist.', 'error');
+                    statusEl.innerText = '';
+                }
+            } catch (e) {
+                showToast('Could not reach the server.', 'error');
+                statusEl.innerText = '';
+            }
         }
 
         function statSongRow(entry, rightSideHtml) {
