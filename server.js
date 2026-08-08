@@ -70,13 +70,7 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 //                           auto-queueing is silently skipped (guest requests still
 //                           work normally, they just don't relay to Spotify).
 const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI;
-// playlist-read-private/collaborative added for genre "stations" below - tracks
-// aren't audible in a Spotify playlist via the client-credentials token the same
-// way this app's own account access works, so pulling station tracks needs the
-// DJ's own token with these scopes. NOTE: Spotify tokens are scope-locked at
-// login time, so an existing connection made before this scope was added won't
-// have it - reconnect via the admin dashboard once to pick up the new scope.
-const DJ_QUEUE_SCOPES = 'user-modify-playback-state user-read-playback-state playlist-read-private playlist-read-collaborative';
+const DJ_QUEUE_SCOPES = 'user-modify-playback-state user-read-playback-state';
 
 let djRefreshToken = process.env.SPOTIFY_REFRESH_TOKEN || null;
 let djAccessToken = null;
@@ -120,11 +114,32 @@ async function getDjAccessToken() {
     }
 }
 
-// (Old queueTrackOnSpotify/passive-append helper removed - see the Auto-DJ
-// engine near the bottom of this file for why direct playback control replaced
-// it: Spotify's queue-add endpoint is strictly FIFO, so once genre-station
-// filler is also being added to that same queue, a new request appended after
-// it would just wait in line rather than actually playing next.)
+// Adds a track to the DJ's live Spotify playback queue. Fails silently (logged,
+// not thrown) so a guest's request always succeeds locally even if the DJ's
+// Spotify isn't open, isn't Premium, or hasn't been connected yet.
+async function queueTrackOnSpotify(trackId) {
+    const token = await getDjAccessToken();
+    if (!token) return;
+    try {
+        const uri = `spotify:track:${trackId}`;
+        const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204 || res.status === 200) {
+            console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
+        } else if (res.status === 404) {
+            console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
+        } else if (res.status === 403) {
+            console.warn('[SPOTIFY QUEUE] Forbidden - this usually means the account is not Spotify Premium.');
+        } else {
+            const body = await res.text();
+            console.error('[SPOTIFY QUEUE] Unexpected response', res.status, body);
+        }
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Request failed:', err.message);
+    }
+}
 
 // One-time login: DJ opens this (from the admin dashboard) and authorizes with
 // their own Spotify account. Gated by the same admin password as everything else
@@ -235,14 +250,12 @@ let systemConfigs = {
     // Whether regular guests (index.html) see the "Connect Spotify" button at
     // all - independent of the kiosk page's own version of the same toggle.
     guestSpotifyConnectEnabled: false,
-    // Master switch for Auto-DJ Mode: when on, this server directly drives
-    // Spotify Connect playback - looping through the active genre station
-    // continuously, with real requests always playing next ahead of the
-    // filler. Meant for unattended stretches (setup/packdown), NOT for live
-    // sets - turn this off once you're mixing on Serato, since this issues
-    // direct "play this now" commands that would otherwise fight with manual
-    // control. When off, this app never touches Spotify playback at all.
-    autoDjModeEnabled: false
+    // Master on/off for relaying accepted requests into the DJ's live Spotify
+    // queue. Independent of whether a DJ account is actually connected - this
+    // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
+    // a run of troll requests) without disconnecting Spotify or closing requests
+    // entirely. Requests still land in the local site queue either way.
+    spotifyAutoQueueEnabled: true
 };
 
 // Separate, independently-configurable settings for kiosk.html - a DJ-attended
@@ -260,94 +273,6 @@ let kioskConfigs = {
 
 function isQueueFull() {
     return systemConfigs.queueCapEnabled && activeQueue.length >= systemConfigs.maxQueueLength;
-}
-
-// --- Auto-DJ genre stations ---
-// Each station is just a name + a Spotify playlist the DJ owns or collaborates
-// on (required - see the scope note on DJ_QUEUE_SCOPES above, Spotify won't
-// hand over playlist contents to a user's own token for playlists they only
-// follow). The active station's tracks get pulled into a shuffled in-memory
-// pool that's played through continuously, refilling itself as it's consumed,
-// whenever there's no real request waiting to play instead.
-let genreStations = []; // [{ id, name, playlistId }]
-let activeStationId = null;
-let stationTrackPool = []; // [{ id, uri, name, artist, artwork }], shuffled, consumed from the end
-
-// Accepts a raw playlist ID, a full open.spotify.com URL, or a spotify: URI,
-// and returns just the bare ID - so the DJ can paste whatever they copied
-// without needing to know Spotify's various ID formats.
-function extractPlaylistId(input) {
-    if (!input) return null;
-    const trimmed = input.trim();
-    const urlMatch = trimmed.match(/playlist\/([a-zA-Z0-9]+)/);
-    if (urlMatch) return urlMatch[1];
-    const uriMatch = trimmed.match(/spotify:playlist:([a-zA-Z0-9]+)/);
-    if (uriMatch) return uriMatch[1];
-    if (/^[a-zA-Z0-9]{22}$/.test(trimmed)) return trimmed;
-    return null;
-}
-
-function shuffleArray(arr) {
-    const copy = [...arr];
-    for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-}
-
-// Pages through a playlist's full track list using the DJ's own OAuth token.
-// Returns [] (logged, never throws) on any failure - a station that can't
-// load just means the engine has nothing to fall back to, not a crash.
-async function fetchStationPlaylistTracks(playlistId) {
-    const token = await getDjAccessToken();
-    if (!token) return [];
-
-    const tracks = [];
-    let url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=100`;
-    try {
-        while (url) {
-            const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!res.ok) {
-                console.warn(`[AUTO-DJ] Could not read playlist ${playlistId} (status ${res.status}) - is it owned/collaborated on by the connected DJ account?`);
-                break;
-            }
-            const data = await res.json();
-            (data.items || []).forEach(entry => {
-                // Spotify's Feb 2026 API changes renamed each entry's "track" field to "item".
-                const t = entry.item || entry.track;
-                if (t && t.id) {
-                    tracks.push({
-                        id: t.id,
-                        uri: `spotify:track:${t.id}`,
-                        name: t.name,
-                        artist: (t.artists || []).map(a => a.name).join(', '),
-                        artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48'
-                    });
-                }
-            });
-            url = data.next || null;
-        }
-    } catch (err) {
-        console.error('[AUTO-DJ] Playlist fetch failed:', err.message);
-    }
-    return tracks;
-}
-
-// Pulls the next track for the currently active station, refilling/reshuffling
-// the in-memory pool from Spotify whenever it runs out. Returns null if there's
-// no active station, or the station's playlist couldn't be read at all.
-async function getNextStationTrack() {
-    if (!activeStationId) return null;
-    const station = genreStations.find(s => s.id === activeStationId);
-    if (!station) return null;
-
-    if (stationTrackPool.length === 0) {
-        const tracks = await fetchStationPlaylistTracks(station.playlistId);
-        if (tracks.length === 0) return null;
-        stationTrackPool = shuffleArray(tracks);
-    }
-    return stationTrackPool.pop();
 }
 
 // Curated genre buckets mapped to the keywords Spotify actually uses in an
@@ -716,6 +641,13 @@ app.post('/api/request', async (req, res) => {
             downvoters: [],
             requesters: [requesterName]
         });
+        // Relay to the DJ's actual Spotify playback queue. Only on first entry -
+        // a duplicate request just upvotes the existing local entry above, it
+        // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
+        // let a slow/failed Spotify call delay or fail the guest's request.
+        if (systemConfigs.spotifyAutoQueueEnabled) {
+            queueTrackOnSpotify(trackId);
+        }
     }
 
     requestLog.push({
@@ -861,12 +793,8 @@ app.get('/api/admin/data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
-        autoDjModeEnabled: systemConfigs.autoDjModeEnabled,
+        spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
         djSpotifyQueueConnected: !!djRefreshToken,
-        genreStations: genreStations,
-        activeStationId: activeStationId,
-        autoDjNowPlaying: autoDjNowPlaying,
-        autoDjStatusNote: autoDjStatusNote,
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
@@ -977,54 +905,9 @@ app.post('/api/admin/toggle-guest-spotify', (req, res) => {
     res.json({ success: true });
 });
 
-app.post('/api/admin/toggle-auto-dj', (req, res) => {
+app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
     const { enabled } = req.body;
-    if (typeof enabled === 'boolean') {
-        systemConfigs.autoDjModeEnabled = enabled;
-        if (!enabled) {
-            // Stop tracking what we last commanded so a stale "our track ending"
-            // check doesn't fire a stray play command right after being re-enabled.
-            autoDjLastCommandedTrackId = null;
-            autoDjStatusNote = 'Idle';
-        }
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/admin/stations', async (req, res) => {
-    const { name, playlistInput } = req.body;
-    const playlistId = extractPlaylistId(playlistInput);
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-        return res.status(400).json({ error: 'Station needs a name.' });
-    }
-    if (!playlistId) {
-        return res.status(400).json({ error: "Couldn't read a playlist ID from that - paste the playlist's share link or URI." });
-    }
-    genreStations.push({ id: crypto.randomUUID(), name: name.trim().slice(0, 40), playlistId });
-    res.json({ success: true });
-});
-
-app.post('/api/admin/stations/remove', (req, res) => {
-    const { id } = req.body;
-    genreStations = genreStations.filter(s => s.id !== id);
-    if (activeStationId === id) {
-        activeStationId = null;
-        stationTrackPool = [];
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/admin/stations/activate', (req, res) => {
-    const { id } = req.body;
-    if (id === null) {
-        activeStationId = null;
-        stationTrackPool = [];
-        return res.json({ success: true });
-    }
-    const station = genreStations.find(s => s.id === id);
-    if (!station) return res.status(404).json({ error: 'Station not found.' });
-    activeStationId = id;
-    stationTrackPool = []; // force a fresh fetch/shuffle from the newly-active station
+    if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
     res.json({ success: true });
 });
 
@@ -1113,136 +996,36 @@ app.post('/api/admin/action', (req, res) => {
     res.json({ success: true });
 });
 
-// --- Auto-DJ engine + now-playing sync, one poller ---
-// Two independent jobs share this single poll so we're not making two
-// concurrent GET /player calls every tick:
-//   1. Always on: if whatever's currently playing matches a track still sitting
-//      in the local request queue, mark it played - works whether or not
-//      Auto-DJ Mode is on, since this is read-only and never issues a command.
-//   2. Only when autoDjModeEnabled: decide whether playback needs to advance
-//      (nothing playing, or the current track is nearly over) and directly
-//      command the next one - a real request first if one's waiting, otherwise
-//      the next track from the active genre station's rotation.
+// --- Auto-sync: remove a request from the local queue the moment Spotify
+// actually starts playing it, so the DJ doesn't have to manually click
+// "Played" for every guest request. Only touches tracks that are still in
+// activeQueue - the DJ's regular playlist tracks never match anything here,
+// so this has no effect when nothing requested is currently playing.
 let lastSyncedNowPlayingId = null;
-let autoDjLastCommandedTrackId = null;
-let autoDjLastKnownDeviceId = null;
-let autoDjNowPlaying = null; // { title, artist, artwork } - for the admin UI only
-let autoDjStatusNote = 'Idle';
-
-async function commandTrackToPlay(track) {
-    const token = await getDjAccessToken();
-    if (!token) return false;
-    try {
-        const body = { uris: [track.uri] };
-        const qs = autoDjLastKnownDeviceId ? `?device_id=${encodeURIComponent(autoDjLastKnownDeviceId)}` : '';
-        const res = await fetch(`https://api.spotify.com/v1/me/player/play${qs}`, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        if (res.status === 204 || res.status === 200) {
-            autoDjLastCommandedTrackId = track.id;
-            autoDjNowPlaying = { title: track.title || track.name, artist: track.artist, artwork: track.artwork };
-            autoDjStatusNote = `Playing: ${autoDjNowPlaying.title} - ${autoDjNowPlaying.artist}`;
-            return true;
-        }
-        if (res.status === 404) {
-            autoDjStatusNote = 'No active Spotify device - open Spotify and start playback once to give it a device to target.';
-        } else if (res.status === 403) {
-            autoDjStatusNote = 'Spotify refused playback control - this usually means the account is not Premium.';
-        } else {
-            autoDjStatusNote = `Spotify returned an unexpected error (status ${res.status}).`;
-        }
-        console.warn('[AUTO-DJ]', autoDjStatusNote);
-        return false;
-    } catch (err) {
-        autoDjStatusNote = 'Playback command failed: ' + err.message;
-        console.error('[AUTO-DJ]', autoDjStatusNote);
-        return false;
-    }
-}
-
-async function runAutoDjAdvanceCheck(currentPlaybackData) {
-    if (!systemConfigs.autoDjModeEnabled) return;
-
-    const item = currentPlaybackData?.item;
-    const isPlaying = currentPlaybackData?.is_playing;
-    if (currentPlaybackData?.device?.id) autoDjLastKnownDeviceId = currentPlaybackData.device.id;
-
-    // Needs a new track commanded if: nothing is playing at all, or the track
-    // we last commanded is now within ~1.5s of ending. Deliberately does NOT
-    // treat "paused" as needing an advance - a manual pause is respected, not
-    // fought.
-    const nothingPlaying = !item || !isPlaying;
-    const currentIsOurs = item && item.id === autoDjLastCommandedTrackId;
-    const nearingEnd = currentIsOurs && item.duration_ms && (currentPlaybackData.progress_ms >= item.duration_ms - 1500);
-
-    // If a track is playing that we didn't command (DJ manually picked something
-    // on their phone, say), just let it run - don't interrupt. We'll pick back
-    // up once it ends or nothing's playing.
-    if (item && !currentIsOurs && isPlaying) {
-        autoDjStatusNote = `Currently playing something outside Auto-DJ's control: ${item.name}`;
-        return;
-    }
-
-    if (!nothingPlaying && !nearingEnd) return; // still got time left on the current track
-
-    // Real requests always take priority over station filler.
-    const sorted = buildSortedQueue();
-    if (sorted.length > 0) {
-        const next = sorted[0];
-        const trackIndex = activeQueue.findIndex(t => t.id === next.id);
-        const played = await commandTrackToPlay({ id: next.id, uri: `spotify:track:${next.id}`, title: next.title, artist: next.artist, artwork: next.artwork });
-        if (played && trackIndex !== -1) markTrackPlayedByIndex(trackIndex);
-        return;
-    }
-
-    // Nothing requested - pull from the active genre station's rotation.
-    const stationTrack = await getNextStationTrack();
-    if (stationTrack) {
-        await commandTrackToPlay({ id: stationTrack.id, uri: stationTrack.uri, title: stationTrack.name, artist: stationTrack.artist, artwork: stationTrack.artwork });
-    } else {
-        autoDjStatusNote = activeStationId
-            ? 'Waiting - could not load tracks for the active station (check it\'s owned/collaborated on by the connected account).'
-            : 'Waiting - no requests queued and no genre station is set active.';
-    }
-}
-
-async function pollSpotifyPlayback() {
+async function syncNowPlayingWithQueue() {
     const token = await getDjAccessToken();
     if (!token) return;
-    let data = null;
     try {
-        const res = await fetch('https://api.spotify.com/v1/me/player', {
+        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.status === 204 || res.status === 404) {
-            data = null; // nothing playing / no active device
-        } else if (res.ok) {
-            data = await res.json();
-        } else {
-            return;
-        }
-    } catch (err) {
-        console.error('[SPOTIFY SYNC] Poll failed:', err.message);
-        return;
-    }
-
-    // Job 1: always-on sync, regardless of Auto-DJ Mode.
-    const nowPlayingId = data?.item?.id;
-    if (nowPlayingId && nowPlayingId !== lastSyncedNowPlayingId) {
+        if (res.status === 204 || res.status === 404) return; // nothing playing
+        if (!res.ok) return;
+        const data = await res.json();
+        const nowPlayingId = data?.item?.id;
+        if (!nowPlayingId || nowPlayingId === lastSyncedNowPlayingId) return;
         lastSyncedNowPlayingId = nowPlayingId;
+
         const trackIndex = activeQueue.findIndex(t => t.id === nowPlayingId);
         if (trackIndex !== -1) {
             const track = markTrackPlayedByIndex(trackIndex);
             console.log('[SPOTIFY SYNC] Now playing, removed from local queue:', track.title);
         }
+    } catch (err) {
+        console.error('[SPOTIFY SYNC] Poll failed:', err.message);
     }
-
-    // Job 2: Auto-DJ advance decision, only when the mode is on.
-    await runAutoDjAdvanceCheck(data);
 }
-setInterval(pollSpotifyPlayback, 5000);
+setInterval(syncNowPlayingWithQueue, 5000);
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
