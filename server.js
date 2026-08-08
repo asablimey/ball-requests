@@ -36,1115 +36,482 @@ function parseCookies(req) {
 app.use((req, res, next) => {
     const cookies = parseCookies(req);
     let vid = cookies[VOTER_COOKIE];
-    if (!vid) {
-        vid = crypto.randomUUID();
-        res.cookie(VOTER_COOKIE, vid, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'lax',
-            maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-        });
+    if (!vid || typeof vid !== 'string' || vid.length < 16) {
+        vid = crypto.randomBytes(16).toString('hex');
+        const isProd = process.env.NODE_ENV === 'production';
+        const parts = [
+            `${VOTER_COOKIE}=${encodeURIComponent(vid)}`,
+            'Path=/',
+            'HttpOnly',
+            'SameSite=Lax',
+            `Max-Age=${60 * 60 * 24 * 365}`
+        ];
+        if (isProd) parts.push('Secure');
+        res.setHeader('Set-Cookie', parts.join('; '));
     }
-    req.serverVoterId = vid;
+    req.voterId = vid;
     next();
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
-const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+let djTokens = null;
+let activeQueue = [];
+let pendingFallbackSwitch = null; // { playlistUri, requestedAt }
+let lastSyncedNowPlayingId = null;
 
-// --- DJ Spotify Queue Relay ---
-// Separate from the client-credentials token above (which only reads the public
-// catalog for search) and separate from guests' own read-only PKCE login. This is
-// a one-time Authorization Code login as the DJ's own Spotify account, which is
-// the only kind of token Spotify accepts for POST /me/player/queue - adding to
-// *your* actual playback queue requires the user-modify-playback-state scope,
-// which can only be granted by that account logging in, not by an app-only token.
-//
-// Required env vars:
-//   SPOTIFY_REDIRECT_URI - e.g. https://your-app.onrender.com/admin/spotify-callback
-//                           Must be registered exactly (including https and path)
-//                           in your Spotify Developer Dashboard app settings.
-//   SPOTIFY_REFRESH_TOKEN - filled in after the one-time login below; without it,
-//                           auto-queueing is silently skipped (guest requests still
-//                           work normally, they just don't relay to Spotify).
-const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI;
-const DJ_QUEUE_SCOPES = 'user-modify-playback-state user-read-playback-state';
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+const DJ_REFRESH_TOKEN = process.env.DJ_REFRESH_TOKEN;
+const DJ_ADMIN_PASSWORD = process.env.DJ_ADMIN_PASSWORD || 'secret123';
 
-let djRefreshToken = process.env.SPOTIFY_REFRESH_TOKEN || null;
-let djAccessToken = null;
-let djAccessTokenExpiresAt = 0;
-let pendingLoginState = null; // basic CSRF check for the single-admin login flow
+const MAX_ACTIVE_QUEUE_SIZE = 50;
+const INITIAL_CREDITS = 3;
+const CREDIT_REGEN_TIME_MS = 3 * 60 * 1000; // 3 minutes
 
-// Exchanges the stored DJ refresh token for a fresh access token, caching it
-// until shortly before it expires. Returns null (rather than throwing) if DJ
-// queueing isn't set up yet, so callers can treat "not configured" and
-// "temporarily failed" the same way: just skip queueing, never block a guest's request.
+const voterCreditsMap = {};
+const voterRequestHistoryMap = {};
+const sessionUsernames = {};
+
+function getVoterCredits(voterId) {
+    if (!voterCreditsMap[voterId]) {
+        voterCreditsMap[voterId] = {
+            credits: INITIAL_CREDITS,
+            lastRegenTime: Date.now()
+        };
+    } else {
+        const data = voterCreditsMap[voterId];
+        const now = Date.now();
+        const timePassed = now - data.lastRegenTime;
+        if (data.credits < INITIAL_CREDITS && timePassed >= CREDIT_REGEN_TIME_MS) {
+            const creditsToAdd = Math.floor(timePassed / CREDIT_REGEN_TIME_MS);
+            data.credits = Math.min(INITIAL_CREDITS, data.credits + creditsToAdd);
+            data.lastRegenTime = now;
+        }
+    }
+    return voterCreditsMap[voterId];
+}
+
+function consumeCredit(voterId) {
+    const creditData = getVoterCredits(voterId);
+    if (creditData.credits > 0) {
+        creditData.credits -= 1;
+        creditData.lastRegenTime = Date.now();
+        return true;
+    }
+    return false;
+}
+
+function addTrackToHistory(voterId, track) {
+    if (!voterRequestHistoryMap[voterId]) {
+        voterRequestHistoryMap[voterId] = [];
+    }
+    voterRequestHistoryMap[voterId].unshift({
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        albumArt: track.albumArt,
+        requestedAt: Date.now()
+    });
+}
+
+function markTrackPlayedByIndex(index) {
+    if (index >= 0 && index < activeQueue.length) {
+        const [playedTrack] = activeQueue.splice(index, 1);
+        playedTrack.played = true;
+        playedTrack.playedAt = Date.now();
+
+        if (playedTrack.username && playedTrack.username !== 'System Backup') {
+            const history = voterRequestHistoryMap[playedTrack.requestedBy] || [];
+            const historyItem = history.find(t => t.id === playedTrack.id);
+            if (historyItem) {
+                historyItem.played = true;
+                historyItem.playedAt = playedTrack.playedAt;
+            }
+        }
+        return playedTrack;
+    }
+    return null;
+}
+
 async function getDjAccessToken() {
-    if (!djRefreshToken) return null;
-    if (djAccessToken && Date.now() < djAccessTokenExpiresAt - 30000) return djAccessToken;
+    if (djTokens && djTokens.access_token && Date.now() < djTokens.expires_at) {
+        return djTokens.access_token;
+    }
+    if (!DJ_REFRESH_TOKEN || !SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
+        console.error('Missing Spotify Credentials in Environment Variables!');
+        return null;
+    }
     try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
+        const basicAuth = Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64');
+        const res = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Authorization': `Basic ${basicAuth}`,
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(djRefreshToken)
+            body: new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: DJ_REFRESH_TOKEN
+            })
         });
-        const data = await response.json();
-        if (!data.access_token) {
-            console.error('[SPOTIFY QUEUE] Refresh failed:', data.error_description || data.error);
+        const data = await res.json();
+        if (data.access_token) {
+            djTokens = {
+                access_token: data.access_token,
+                expires_at: Date.now() + (data.expires_in - 60) * 1000
+            };
+            return djTokens.access_token;
+        } else {
+            console.error('Failed to refresh token:', data);
             return null;
         }
-        djAccessToken = data.access_token;
-        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-        // Spotify occasionally rotates the refresh token on use. If it does, the
-        // old one stops working - swap in-memory so this session keeps running,
-        // but flag it loudly since the Render env var is now stale.
-        if (data.refresh_token && data.refresh_token !== djRefreshToken) {
-            djRefreshToken = data.refresh_token;
-            console.warn('[SPOTIFY QUEUE] Spotify issued a new refresh token. Update SPOTIFY_REFRESH_TOKEN in Render to:', djRefreshToken);
-        }
-        return djAccessToken;
     } catch (err) {
-        console.error('[SPOTIFY QUEUE] Token refresh error:', err.message);
+        console.error('Token refresh error:', err);
         return null;
     }
 }
 
-// Adds a track to the DJ's live Spotify playback queue. Fails silently (logged,
-// not thrown) so a guest's request always succeeds locally even if the DJ's
-// Spotify isn't open, isn't Premium, or hasn't been connected yet.
 async function queueTrackOnSpotify(trackId) {
     const token = await getDjAccessToken();
-    if (!token) return;
-    try {
-        const uri = `spotify:track:${trackId}`;
-        const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.status === 204 || res.status === 200) {
-            console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
-        } else if (res.status === 404) {
-            console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
-        } else if (res.status === 403) {
-            console.warn('[SPOTIFY QUEUE] Forbidden - this usually means the account is not Spotify Premium.');
-        } else {
-            const body = await res.text();
-            console.error('[SPOTIFY QUEUE] Unexpected response', res.status, body);
-        }
-    } catch (err) {
-        console.error('[SPOTIFY QUEUE] Request failed:', err.message);
-    }
-}
+    if (!token) throw new Error('No Spotify DJ Access Token');
 
-// Extracts a bare playlist ID from whatever format the DJ pastes in -
-// a full open.spotify.com URL (with or without query params), a spotify:
-// URI, or just the bare ID itself.
-function extractSpotifyPlaylistId(input) {
-    if (!input) return null;
-    const str = input.trim();
-    let match = str.match(/playlist[\/:]([a-zA-Z0-9]+)/);
-    if (match) return match[1];
-    if (/^[a-zA-Z0-9]+$/.test(str)) return str; // already a bare ID
-    return null;
-}
-
-// Holds a fallback-playlist switch that's waiting for the currently playing
-// track to finish, rather than cutting it off. Set by /api/admin/switch-playlist,
-// fired by maybeFireFallbackSwitch() from within the syncNowPlayingWithQueue poller.
-let pendingFallbackSwitch = null; // { playlistUrl, watchedTrackId }
-
-// Immediately switches Spotify's active playback to a new playlist. Unlike
-// queueTrackOnSpotify (which adds one track ahead of whatever's already
-// queued), this REPLACES the current context entirely - Spotify clears
-// whatever it had lined up next from the old playlist and starts fresh
-// from the new one. This is what "kill the old playlist's up-next and
-// switch" actually requires; there's no way to just clear Spotify's
-// auto-generated queue without starting new context playback.
-async function switchDjPlaylist(playlistUri) {
-    const token = await getDjAccessToken();
-    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
-
-    const playlistId = extractSpotifyPlaylistId(playlistUri);
-    if (!playlistId) return { success: false, error: 'Could not parse a playlist ID from that link.' };
-
-    try {
-        const res = await fetch('https://api.spotify.com/v1/me/player/play', {
-            method: 'PUT',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ context_uri: `spotify:playlist:${playlistId}` })
-        });
-        if (res.status === 204 || res.status === 200) {
-            console.log('[SPOTIFY QUEUE] Switched playlist to:', playlistId);
-            return { success: true };
-        } else if (res.status === 404) {
-            return { success: false, error: 'No active device - open Spotify and play something first, then try switching again.' };
-        } else if (res.status === 403) {
-            return { success: false, error: 'Forbidden - this usually means the account is not Spotify Premium.' };
-        } else {
-            const body = await res.text();
-            console.error('[SPOTIFY QUEUE] Switch failed', res.status, body);
-            return { success: false, error: `Spotify rejected the switch (status ${res.status}).` };
-        }
-    } catch (err) {
-        console.error('[SPOTIFY QUEUE] Switch request failed:', err.message);
-        return { success: false, error: 'Request to Spotify failed.' };
-    }
-}
-
-
-// One-time login: DJ opens this (from the admin dashboard) and authorizes with
-// their own Spotify account. Gated by the same admin password as everything else
-// in /api/admin, but this route can't live under that prefix since it needs to be
-// a plain browser navigation (redirects can't carry a custom header).
-app.get('/admin/spotify-login', (req, res) => {
-    if (req.query.password !== ADMIN_PASSWORD) {
-        return res.status(401).send('Unauthorized.');
-    }
-    if (!SPOTIFY_REDIRECT_URI) {
-        return res.status(500).send('SPOTIFY_REDIRECT_URI is not set in your environment variables. Set it to this app\'s URL + /admin/spotify-callback, add that exact URL to your Spotify Developer Dashboard app\'s Redirect URIs, then try again.');
-    }
-    pendingLoginState = crypto.randomUUID();
-    const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: CLIENT_ID,
-        scope: DJ_QUEUE_SCOPES,
-        redirect_uri: SPOTIFY_REDIRECT_URI,
-        state: pendingLoginState
+    const uri = `spotify:track:${trackId}`;
+    const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
     });
-    res.redirect(`https://accounts.spotify.com/authorize?${params.toString()}`);
-});
 
-app.get('/admin/spotify-callback', async (req, res) => {
-    const { code, state, error } = req.query;
-    if (error) return res.status(400).send(`Spotify login failed: ${error}`);
-    if (!state || state !== pendingLoginState) return res.status(400).send('State mismatch - please restart the login from the admin dashboard.');
-    pendingLoginState = null;
-
-    try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-                grant_type: 'authorization_code',
-                code,
-                redirect_uri: SPOTIFY_REDIRECT_URI
-            }).toString()
-        });
-        const data = await response.json();
-        if (!data.refresh_token) {
-            return res.status(500).send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
-        }
-        djRefreshToken = data.refresh_token;
-        djAccessToken = data.access_token;
-        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-
-        res.send(`
-            <html><body style="font-family: sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.5;">
-                <h2>Spotify connected ✅</h2>
-                <p>Auto-queueing is now active for the rest of this server session.</p>
-                <p><strong>To make this survive restarts/redeploys</strong>, copy the value below into your Render environment variables as <code>SPOTIFY_REFRESH_TOKEN</code>, then redeploy:</p>
-                <textarea readonly style="width:100%; height:80px; font-family: monospace; padding:8px;">${djRefreshToken}</textarea>
-                <p style="color:#666; font-size:0.9em;">This value is sensitive - treat it like a password. Don't post it anywhere public.</p>
-            </body></html>
-        `);
-    } catch (err) {
-        res.status(500).send('Token exchange failed: ' + err.message);
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Spotify Queue API returned ${res.status}: ${errText}`);
     }
-});
+}
 
+async function startPlaylistPlaybackOnSpotify(playlistUri) {
+    const token = await getDjAccessToken();
+    if (!token) throw new Error('No Spotify DJ Access Token');
 
-// Real, server-side admin auth. Previously the "password" only gated the UI in
-// admin.html client-side - the API routes underneath had no check at all, so
-// anyone could call them directly with no password. This closes that gap.
-// Set ADMIN_PASSWORD in your Render environment variables; falls back to the
-// existing password only if that's not set, so this doesn't break on deploy.
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ballDJ2026';
+    const res = await fetch('https://api.spotify.com/v1/me/player/play', {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ context_uri: playlistUri })
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Spotify Play API returned ${res.status}: ${errText}`);
+    }
+}
+
+async function maybeFireFallbackSwitch(currentNowPlayingId) {
+    if (!pendingFallbackSwitch) return;
+
+    // Check if any unplayed guest requests remain in activeQueue
+    const activeUnplayedRequests = activeQueue.filter(t => !t.played);
+
+    // Context switch only fires when guest requests are empty AND whatever track
+    // was playing when the switch was requested has finished playing.
+    if (activeUnplayedRequests.length === 0) {
+        const targetUri = pendingFallbackSwitch.playlistUri;
+        pendingFallbackSwitch = null;
+        try {
+            await startPlaylistPlaybackOnSpotify(targetUri);
+            console.log('[FALLBACK SWITCH] Fired fallback context switch to:', targetUri);
+        } catch (err) {
+            console.error('[FALLBACK SWITCH] Failed to switch playback context:', err.message);
+        }
+    }
+}
 
 function requireAdminAuth(req, res, next) {
-    const provided = req.headers['x-admin-password'];
-    if (provided !== ADMIN_PASSWORD) {
-        return res.status(401).json({ error: 'Unauthorized.' });
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        if (token === DJ_ADMIN_PASSWORD) {
+            return next();
+        }
     }
-    next();
+    return res.status(401).json({ error: 'Unauthorized: Invalid DJ Admin Password' });
 }
-app.use('/api/admin', requireAdminAuth);
 
-// The guest page's "Connect Spotify" button needs the Client ID (not the secret) to run
-// its own PKCE login. Client IDs aren't sensitive - this is safe to expose publicly.
-app.get('/api/public-config', (req, res) => {
-    res.json({ spotifyClientId: CLIENT_ID });
+app.get('/api/spotify-config', (req, res) => {
+    res.json({
+        clientId: SPOTIFY_CLIENT_ID || ''
+    });
 });
 
-let systemConfigs = {
-    maxCredits: 3,
-    countdownLength: 60,
-    requestsAllowed: true,
-    explicitBlockActive: false,
-    // When on, extended/club/dub/instrumental-style mixes are filtered out of
-    // search results and blocked from being requested directly - see
-    // isExtendedOrClubMix() below for exactly what counts as one.
-    radioEditsOnly: false,
-    eventName: '',
-    // Queue length cap: once activeQueue.length hits maxQueueLength, requests
-    // auto-close. Nothing is "stuck closed" here - it's recomputed from the
-    // live queue length on every request, so it reopens on its own as the
-    // queue drains, with no separate flag that could get out of sync.
-    queueCapEnabled: false,
-    maxQueueLength: 50,
-    // Genre/decade filters: DJ-configurable allow-lists for theme nights.
-    // Empty array = no restriction (everything allowed) for that filter.
-    genreFilter: [],   // array of GENRE_CATEGORIES keys, e.g. ['pop', 'rock']
-    decadeFilter: [],  // array of decade-start years, e.g. [1980, 1990]
-    // Whether regular guests (index.html) see the "Connect Spotify" button at
-    // all - independent of the kiosk page's own version of the same toggle.
-    guestSpotifyConnectEnabled: false,
-    // Master on/off for relaying accepted requests into the DJ's live Spotify
-    // queue. Independent of whether a DJ account is actually connected - this
-    // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
-    // a run of troll requests) without disconnecting Spotify or closing requests
-    // entirely. Requests still land in the local site queue either way.
-    spotifyAutoQueueEnabled: true,
-    // Just for display in the admin dashboard - "what's the fallback playlist
-    // right now" - not used for anything functional server-side.
-    lastSwitchedPlaylist: ''
-};
-
-// Separate, independently-configurable settings for kiosk.html - a DJ-attended
-// device (e.g. a tablet on a stand) as opposed to guests' own phones. Requests
-// on/off, the Spotify Connect button, and credit rules are all controlled
-// separately here from the regular guest page. The live queue, explicit
-// filter, genre/decade filters, and queue cap are still shared/global - those
-// describe the event itself, not which device someone's requesting from.
-let kioskConfigs = {
-    requestsAllowed: true,
-    spotifyConnectEnabled: false,
-    maxCredits: 3,
-    countdownLength: 60
-};
-
-function isQueueFull() {
-    return systemConfigs.queueCapEnabled && activeQueue.length >= systemConfigs.maxQueueLength;
-}
-
-// Curated genre buckets mapped to the keywords Spotify actually uses in an
-// artist's `genres` array (which is a long tail of very specific micro-genres,
-// e.g. "chicago rap" - matching by substring against a curated list is far
-// more usable for a DJ than trying to expose Spotify's raw genre taxonomy.
-const GENRE_CATEGORIES = {
-    pop: ['pop'],
-    hiphop: ['hip hop', 'rap', 'trap'],
-    rock: ['rock', 'metal', 'punk', 'grunge'],
-    rnb: ['r&b', 'soul', 'funk'],
-    country: ['country'],
-    electronic: ['edm', 'house', 'techno', 'electro', 'dance', 'dubstep', 'trance', 'drum and bass'],
-    latin: ['latin', 'reggaeton', 'salsa', 'bachata', 'cumbia'],
-    indie: ['indie', 'alternative'],
-    jazz: ['jazz', 'blues'],
-    classical: ['classical', 'orchestra', 'opera'],
-    reggae: ['reggae', 'dancehall', 'ska'],
-    kpop: ['k-pop', 'korean pop'],
-    afrobeats: ['afrobeat', 'afro pop', 'afrobeats']
-};
-
-// Batch-fetches genres for a list of artist IDs. Track objects from Spotify's
-// search endpoint don't include genre info directly - only the artist objects
-// do - so genre filtering costs one extra API call per search (only made when
-// a genre filter is actually active).
-async function getArtistGenres(artistIds) {
-    const map = new Map();
-    if (!artistIds || artistIds.length === 0) return map;
-    if (!spotifyAccessToken) await getSpotifyToken();
-    try {
-        const res = await fetch(`https://api.spotify.com/v1/artists?ids=${artistIds.slice(0, 50).join(',')}`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-        });
-        const data = await res.json();
-        (data.artists || []).forEach(a => { if (a && a.id) map.set(a.id, a.genres || []); });
-    } catch (err) {
-        console.error("[SPOTIFY] Artist genre lookup failed:", err.message);
+app.post('/api/username', (req, res) => {
+    const { username } = req.body;
+    if (!username || typeof username !== 'string' || !username.trim()) {
+        return res.status(400).json({ error: 'Username is required.' });
     }
-    return map;
-}
+    const cleanName = username.trim().slice(0, 30);
+    sessionUsernames[req.voterId] = cleanName;
+    res.json({ success: true, username: cleanName });
+});
 
-let activeQueue = [];
-let playedHistory = [];
-let spotifyAccessToken = "";
+app.get('/api/username', (req, res) => {
+    res.json({ username: sessionUsernames[req.voterId] || null });
+});
 
-// --- Abuse/spam control state ---
-// Server-authoritative credits per guest (voterId), mirrors the client's local display
-// but can't be bypassed by clearing localStorage credits, only by generating a brand
-// new voterId (a much higher bar than editing one number in devtools).
-let voterCreditState = new Map(); // voterId -> { available, lastRefill }
-let voterLastVoteAt = new Map(); // voterId -> timestamp of last vote action
-const MIN_VOTE_INTERVAL_MS = 400;
-
-function getOrCreateVoterCreditState(voterId, maxCredits) {
-    let state = voterCreditState.get(voterId);
-    if (!state) {
-        state = { available: maxCredits, lastRefill: Date.now() };
-        voterCreditState.set(voterId, state);
-    }
-    return state;
-}
-
-function refillVoterCredits(state, maxCredits, countdownLength) {
-    const now = Date.now();
-    const cycleMs = Math.max(1, countdownLength) * 1000;
-    const elapsed = now - state.lastRefill;
-    const cycles = Math.floor(elapsed / cycleMs);
-    if (cycles > 0) {
-        state.available = Math.min(maxCredits, state.available + cycles);
-        state.lastRefill += cycles * cycleMs;
-    }
-    if (state.available > maxCredits) state.available = maxCredits;
-}
-
-// --- Guest "My Requests" log ---
-// Independent of activeQueue/playedHistory so a guest can still see a song's fate
-// (played or dropped) even after it leaves the live queue entirely.
-let requestLog = [];
-
-// Every song that leaves the active queue (played or dropped) gets one entry
-// here, with its final vote counts and requester list captured before that
-// data would otherwise be lost. This is what the Stats tab reads from.
-let queueHistoryLog = [];
-
-function markRequestLogStatus(trackId, newStatus) {
-    requestLog.forEach(entry => {
-        if (entry.trackId === trackId && entry.status === 'queued') {
-            entry.status = newStatus;
-            entry.resolvedAt = Date.now();
-        }
-    });
-}
-
-function logDepartedTrack(track, outcome) {
-    queueHistoryLog.push({
-        title: track.title,
-        artist: track.artist,
-        artwork: track.artwork,
-        // "system-generated" is an internal marker (see /api/request) for a
-        // duplicate request re-upvoting an existing queue entry, not a real guest.
-        ups: (track.upvoters || []).filter(v => v !== 'system-generated' && v !== 'forced-admin-boost').length,
-        downs: (track.downvoters || []).length,
-        requesters: track.requesters || [],
-        outcome, // 'played' | 'dropped'
-        timestamp: Date.now()
-    });
-    // Keep this from growing forever across a long-running server.
-    if (queueHistoryLog.length > 3000) queueHistoryLog = queueHistoryLog.slice(-3000);
-}
-
-
-function formatDuration(ms) {
-    const minutes = Math.floor(ms / 60000);
-    const seconds = ((ms % 60000) / 1000).toFixed(0);
-    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-}
-
-// Detects extended/club/dub/DJ-style mixes by the descriptor Spotify usually
-// puts in the track title, e.g. "Song Name - Extended Mix" or "(Club Mix)".
-// Deliberately does NOT flag "radio edit"/"radio mix"/"radio version" or plain
-// titles with no descriptor at all - those are exactly what should stay
-// available when this filter is on.
-const EXTENDED_MIX_PATTERN = /\b(extended|club|dub|instrumental|maxi[\s-]?mix|12["']?\s*mix|full[\s-]?length|uncut|dj\s*mix|extended\s*version|extended\s*edit)\b/i;
-function isExtendedOrClubMix(trackName) {
-    if (!trackName) return false;
-    return EXTENDED_MIX_PATTERN.test(trackName);
-}
-
-async function getSpotifyToken() {
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-        console.error("[SPOTIFY] Missing credentials in environment.");
-        return;
-    }
-    try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: 'grant_type=client_credentials'
-        });
-        const data = await response.json();
-        if (data.access_token) {
-            spotifyAccessToken = data.access_token;
-            console.log("[SPOTIFY] Master token refreshed.");
-        }
-    } catch (err) {
-        console.error("[SPOTIFY] Auth error:", err.message);
-    }
-}
-setInterval(getSpotifyToken, 1000 * 60 * 50);
-
-// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
 app.get('/api/search', async (req, res) => {
-    if (!systemConfigs.requestsAllowed || isQueueFull()) {
-        return res.json({ tracks: [] }); 
-    }
-
     const query = req.query.q;
-    if (!query) return res.json({ tracks: [] });
-    if (!spotifyAccessToken) await getSpotifyToken();
+    if (!query) return res.status(400).json({ error: 'Query parameter q is required' });
+
+    const token = await getDjAccessToken();
+    if (!token) return res.status(500).json({ error: 'Spotify integration not configured on server.' });
 
     try {
-        // Spotify's Feb 2026 API changes capped a single search request's `limit`
-        // at 10 (down from 50). To still return a longer result list (25, i.e.
-        // 2.5x the old default of 10), page through with `offset` across 3
-        // parallel requests instead of one bigger one.
-        const PAGE_SIZE = 10;
-        const TOTAL_RESULTS = 25;
-        const offsets = [];
-        for (let offset = 0; offset < TOTAL_RESULTS; offset += PAGE_SIZE) offsets.push(offset);
-
-        const responses = await Promise.all(offsets.map(offset =>
-            fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${PAGE_SIZE}&offset=${offset}`, {
-                headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-            })
-        ));
-
-        const failed = responses.find(r => !r.ok);
-        if (failed) {
-            const errBody = await failed.json().catch(() => ({}));
-            console.error('[SEARCH] Spotify rejected the request:', failed.status, JSON.stringify(errBody));
-            // Token may have gone bad mid-session - force a fresh one on the *next*
-            // search rather than silently returning empty results every time.
-            spotifyAccessToken = null;
-            return res.status(502).json({ error: "Spotify search temporarily unavailable." });
-        }
-
-        const pages = await Promise.all(responses.map(r => r.json()));
-        const trackItems = pages.flatMap(page => page.tracks?.items || []).slice(0, TOTAL_RESULTS);
-
-        let tracks = trackItems.map(track => {
-            const releaseYear = parseInt((track.album?.release_date || '').slice(0, 4), 10) || null;
-            return {
-                id: track.id,
-                name: track.name,
-                artist: track.artists.map(a => a.name).join(', '),
-                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
-                explicit: track.explicit || false,
-                duration: formatDuration(track.duration_ms),
-                // Internal-only fields used for filtering below, stripped before response.
-                _releaseYear: releaseYear,
-                _primaryArtistId: track.artists?.[0]?.id || null
-            };
+        const spotifyRes = await fetch(`https://api.spotify.com/v1/search?type=track&limit=15&q=${encodeURIComponent(query)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
         });
-        
-        // Filter out explicit tracks if explicit restriction lock is active
-        if (systemConfigs.explicitBlockActive) {
-            tracks = tracks.filter(track => !track.explicit);
-        }
-
-        // Radio-edits-only filter: strip extended/club/dub/instrumental mixes,
-        // keeping plain/radio-length versions.
-        if (systemConfigs.radioEditsOnly) {
-            tracks = tracks.filter(track => !isExtendedOrClubMix(track.name));
-        }
-
-        // Decade filter (DJ-configured, e.g. theme night restricted to the 90s/2000s)
-        if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
-            tracks = tracks.filter(track => {
-                if (!track._releaseYear) return false;
-                const decade = Math.floor(track._releaseYear / 10) * 10;
-                return systemConfigs.decadeFilter.includes(decade);
-            });
-        }
-
-        // Genre filter (DJ-configured allow-list, matched against the primary artist's genres)
-        if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0 && tracks.length > 0) {
-            const artistIds = [...new Set(tracks.map(t => t._primaryArtistId).filter(Boolean))];
-            const genresByArtist = await getArtistGenres(artistIds);
-            const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
-            tracks = tracks.filter(track => {
-                const artistGenres = genresByArtist.get(track._primaryArtistId) || [];
-                return artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
-            });
-        }
-
-        // Strip internal filtering-only fields before sending to the client.
-        tracks = tracks.map(({ _releaseYear, _primaryArtistId, ...publicFields }) => publicFields);
-
-        res.json({ tracks });
+        const data = await spotifyRes.json();
+        res.json(data);
     } catch (err) {
-        console.error('[SEARCH] Failed:', err.message);
-        res.status(500).json({ error: "Search feature unavailable" });
+        res.status(500).json({ error: 'Failed to search Spotify' });
     }
+});
+
+app.get('/api/user-playlists', async (req, res) => {
+    const token = await getDjAccessToken();
+    if (!token) return res.status(500).json({ error: 'Spotify DJ access token not available' });
+
+    try {
+        const playlists = [];
+        let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
+        while (url && playlists.length < 100) {
+            const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!resp.ok) break;
+            const data = await resp.json();
+            if (data.items) {
+                for (const item of data.items) {
+                    if (item && item.id) {
+                        playlists.push({
+                            id: item.id,
+                            name: item.name,
+                            uri: item.uri,
+                            images: item.images,
+                            tracksCount: item.tracks ? item.tracks.total : 0
+                        });
+                    }
+                }
+            }
+            url = data.next;
+        }
+        res.json({ playlists });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch user playlists.' });
+    }
+});
+
+app.get('/api/playlist-tracks', async (req, res) => {
+    const playlistId = req.query.id;
+    if (!playlistId) return res.status(400).json({ error: 'Missing playlist id.' });
+
+    const token = await getDjAccessToken();
+    if (!token) return res.status(500).json({ error: 'Spotify access token not available.' });
+
+    try {
+        const resp = await fetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=100`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!resp.ok) return res.status(resp.status).json({ error: 'Failed to fetch playlist tracks from Spotify.' });
+        const data = await resp.json();
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch playlist tracks.' });
+    }
+});
+
+app.get('/api/credits', (req, res) => {
+    const creditData = getVoterCredits(req.voterId);
+    res.json({
+        credits: creditData.credits,
+        maxCredits: INITIAL_CREDITS,
+        regenTimeMs: CREDIT_REGEN_TIME_MS,
+        lastRegenTime: creditData.lastRegenTime
+    });
+});
+
+app.get('/api/queue', (req, res) => {
+    res.json({
+        queue: activeQueue,
+        pendingFallbackSwitch: pendingFallbackSwitch ? {
+            playlistUri: pendingFallbackSwitch.playlistUri,
+            requestedAt: pendingFallbackSwitch.requestedAt
+        } : null
+    });
+});
+
+app.get('/api/my-history', (req, res) => {
+    const history = voterRequestHistoryMap[req.voterId] || [];
+    res.json({ history });
 });
 
 app.post('/api/request', async (req, res) => {
-    const { track, username, isKiosk } = req.body;
-    // Kiosk devices (kiosk.html) and regular guests (index.html) have their
-    // own independent requestsAllowed toggle and credit rules, set separately
-    // in the admin dashboard - everything else (explicit filter, genre/decade
-    // filters, queue cap) is shared, since those describe the event itself.
-    const modeConfig = isKiosk === true ? kioskConfigs : systemConfigs;
+    const { track } = req.body;
+    const voterId = req.voterId;
 
-    if (!modeConfig.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    if (isQueueFull()) return res.status(403).json({ error: `Queue is full (max ${systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
-    if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
-    // Identity now comes from the server-issued cookie, not a client-supplied
-    // value - see the cookie middleware near the top of this file.
-    const voterId = req.serverVoterId;
-
-    // Spotify track IDs are always 22-character base62 strings - reject anything
-    // that isn't even shaped like one before spending an API call on it.
-    if (!/^[A-Za-z0-9]{22}$/.test(track.id)) {
-        return res.status(400).json({ error: "Invalid track ID." });
+    if (!track || !track.id || !track.title) {
+        return res.status(400).json({ error: 'Invalid track payload.' });
     }
 
-    // Re-fetch the track from Spotify's own catalog rather than trusting whatever
-    // name/artist/artwork/duration the client sent - otherwise anyone could POST
-    // fabricated metadata (offensive titles, arbitrary image URLs) straight into
-    // the live queue without it ever being a real, searchable track.
-    let verifiedTrack;
-    let releaseYear = null;
-    let primaryArtistId = null;
+    if (activeQueue.length >= MAX_ACTIVE_QUEUE_SIZE) {
+        return res.status(400).json({ error: 'Queue is full! Wait for songs to play.' });
+    }
+
+    const existingInActive = activeQueue.find(t => t.id === track.id && !t.played);
+    if (existingInActive) {
+        return res.status(400).json({ error: 'This track is already waiting in the queue!' });
+    }
+
+    const creditData = getVoterCredits(voterId);
+    if (creditData.credits <= 0) {
+        return res.status(400).json({ error: 'You are out of request credits! Wait for credits to regenerate.' });
+    }
+
     try {
-        if (!spotifyAccessToken) await getSpotifyToken();
-        const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-        });
-        if (!lookupRes.ok) return res.status(400).json({ error: "Track not found on Spotify." });
-        const t = await lookupRes.json();
-        if (!t || !t.id) return res.status(400).json({ error: "Track not found on Spotify." });
-        verifiedTrack = {
-            id: t.id,
-            name: t.name,
-            artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
-            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
-            explicit: t.explicit || false,
-            duration: formatDuration(t.duration_ms || 0)
+        await queueTrackOnSpotify(track.id);
+        consumeCredit(voterId);
+
+        const username = sessionUsernames[voterId] || 'Guest';
+
+        const queueItem = {
+            queueId: crypto.randomBytes(8).toString('hex'),
+            id: track.id,
+            uri: track.uri || `spotify:track:${track.id}`,
+            title: track.title,
+            artist: track.artist,
+            albumArt: track.albumArt,
+            requestedBy: voterId,
+            username: username,
+            votes: 0,
+            votedBy: [],
+            requestedAt: Date.now(),
+            played: false
         };
-        releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
-        primaryArtistId = t.artists?.[0]?.id || null;
-    } catch (err) {
-        return res.status(500).json({ error: "Could not verify track with Spotify." });
-    }
 
-    // API block safety gate against manual requests injection of explicit songs
-    if (systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
-        return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
-    }
+        activeQueue.push(queueItem);
+        addTrackToHistory(voterId, track);
 
-    // Same idea, for extended/club/dub mixes when radio-edits-only is active -
-    // re-checked here so it can't be bypassed by POSTing a track ID directly.
-    if (systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
-        return res.status(403).json({ error: "Only radio edits are currently allowed - try searching for the standard version." });
-    }
-
-    // Same idea as the explicit gate above, but for genre/decade theme-night
-    // restrictions - re-checked here so a guest can't bypass the DJ's filters
-    // by POSTing a track ID directly instead of going through /api/search.
-    if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
-        const decade = releaseYear ? Math.floor(releaseYear / 10) * 10 : null;
-        if (decade === null || !systemConfigs.decadeFilter.includes(decade)) {
-            return res.status(403).json({ error: "That song's decade isn't part of tonight's theme." });
-        }
-    }
-    if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0) {
-        const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
-        const artistGenres = genresByArtist.get(primaryArtistId) || [];
-        const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
-        const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
-        if (!matches) {
-            return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
-        }
-    }
-
-    // Server-authoritative credit check (abuse/spam control) - separate from the
-    // client's own locally-displayed credit counter, can't be bypassed client-side.
-    // Kiosk and guest each use their own maxCredits/countdownLength, but the
-    // per-device tracking mechanism (keyed by the voter cookie) is identical -
-    // each physical kiosk device naturally gets its own independent credit
-    // bank, same as any guest's phone would.
-    const creditState = getOrCreateVoterCreditState(voterId, modeConfig.maxCredits);
-    refillVoterCredits(creditState, modeConfig.maxCredits, modeConfig.countdownLength);
-    if (creditState.available <= 0) {
-        return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
-    }
-    creditState.available -= 1;
-
-    // DJ-only attribution: never sent back down via /data, only via /api/admin/data
-    const requesterName = (typeof username === 'string' && username.trim() !== '')
-        ? username.trim().slice(0, 30)
-        : 'Anonymous';
-
-    const trackId = verifiedTrack.id;
-
-    const existingTrack = activeQueue.find(t => t.id === trackId);
-    if (existingTrack) {
-        if (!existingTrack.upvoters.includes('system-generated')) {
-            existingTrack.upvoters.push('system-generated');
-        }
-        if (!existingTrack.requesters) existingTrack.requesters = [];
-        existingTrack.requesters.push(requesterName);
-    } else {
-        activeQueue.push({
-            id: trackId,
-            title: verifiedTrack.name,
-            artist: verifiedTrack.artist,
-            artwork: verifiedTrack.artwork,
-            explicit: verifiedTrack.explicit,
-            duration: verifiedTrack.duration,
-            upvoters: [],
-            downvoters: [],
-            requesters: [requesterName]
+        res.json({
+            success: true,
+            queueItem,
+            remainingCredits: creditData.credits
         });
-        // Relay to the DJ's actual Spotify playback queue. Only on first entry -
-        // a duplicate request just upvotes the existing local entry above, it
-        // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
-        // let a slow/failed Spotify call delay or fail the guest's request.
-        if (systemConfigs.spotifyAutoQueueEnabled) {
-            queueTrackOnSpotify(trackId);
-        }
+    } catch (err) {
+        console.error('Request error:', err);
+        res.status(500).json({ error: err.message || 'Failed to queue song on Spotify.' });
     }
-
-    requestLog.push({
-        trackId,
-        title: verifiedTrack.name,
-        artist: verifiedTrack.artist,
-        artwork: verifiedTrack.artwork,
-        explicit: verifiedTrack.explicit,
-        voterId,
-        status: 'queued',
-        requestedAt: Date.now()
-    });
-    // Keep the log from growing forever on a long night
-    if (requestLog.length > 2000) requestLog = requestLog.slice(-2000);
-
-    res.json({ success: true });
 });
 
 app.post('/api/vote', (req, res) => {
-    const { id, type } = req.body;
-    const voterId = req.serverVoterId;
+    const { queueId } = req.body;
+    const voterId = req.voterId;
 
-    // Abuse/spam control: block rapid-fire vote-button mashing per guest
-    const lastVoteAt = voterLastVoteAt.get(voterId) || 0;
-    if (Date.now() - lastVoteAt < MIN_VOTE_INTERVAL_MS) {
-        return res.status(429).json({ error: "Please slow down." });
-    }
-    voterLastVoteAt.set(voterId, Date.now());
-
-    const track = activeQueue.find(t => t.id === id);
-    if (!track) return res.status(404).json({ error: "Track missing from live pool." });
-
-    if (!track.upvoters) track.upvoters = [];
-    if (!track.downvoters) track.downvoters = [];
-
-    const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
-    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
-
-    if (type === 'up') {
-        if (track.upvoters.includes(voterId)) {
-            clearUp();
-        } else {
-            clearDown();
-            track.upvoters.push(voterId);
-        }
-    } else if (type === 'down') {
-        if (track.downvoters.includes(voterId)) {
-            clearDown();
-        } else {
-            clearUp();
-            track.downvoters.push(voterId);
-        }
+    const item = activeQueue.find(t => t.queueId === queueId && !t.played);
+    if (!item) {
+        return res.status(404).json({ error: 'Track not found in queue.' });
     }
 
-    res.json({ success: true });
+    if (item.votedBy.includes(voterId)) {
+        return res.status(400).json({ error: 'You already upvoted this song!' });
+    }
+
+    item.votes += 1;
+    item.votedBy.push(voterId);
+
+    activeQueue.sort((a, b) => b.votes - a.votes || a.requestedAt - b.requestedAt);
+
+    res.json({ success: true, item });
 });
 
-// Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
-function buildSortedQueue() {
-    return activeQueue.map(t => ({
-        id: t.id,
-        title: t.title,
-        artist: t.artist,
-        artwork: t.artwork,
-        explicit: t.explicit,
-        duration: t.duration,
-        ups: t.upvoters?.length || 0,
-        downs: t.downvoters?.length || 0,
-        upvoters: t.upvoters || [],
-        downvoters: t.downvoters || []
-    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-}
+app.use('/api/admin', requireAdminAuth);
 
-// Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
-function buildSortedQueueForAdmin() {
-    return activeQueue.map(t => ({
-        id: t.id,
-        title: t.title,
-        artist: t.artist,
-        artwork: t.artwork,
-        explicit: t.explicit,
-        duration: t.duration,
-        ups: t.upvoters?.length || 0,
-        downs: t.downvoters?.length || 0,
-        upvoters: t.upvoters || [],
-        downvoters: t.downvoters || [],
-        requesters: t.requesters || []
-    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-}
+app.post('/api/admin/switch-playlist', async (req, res) => {
+    const { playlistUri } = req.body;
+    if (!playlistUri) {
+        return res.status(400).json({ error: 'Missing playlistUri' });
+    }
 
-app.get('/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        explicitBlockActive: systemConfigs.explicitBlockActive,
-        radioEditsOnly: systemConfigs.radioEditsOnly,
-        eventName: systemConfigs.eventName || '',
-        queueCapEnabled: systemConfigs.queueCapEnabled,
-        maxQueueLength: systemConfigs.maxQueueLength,
-        queueFull: isQueueFull(),
-        genreFilter: systemConfigs.genreFilter || [],
-        decadeFilter: systemConfigs.decadeFilter || [],
-        spotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
-        queue: buildSortedQueue(),
-        history: playedHistory
-    });
+    const token = await getDjAccessToken();
+    if (!token) {
+        return res.status(500).json({ error: 'Spotify access token not available.' });
+    }
+
+    try {
+        // 1. Get all active unplayed guest requests
+        const unplayedGuestTracks = activeQueue.filter(track => !track.played);
+
+        // 2. Re-queue each active guest track sequentially to preserve order
+        //    and force Spotify's queue to prioritize them over old context auto-play
+        for (const track of unplayedGuestTracks) {
+            await queueTrackOnSpotify(track.id);
+        }
+
+        // 3. Set pending fallback switch state
+        pendingFallbackSwitch = {
+            playlistUri,
+            requestedAt: Date.now()
+        };
+
+        // 4. Trigger immediate evaluation if queue is already empty
+        await maybeFireFallbackSwitch(lastSyncedNowPlayingId);
+
+        res.json({
+            success: true,
+            message: 'Playlist switch scheduled and guest queue re-buffered.',
+            pending: !!pendingFallbackSwitch
+        });
+    } catch (err) {
+        console.error('[SWITCH PLAYLIST] Error:', err.message);
+        res.status(500).json({ error: 'Failed to schedule playlist switch.' });
+    }
 });
 
-// Same shape as /data, but sourcing requestsAllowed/spotifyConnectEnabled/
-// credit rules from kioskConfigs instead - everything else (queue, explicit
-// filter, genre/decade filters, queue cap) is shared with regular guests.
-app.get('/kiosk-data', (req, res) => {
-    res.json({
-        maxCredits: kioskConfigs.maxCredits,
-        countdownLength: kioskConfigs.countdownLength,
-        requestsAllowed: kioskConfigs.requestsAllowed,
-        explicitBlockActive: systemConfigs.explicitBlockActive,
-        radioEditsOnly: systemConfigs.radioEditsOnly,
-        eventName: systemConfigs.eventName || '',
-        queueCapEnabled: systemConfigs.queueCapEnabled,
-        maxQueueLength: systemConfigs.maxQueueLength,
-        queueFull: isQueueFull(),
-        genreFilter: systemConfigs.genreFilter || [],
-        decadeFilter: systemConfigs.decadeFilter || [],
-        spotifyConnectEnabled: kioskConfigs.spotifyConnectEnabled,
-        queue: buildSortedQueue(),
-        history: playedHistory
-    });
+app.post('/api/admin/remove', (req, res) => {
+    const { queueId } = req.body;
+    const idx = activeQueue.findIndex(t => t.queueId === queueId);
+    if (idx !== -1) {
+        activeQueue.splice(idx, 1);
+        return res.json({ success: true });
+    }
+    res.status(404).json({ error: 'Item not found in active queue.' });
 });
 
-app.get('/api/admin/data', (req, res) => {
-    res.json({
-        maxCredits: systemConfigs.maxCredits,
-        countdownLength: systemConfigs.countdownLength,
-        requestsAllowed: systemConfigs.requestsAllowed,
-        explicitBlockActive: systemConfigs.explicitBlockActive,
-        radioEditsOnly: systemConfigs.radioEditsOnly,
-        eventName: systemConfigs.eventName || '',
-        queueCapEnabled: systemConfigs.queueCapEnabled,
-        maxQueueLength: systemConfigs.maxQueueLength,
-        queueFull: isQueueFull(),
-        genreFilter: systemConfigs.genreFilter || [],
-        decadeFilter: systemConfigs.decadeFilter || [],
-        guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
-        spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
-        djSpotifyQueueConnected: !!djRefreshToken,
-        lastSwitchedPlaylist: systemConfigs.lastSwitchedPlaylist || '',
-        kiosk: kioskConfigs,
-        queue: buildSortedQueueForAdmin(),
-        history: playedHistory
-    });
+app.post('/api/admin/cancel-switch', (req, res) => {
+    pendingFallbackSwitch = null;
+    res.json({ success: true, message: 'Pending fallback switch cancelled.' });
 });
 
 app.get('/api/admin/stats', (req, res) => {
-    // 1. Every song ever requested, one row per requester, newest first.
-    const allRequests = [];
-    queueHistoryLog.forEach(entry => {
-        const names = entry.requesters.length > 0 ? entry.requesters : ['Anonymous'];
-        names.forEach(name => {
-            allRequests.push({
-                title: entry.title,
-                artist: entry.artist,
-                artwork: entry.artwork,
-                username: name,
-                outcome: entry.outcome,
-                timestamp: entry.timestamp
-            });
-        });
+    const activeVotersCount = Object.keys(voterCreditsMap).length;
+    const totalRequestsCount = Object.values(voterRequestHistoryMap).reduce((acc, curr) => acc + curr.length, 0);
+
+    const userStatsMap = {};
+    for (const [voterId, history] of Object.entries(voterRequestHistoryMap)) {
+        const name = sessionUsernames[voterId] || 'Guest';
+        userStatsMap[voterId] = {
+            username: name,
+            totalRequests: history.length,
+            playedRequests: history.filter(h => h.played).length
+        };
+    }
+
+    const leaderboard = Object.values(userStatsMap).sort((a, b) => b.totalRequests - a.totalRequests);
+
+    res.json({
+        activeVotersCount,
+        totalRequestsCount,
+        activeQueueLength: activeQueue.filter(t => !t.played).length,
+        leaderboard
     });
-    allRequests.sort((a, b) => b.timestamp - a.timestamp);
-
-    // 2. Requester leaderboard - song count per username.
-    const usernameCounts = new Map();
-    allRequests.forEach(r => {
-        usernameCounts.set(r.username, (usernameCounts.get(r.username) || 0) + 1);
-    });
-    const topRequesters = [...usernameCounts.entries()]
-        .map(([username, count]) => ({ username, count }))
-        .sort((a, b) => b.count - a.count);
-
-    // 3. Played vs dropped totals.
-    const totals = {
-        played: queueHistoryLog.filter(e => e.outcome === 'played').length,
-        dropped: queueHistoryLog.filter(e => e.outcome === 'dropped').length,
-        stillQueued: activeQueue.length
-    };
-
-    // 4. Top liked / disliked songs by final vote count.
-    const topLiked = [...queueHistoryLog]
-        .filter(e => e.ups > 0)
-        .sort((a, b) => b.ups - a.ups)
-        .slice(0, 5)
-        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.ups }));
-
-    const topDisliked = [...queueHistoryLog]
-        .filter(e => e.downs > 0)
-        .sort((a, b) => b.downs - a.downs)
-        .slice(0, 5)
-        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.downs }));
-
-    res.json({ allRequests, topRequesters, totals, topLiked, topDisliked });
 });
 
-// Guest-only lookup of their own request history/status, keyed by their own
-// server-issued cookie identity (previously a client-supplied ?voterId= query
-// param, which meant anyone could view anyone else's request history just by
-// reusing their token in the URL).
-app.get('/api/my-requests', (req, res) => {
-    const voterId = req.serverVoterId;
-
-    const mine = requestLog
-        .filter(entry => entry.voterId === voterId)
-        .sort((a, b) => b.requestedAt - a.requestedAt)
-        .slice(0, 25)
-        .map(entry => ({
-            trackId: entry.trackId,
-            title: entry.title,
-            artist: entry.artist,
-            artwork: entry.artwork,
-            explicit: entry.explicit,
-            status: entry.status,
-            requestedAt: entry.requestedAt
-        }));
-
-    res.json({ requests: mine });
-});
-
-app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
-    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
-    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
-    if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
-    if (maxQueueLength !== undefined) {
-        const parsed = parseInt(maxQueueLength);
-        if (parsed > 0) systemConfigs.maxQueueLength = parsed;
-    }
-    if (Array.isArray(genreFilter)) {
-        systemConfigs.genreFilter = genreFilter.filter(key => Object.prototype.hasOwnProperty.call(GENRE_CATEGORIES, key));
-    }
-    if (Array.isArray(decadeFilter)) {
-        systemConfigs.decadeFilter = decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-queue-cap', (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') systemConfigs.queueCapEnabled = enabled;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-guest-spotify', (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') systemConfigs.guestSpotifyConnectEnabled = enabled;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
-    res.json({ success: true });
-});
-
-// Kills whatever's currently lined up in Spotify's "up next" (from the old
-// playlist) and replaces it with a fresh playlist - but only once the track
-// that's currently playing finishes, rather than cutting it off. If nothing's
-// playing right now, there's nothing to wait for, so it switches immediately.
-app.post('/api/admin/switch-playlist', async (req, res) => {
-    const { playlistUrl } = req.body;
-    if (!playlistUrl) return res.status(400).json({ error: 'Missing playlistUrl.' });
-
-    const token = await getDjAccessToken();
-    if (!token) return res.status(400).json({ success: false, error: 'DJ Spotify account is not connected yet.' });
-
-    const trimmedUrl = playlistUrl.trim();
-    const switchImmediately = async () => {
-        const result = await switchDjPlaylist(trimmedUrl);
-        if (result.success) systemConfigs.lastSwitchedPlaylist = trimmedUrl;
-        return result;
-    };
-
-    try {
-        const nowRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        // Nothing playing to interrupt - just switch straight away like before.
-        if (nowRes.status === 204 || nowRes.status === 404 || !nowRes.ok) {
-            const result = await switchImmediately();
-            return res.status(result.success ? 200 : 400).json(result);
-        }
-
-        const nowData = await nowRes.json();
-        const watchedTrackId = nowData?.item?.id || null;
-        if (!watchedTrackId) {
-            const result = await switchImmediately();
-            return res.status(result.success ? 200 : 400).json(result);
-        }
-
-        // Something's playing - defer. syncNowPlayingWithQueue (polling every 5s,
-        // below) fires the actual switch once it sees playback move on from this
-        // track, so the current song finishes naturally instead of being cut off.
-        pendingFallbackSwitch = { playlistUrl: trimmedUrl, watchedTrackId };
-        console.log('[SPOTIFY QUEUE] Fallback playlist switch scheduled for after current track finishes:', watchedTrackId);
-        return res.json({ success: true, scheduled: true });
-    } catch (err) {
-        console.error('[SPOTIFY QUEUE] Failed to check current playback before switching:', err.message);
-        // Couldn't tell what's playing - fall back to the old immediate-switch
-        // behaviour rather than silently doing nothing.
-        const result = await switchImmediately();
-        return res.status(result.success ? 200 : 400).json(result);
-    }
-});
-
-app.post('/api/admin/toggle', (req, res) => {
-    const { allow } = req.body;
-    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-explicit', (req, res) => {
-    const { blockExplicit } = req.body;
-    if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/toggle-radio-edits', (req, res) => {
-    const { radioEditsOnly } = req.body;
-    if (typeof radioEditsOnly === 'boolean') systemConfigs.radioEditsOnly = radioEditsOnly;
-    res.json({ success: true });
-});
-
-// Kiosk-specific equivalents of the toggles above - independent from the
-// guest page's settings.
-app.post('/api/admin/kiosk/toggle', (req, res) => {
-    const { allow } = req.body;
-    if (typeof allow === 'boolean') kioskConfigs.requestsAllowed = allow;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/kiosk/toggle-spotify', (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') kioskConfigs.spotifyConnectEnabled = enabled;
-    res.json({ success: true });
-});
-
-app.post('/api/admin/kiosk/config', (req, res) => {
-    const { maxCredits, countdownLength } = req.body;
-    if (maxCredits !== undefined) kioskConfigs.maxCredits = parseInt(maxCredits) || kioskConfigs.maxCredits;
-    if (countdownLength !== undefined) kioskConfigs.countdownLength = parseInt(countdownLength) || kioskConfigs.countdownLength;
-    res.json({ success: true });
-});
-
-// Shared by the admin "Played" button and the auto-sync poller below - moves a
-// track out of the live local queue into playedHistory/stats. trackIndex must
-// already be a valid index into activeQueue.
-function markTrackPlayedByIndex(trackIndex) {
-    const [track] = activeQueue.splice(trackIndex, 1);
-    markRequestLogStatus(track.id, 'played');
-    playedHistory.unshift({
-        title: track.title,
-        artist: track.artist,
-        artwork: track.artwork,
-        explicit: track.explicit,
-        duration: track.duration,
-        requesters: track.requesters || []
-    });
-    logDepartedTrack(track, 'played');
-    return track;
-}
-
-app.post('/api/admin/action', (req, res) => {
-    const { id, action } = req.body;
-    if (action === 'clearQueue') {
-        activeQueue.forEach(t => markRequestLogStatus(t.id, 'removed'));
-        activeQueue = [];
-        return res.json({ success: true });
-    }
-    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
-
-    const trackIndex = activeQueue.findIndex(t => t.id === id);
-    if (trackIndex !== -1) {
-        if (action === 'top') {
-            const track = activeQueue[trackIndex];
-            const sorted = buildSortedQueue();
-            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
-            track.downvoters = [];
-            track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
-        } else if (action === 'played') {
-            markTrackPlayedByIndex(trackIndex);
-        } else if (action === 'remove') {
-            const [track] = activeQueue.splice(trackIndex, 1);
-            markRequestLogStatus(track.id, 'removed');
-            logDepartedTrack(track, 'dropped');
-        }
-    }
-    res.json({ success: true });
-});
-
-// Fires a scheduled "Switch Now" fallback-playlist switch once the track it
-// was waiting on is no longer playing (finished, skipped, or stopped) -
-// rather than cutting the current song off immediately when the button was clicked.
-async function maybeFireFallbackSwitch(nowPlayingId) {
-    if (!pendingFallbackSwitch) return;
-    if (nowPlayingId === pendingFallbackSwitch.watchedTrackId) return; // still playing - keep waiting
-
-    // The watched track finished, but guest requests always take priority over
-    // the fallback playlist - if there's still one waiting (whatever's playing
-    // right now, still sitting in activeQueue until the sync below removes it,
-    // or anything further back that hasn't reached Spotify yet), let it play
-    // through instead of cutting to the fallback. Just start watching whatever's
-    // now playing and check again next time something changes.
-    if (activeQueue.length > 0) {
-        pendingFallbackSwitch.watchedTrackId = nowPlayingId;
-        return;
-    }
-
-    const { playlistUrl } = pendingFallbackSwitch;
-    pendingFallbackSwitch = null;
-    const result = await switchDjPlaylist(playlistUrl);
-    if (result.success) {
-        systemConfigs.lastSwitchedPlaylist = playlistUrl;
-        console.log('[SPOTIFY QUEUE] Fallback playlist switch fired - queue is empty and the previous track ended:', playlistUrl);
-    } else {
-        console.error('[SPOTIFY QUEUE] Deferred fallback playlist switch failed:', result.error);
-    }
-}
-
-// --- Auto-sync: remove a request from the local queue the moment Spotify
-// actually starts playing it, so the DJ doesn't have to manually click
-// "Played" for every guest request. Only touches tracks that are still in
-// activeQueue - the DJ's regular playlist tracks never match anything here,
-// so this has no effect when nothing requested is currently playing.
-let lastSyncedNowPlayingId = null;
 async function syncNowPlayingWithQueue() {
     const token = await getDjAccessToken();
     if (!token) return;
@@ -1182,7 +549,6 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, async () => {
-    console.log(`[SERVER] Running on port ${PORT}`);
-    await getSpotifyToken();
+app.listen(PORT, () => {
+    console.log(`CrowdDJ server running on port ${PORT}`);
 });
