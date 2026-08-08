@@ -599,9 +599,9 @@
                     <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
                 </div>
                 <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
-                    Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
-                    replaced. If a request happens to be playing right now, this will interrupt it, so best used
-                    between songs.
+                    Waits for the current song to finish before switching - it won't cut anything off. If nothing's
+                    currently playing, it switches right away. Whatever was queued up next from the old playlist
+                    gets replaced once the switch happens.
                 </p>
                 <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
             </div>
@@ -1225,7 +1225,10 @@ async function verifyPassword() {
                     body: JSON.stringify({ playlistUrl: url })
                 });
                 const data = await res.json();
-                if (data.success) {
+                if (data.success && data.scheduled) {
+                    showToast('Will switch once the current song finishes.', 'success');
+                    statusEl.innerText = `Queued: ${url} - starts after the current song ends`;
+                } else if (data.success) {
                     showToast('Switched to the new playlist.', 'success');
                     statusEl.innerText = `Currently playing from: ${url}`;
                 } else {
