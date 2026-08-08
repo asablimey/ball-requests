@@ -255,7 +255,11 @@ let systemConfigs = {
     // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
     // a run of troll requests) without disconnecting Spotify or closing requests
     // entirely. Requests still land in the local site queue either way.
-    spotifyAutoQueueEnabled: true
+    spotifyAutoQueueEnabled: true,
+    // Theme/fallback playlist: pastable Spotify playlist link/URI/ID. Its tracks
+    // pad out the visible "Live Queue" on all three pages whenever there aren't
+    // enough real guest requests to fill it - see padWithFallback() below.
+    fallbackPlaylistUri: ''
 };
 
 // Separate, independently-configurable settings for kiosk.html - a DJ-attended
@@ -318,6 +322,87 @@ async function getArtistGenres(artistIds) {
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
+
+// --- Fallback / theme playlist -----------------------------------------
+// Pads the visible "Live Queue" with tracks from a DJ-chosen Spotify playlist
+// whenever real guest requests don't fill it out. This is DISPLAY-ONLY: it
+// never touches the DJ's actual Spotify device queue (that's still handled
+// entirely by the existing spotifyAutoQueueEnabled/queueTrackOnSpotify path
+// above, unaffected) - it only affects what shows up in the queue list on
+// all three pages. Refreshed on a timer rather than per-request, since /data
+// gets polled every few seconds and re-fetching a full playlist that often
+// would hammer Spotify's API for no reason.
+const FALLBACK_QUEUE_FILL_TARGET = 10;
+const FALLBACK_REFRESH_INTERVAL_MS = 60 * 1000;
+let fallbackPlaylistTracks = [];
+
+function parsePlaylistIdFromInput(raw) {
+    if (!raw) return null;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return null;
+    const uriMatch = trimmed.match(/spotify:playlist:([a-zA-Z0-9]+)/);
+    if (uriMatch) return uriMatch[1];
+    const linkMatch = trimmed.match(/playlist\/([a-zA-Z0-9]+)/);
+    if (linkMatch) return linkMatch[1];
+    if (/^[a-zA-Z0-9]+$/.test(trimmed)) return trimmed; // bare ID
+    return null;
+}
+
+async function refreshFallbackPlaylistCache() {
+    const playlistId = parsePlaylistIdFromInput(systemConfigs.fallbackPlaylistUri);
+    if (!playlistId) {
+        fallbackPlaylistTracks = [];
+        return;
+    }
+    try {
+        if (!spotifyAccessToken) await getSpotifyToken();
+        const res = await fetch(
+            `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50&fields=items(track(id,name,explicit,duration_ms,artists(name),album(images)))`,
+            { headers: { 'Authorization': `Bearer ${spotifyAccessToken}` } }
+        );
+        if (!res.ok) {
+            console.error('[FALLBACK PLAYLIST] Fetch failed:', res.status);
+            return;
+        }
+        const data = await res.json();
+        const tracks = (data.items || [])
+            .map(item => item.track)
+            .filter(t => t && t.id)
+            .map(t => ({
+                id: `fallback-${t.id}`,
+                title: t.name,
+                artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+                artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+                explicit: t.explicit || false,
+                duration: formatDuration(t.duration_ms || 0),
+                ups: 0, downs: 0, upvoters: [], downvoters: [],
+                fromPlaylist: true
+            }));
+        // Shuffle so a long night doesn't always fill from track 1 in the same order.
+        for (let i = tracks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+        }
+        fallbackPlaylistTracks = tracks;
+        console.log(`[FALLBACK PLAYLIST] Cached ${tracks.length} tracks.`);
+    } catch (err) {
+        console.error('[FALLBACK PLAYLIST] Refresh failed:', err.message);
+    }
+}
+setInterval(refreshFallbackPlaylistCache, FALLBACK_REFRESH_INTERVAL_MS);
+
+// Appends fallback tracks after the real (vote-sorted) queue, up to the fill
+// target - real requests always come first and are never displaced.
+function padWithFallback(realQueue) {
+    if (!systemConfigs.fallbackPlaylistUri || fallbackPlaylistTracks.length === 0) return realQueue;
+    if (realQueue.length >= FALLBACK_QUEUE_FILL_TARGET) return realQueue;
+    const realIds = new Set(realQueue.map(t => t.id));
+    const filler = fallbackPlaylistTracks
+        .filter(t => !realIds.has(t.id))
+        .slice(0, FALLBACK_QUEUE_FILL_TARGET - realQueue.length);
+    return [...realQueue, ...filler];
+}
+
 
 // --- Abuse/spam control state ---
 // Server-authoritative credits per guest (voterId), mirrors the client's local display
@@ -707,7 +792,7 @@ app.post('/api/vote', (req, res) => {
 
 // Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
 function buildSortedQueue() {
-    return activeQueue.map(t => ({
+    const real = activeQueue.map(t => ({
         id: t.id,
         title: t.title,
         artist: t.artist,
@@ -719,11 +804,12 @@ function buildSortedQueue() {
         upvoters: t.upvoters || [],
         downvoters: t.downvoters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+    return padWithFallback(real);
 }
 
 // Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
 function buildSortedQueueForAdmin() {
-    return activeQueue.map(t => ({
+    const real = activeQueue.map(t => ({
         id: t.id,
         title: t.title,
         artist: t.artist,
@@ -736,6 +822,7 @@ function buildSortedQueueForAdmin() {
         downvoters: t.downvoters || [],
         requesters: t.requesters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+    return padWithFallback(real);
 }
 
 app.get('/data', (req, res) => {
@@ -794,6 +881,7 @@ app.get('/api/admin/data', (req, res) => {
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
         spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
+        fallbackPlaylistUri: systemConfigs.fallbackPlaylistUri || '',
         djSpotifyQueueConnected: !!djRefreshToken,
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
@@ -876,7 +964,7 @@ app.get('/api/my-requests', (req, res) => {
 });
 
 app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
+    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter, fallbackPlaylist } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
     if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
@@ -889,6 +977,10 @@ app.post('/api/admin/config', (req, res) => {
     }
     if (Array.isArray(decadeFilter)) {
         systemConfigs.decadeFilter = decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
+    }
+    if (typeof fallbackPlaylist === 'string') {
+        systemConfigs.fallbackPlaylistUri = fallbackPlaylist.trim();
+        refreshFallbackPlaylistCache(); // fire-and-forget - don't make the DJ wait on the save
     }
     res.json({ success: true });
 });
