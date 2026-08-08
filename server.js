@@ -1117,12 +1117,23 @@ async function maybeFireFallbackSwitch(nowPlayingId) {
     if (!pendingFallbackSwitch) return;
     if (nowPlayingId === pendingFallbackSwitch.watchedTrackId) return; // still playing - keep waiting
 
+    // The watched track finished, but guest requests always take priority over
+    // the fallback playlist - if there's still one waiting (whatever's playing
+    // right now, still sitting in activeQueue until the sync below removes it,
+    // or anything further back that hasn't reached Spotify yet), let it play
+    // through instead of cutting to the fallback. Just start watching whatever's
+    // now playing and check again next time something changes.
+    if (activeQueue.length > 0) {
+        pendingFallbackSwitch.watchedTrackId = nowPlayingId;
+        return;
+    }
+
     const { playlistUrl } = pendingFallbackSwitch;
     pendingFallbackSwitch = null;
     const result = await switchDjPlaylist(playlistUrl);
     if (result.success) {
         systemConfigs.lastSwitchedPlaylist = playlistUrl;
-        console.log('[SPOTIFY QUEUE] Fallback playlist switch fired now that the previous track ended:', playlistUrl);
+        console.log('[SPOTIFY QUEUE] Fallback playlist switch fired - queue is empty and the previous track ended:', playlistUrl);
     } else {
         console.error('[SPOTIFY QUEUE] Deferred fallback playlist switch failed:', result.error);
     }
