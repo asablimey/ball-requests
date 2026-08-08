@@ -1,1334 +1,1114 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="/assets/favicon.png">
-    <title>DJ Dashboard</title>
-    
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="DJ Admin">
+const express = require('express');
+const path = require('path');
+const crypto = require('crypto');
+const fetch = require('node-fetch');
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-    <style>
-        :root {
-            --spotify-green: #1DB954;
-            --spotify-black: #121212;
-            --panel-bg: #181818;
-            --card-bg: #242424;
-            --blue-action: #007aff;
-            --red-action: #e91429;
+// Render (and most hosts) terminate HTTPS at a proxy in front of your app -
+// needed so secure cookies and req.protocol behave correctly.
+app.set('trust proxy', 1);
+
+app.use(express.json());
+
+const VOTER_COOKIE = 'crowddj_vid';
+
+function parseCookies(req) {
+    const header = req.headers.cookie;
+    const out = {};
+    if (!header) return out;
+    header.split(';').forEach(pair => {
+        const idx = pair.indexOf('=');
+        if (idx === -1) return;
+        out[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+    });
+    return out;
+}
+
+// Assigns every guest a server-issued, HttpOnly identity cookie on first visit.
+// This is what credits/votes/request-history are now keyed on, instead of the
+// voterId the client generates and sends itself - a value the client fully
+// controls can be reset just by clearing localStorage, which defeats the point
+// of a "credit limit". An HttpOnly cookie can't be read or forged by page JS,
+// and clearing it requires clearing site cookies specifically, not just
+// localStorage - a meaningfully higher bar, though still not unbeatable by
+// someone using a private window each time.
+app.use((req, res, next) => {
+    const cookies = parseCookies(req);
+    let vid = cookies[VOTER_COOKIE];
+    if (!vid) {
+        vid = crypto.randomUUID();
+        res.cookie(VOTER_COOKIE, vid, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax',
+            maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
+        });
+    }
+    req.serverVoterId = vid;
+    next();
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+
+// --- DJ Spotify Queue Relay ---
+// Separate from the client-credentials token above (which only reads the public
+// catalog for search) and separate from guests' own read-only PKCE login. This is
+// a one-time Authorization Code login as the DJ's own Spotify account, which is
+// the only kind of token Spotify accepts for POST /me/player/queue - adding to
+// *your* actual playback queue requires the user-modify-playback-state scope,
+// which can only be granted by that account logging in, not by an app-only token.
+//
+// Required env vars:
+//   SPOTIFY_REDIRECT_URI - e.g. https://your-app.onrender.com/admin/spotify-callback
+//                           Must be registered exactly (including https and path)
+//                           in your Spotify Developer Dashboard app settings.
+//   SPOTIFY_REFRESH_TOKEN - filled in after the one-time login below; without it,
+//                           auto-queueing is silently skipped (guest requests still
+//                           work normally, they just don't relay to Spotify).
+const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI;
+const DJ_QUEUE_SCOPES = 'user-modify-playback-state user-read-playback-state';
+
+let djRefreshToken = process.env.SPOTIFY_REFRESH_TOKEN || null;
+let djAccessToken = null;
+let djAccessTokenExpiresAt = 0;
+let pendingLoginState = null; // basic CSRF check for the single-admin login flow
+
+// Exchanges the stored DJ refresh token for a fresh access token, caching it
+// until shortly before it expires. Returns null (rather than throwing) if DJ
+// queueing isn't set up yet, so callers can treat "not configured" and
+// "temporarily failed" the same way: just skip queueing, never block a guest's request.
+async function getDjAccessToken() {
+    if (!djRefreshToken) return null;
+    if (djAccessToken && Date.now() < djAccessTokenExpiresAt - 30000) return djAccessToken;
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(djRefreshToken)
+        });
+        const data = await response.json();
+        if (!data.access_token) {
+            console.error('[SPOTIFY QUEUE] Refresh failed:', data.error_description || data.error);
+            return null;
+        }
+        djAccessToken = data.access_token;
+        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+        // Spotify occasionally rotates the refresh token on use. If it does, the
+        // old one stops working - swap in-memory so this session keeps running,
+        // but flag it loudly since the Render env var is now stale.
+        if (data.refresh_token && data.refresh_token !== djRefreshToken) {
+            djRefreshToken = data.refresh_token;
+            console.warn('[SPOTIFY QUEUE] Spotify issued a new refresh token. Update SPOTIFY_REFRESH_TOKEN in Render to:', djRefreshToken);
+        }
+        return djAccessToken;
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Token refresh error:', err.message);
+        return null;
+    }
+}
+
+// Adds a track to the DJ's live Spotify playback queue. Fails silently (logged,
+// not thrown) so a guest's request always succeeds locally even if the DJ's
+// Spotify isn't open, isn't Premium, or hasn't been connected yet.
+async function queueTrackOnSpotify(trackId) {
+    const token = await getDjAccessToken();
+    if (!token) return false;
+    try {
+        const uri = `spotify:track:${trackId}`;
+        const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204 || res.status === 200) {
+            console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
+            return true;
+        } else if (res.status === 404) {
+            console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
+        } else if (res.status === 403) {
+            console.warn('[SPOTIFY QUEUE] Forbidden - this usually means the account is not Spotify Premium.');
+        } else {
+            const body = await res.text();
+            console.error('[SPOTIFY QUEUE] Unexpected response', res.status, body);
+        }
+        return false;
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Request failed:', err.message);
+        return false;
+    }
+}
+
+// Extracts a bare playlist ID from whatever format the DJ pastes in -
+// a full open.spotify.com URL (with or without query params), a spotify:
+// URI, or just the bare ID itself.
+function extractSpotifyPlaylistId(input) {
+    if (!input) return null;
+    const str = input.trim();
+    let match = str.match(/playlist[\/:]([a-zA-Z0-9]+)/);
+    if (match) return match[1];
+    if (/^[a-zA-Z0-9]+$/.test(str)) return str; // already a bare ID
+    return null;
+}
+
+// Immediately switches Spotify's active playback to a new playlist. Unlike
+// queueTrackOnSpotify (which adds one track ahead of whatever's already
+// queued), this REPLACES the current context entirely - Spotify clears
+// whatever it had lined up next from the old playlist and starts fresh
+// from the new one. This is what "kill the old playlist's up-next and
+// switch" actually requires; there's no way to just clear Spotify's
+// auto-generated queue without starting new context playback.
+async function switchDjPlaylist(playlistUri) {
+    const token = await getDjAccessToken();
+    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
+
+    const playlistId = extractSpotifyPlaylistId(playlistUri);
+    if (!playlistId) return { success: false, error: 'Could not parse a playlist ID from that link.' };
+
+    try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/play', {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ context_uri: `spotify:playlist:${playlistId}` })
+        });
+        if (res.status === 204 || res.status === 200) {
+            console.log('[SPOTIFY QUEUE] Switched playlist to:', playlistId);
+            return { success: true };
+        } else if (res.status === 404) {
+            return { success: false, error: 'No active device - open Spotify and play something first, then try switching again.' };
+        } else if (res.status === 403) {
+            return { success: false, error: 'Forbidden - this usually means the account is not Spotify Premium.' };
+        } else {
+            const body = await res.text();
+            console.error('[SPOTIFY QUEUE] Switch failed', res.status, body);
+            return { success: false, error: `Spotify rejected the switch (status ${res.status}).` };
+        }
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Switch request failed:', err.message);
+        return { success: false, error: 'Request to Spotify failed.' };
+    }
+}
+
+
+// One-time login: DJ opens this (from the admin dashboard) and authorizes with
+// their own Spotify account. Gated by the same admin password as everything else
+// in /api/admin, but this route can't live under that prefix since it needs to be
+// a plain browser navigation (redirects can't carry a custom header).
+app.get('/admin/spotify-login', (req, res) => {
+    if (req.query.password !== ADMIN_PASSWORD) {
+        return res.status(401).send('Unauthorized.');
+    }
+    if (!SPOTIFY_REDIRECT_URI) {
+        return res.status(500).send('SPOTIFY_REDIRECT_URI is not set in your environment variables. Set it to this app\'s URL + /admin/spotify-callback, add that exact URL to your Spotify Developer Dashboard app\'s Redirect URIs, then try again.');
+    }
+    pendingLoginState = crypto.randomUUID();
+    const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: CLIENT_ID,
+        scope: DJ_QUEUE_SCOPES,
+        redirect_uri: SPOTIFY_REDIRECT_URI,
+        state: pendingLoginState
+    });
+    res.redirect(`https://accounts.spotify.com/authorize?${params.toString()}`);
+});
+
+app.get('/admin/spotify-callback', async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) return res.status(400).send(`Spotify login failed: ${error}`);
+    if (!state || state !== pendingLoginState) return res.status(400).send('State mismatch - please restart the login from the admin dashboard.');
+    pendingLoginState = null;
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: SPOTIFY_REDIRECT_URI
+            }).toString()
+        });
+        const data = await response.json();
+        if (!data.refresh_token) {
+            return res.status(500).send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
+        }
+        djRefreshToken = data.refresh_token;
+        djAccessToken = data.access_token;
+        djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+
+        res.send(`
+            <html><body style="font-family: sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.5;">
+                <h2>Spotify connected ✅</h2>
+                <p>Auto-queueing is now active for the rest of this server session.</p>
+                <p><strong>To make this survive restarts/redeploys</strong>, copy the value below into your Render environment variables as <code>SPOTIFY_REFRESH_TOKEN</code>, then redeploy:</p>
+                <textarea readonly style="width:100%; height:80px; font-family: monospace; padding:8px;">${djRefreshToken}</textarea>
+                <p style="color:#666; font-size:0.9em;">This value is sensitive - treat it like a password. Don't post it anywhere public.</p>
+            </body></html>
+        `);
+    } catch (err) {
+        res.status(500).send('Token exchange failed: ' + err.message);
+    }
+});
+
+
+// Real, server-side admin auth. Previously the "password" only gated the UI in
+// admin.html client-side - the API routes underneath had no check at all, so
+// anyone could call them directly with no password. This closes that gap.
+// Set ADMIN_PASSWORD in your Render environment variables; falls back to the
+// existing password only if that's not set, so this doesn't break on deploy.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ballDJ2026';
+
+function requireAdminAuth(req, res, next) {
+    const provided = req.headers['x-admin-password'];
+    if (provided !== ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    next();
+}
+app.use('/api/admin', requireAdminAuth);
+
+// The guest page's "Connect Spotify" button needs the Client ID (not the secret) to run
+// its own PKCE login. Client IDs aren't sensitive - this is safe to expose publicly.
+app.get('/api/public-config', (req, res) => {
+    res.json({ spotifyClientId: CLIENT_ID });
+});
+
+let systemConfigs = {
+    maxCredits: 3,
+    countdownLength: 60,
+    requestsAllowed: true,
+    explicitBlockActive: false,
+    // When on, extended/club/dub/instrumental-style mixes are filtered out of
+    // search results and blocked from being requested directly - see
+    // isExtendedOrClubMix() below for exactly what counts as one.
+    radioEditsOnly: false,
+    eventName: '',
+    // Queue length cap: once activeQueue.length hits maxQueueLength, requests
+    // auto-close. Nothing is "stuck closed" here - it's recomputed from the
+    // live queue length on every request, so it reopens on its own as the
+    // queue drains, with no separate flag that could get out of sync.
+    queueCapEnabled: false,
+    maxQueueLength: 50,
+    // Genre/decade filters: DJ-configurable allow-lists for theme nights.
+    // Empty array = no restriction (everything allowed) for that filter.
+    genreFilter: [],   // array of GENRE_CATEGORIES keys, e.g. ['pop', 'rock']
+    decadeFilter: [],  // array of decade-start years, e.g. [1980, 1990]
+    // Whether regular guests (index.html) see the "Connect Spotify" button at
+    // all - independent of the kiosk page's own version of the same toggle.
+    guestSpotifyConnectEnabled: false,
+    // Master on/off for relaying accepted requests into the DJ's live Spotify
+    // queue. Independent of whether a DJ account is actually connected - this
+    // just lets the DJ pause the *auto-queueing behavior* on the fly (e.g. during
+    // a run of troll requests) without disconnecting Spotify or closing requests
+    // entirely. Requests still land in the local site queue either way.
+    spotifyAutoQueueEnabled: true,
+    // Just for display in the admin dashboard - "what's the fallback playlist
+    // right now" - not used for anything functional server-side.
+    lastSwitchedPlaylist: ''
+};
+
+// Separate, independently-configurable settings for kiosk.html - a DJ-attended
+// device (e.g. a tablet on a stand) as opposed to guests' own phones. Requests
+// on/off, the Spotify Connect button, and credit rules are all controlled
+// separately here from the regular guest page. The live queue, explicit
+// filter, genre/decade filters, and queue cap are still shared/global - those
+// describe the event itself, not which device someone's requesting from.
+let kioskConfigs = {
+    requestsAllowed: true,
+    spotifyConnectEnabled: false,
+    maxCredits: 3,
+    countdownLength: 60
+};
+
+function isQueueFull() {
+    return systemConfigs.queueCapEnabled && activeQueue.length >= systemConfigs.maxQueueLength;
+}
+
+// Curated genre buckets mapped to the keywords Spotify actually uses in an
+// artist's `genres` array (which is a long tail of very specific micro-genres,
+// e.g. "chicago rap" - matching by substring against a curated list is far
+// more usable for a DJ than trying to expose Spotify's raw genre taxonomy.
+const GENRE_CATEGORIES = {
+    pop: ['pop'],
+    hiphop: ['hip hop', 'rap', 'trap'],
+    rock: ['rock', 'metal', 'punk', 'grunge'],
+    rnb: ['r&b', 'soul', 'funk'],
+    country: ['country'],
+    electronic: ['edm', 'house', 'techno', 'electro', 'dance', 'dubstep', 'trance', 'drum and bass'],
+    latin: ['latin', 'reggaeton', 'salsa', 'bachata', 'cumbia'],
+    indie: ['indie', 'alternative'],
+    jazz: ['jazz', 'blues'],
+    classical: ['classical', 'orchestra', 'opera'],
+    reggae: ['reggae', 'dancehall', 'ska'],
+    kpop: ['k-pop', 'korean pop'],
+    afrobeats: ['afrobeat', 'afro pop', 'afrobeats']
+};
+
+// Batch-fetches genres for a list of artist IDs. Track objects from Spotify's
+// search endpoint don't include genre info directly - only the artist objects
+// do - so genre filtering costs one extra API call per search (only made when
+// a genre filter is actually active).
+async function getArtistGenres(artistIds) {
+    const map = new Map();
+    if (!artistIds || artistIds.length === 0) return map;
+    if (!spotifyAccessToken) await getSpotifyToken();
+    try {
+        const res = await fetch(`https://api.spotify.com/v1/artists?ids=${artistIds.slice(0, 50).join(',')}`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        const data = await res.json();
+        (data.artists || []).forEach(a => { if (a && a.id) map.set(a.id, a.genres || []); });
+    } catch (err) {
+        console.error("[SPOTIFY] Artist genre lookup failed:", err.message);
+    }
+    return map;
+}
+
+let activeQueue = [];
+let playedHistory = [];
+let spotifyAccessToken = "";
+
+// --- Abuse/spam control state ---
+// Server-authoritative credits per guest (voterId), mirrors the client's local display
+// but can't be bypassed by clearing localStorage credits, only by generating a brand
+// new voterId (a much higher bar than editing one number in devtools).
+let voterCreditState = new Map(); // voterId -> { available, lastRefill }
+let voterLastVoteAt = new Map(); // voterId -> timestamp of last vote action
+const MIN_VOTE_INTERVAL_MS = 400;
+
+function getOrCreateVoterCreditState(voterId, maxCredits) {
+    let state = voterCreditState.get(voterId);
+    if (!state) {
+        state = { available: maxCredits, lastRefill: Date.now() };
+        voterCreditState.set(voterId, state);
+    }
+    return state;
+}
+
+function refillVoterCredits(state, maxCredits, countdownLength) {
+    const now = Date.now();
+    const cycleMs = Math.max(1, countdownLength) * 1000;
+    const elapsed = now - state.lastRefill;
+    const cycles = Math.floor(elapsed / cycleMs);
+    if (cycles > 0) {
+        state.available = Math.min(maxCredits, state.available + cycles);
+        state.lastRefill += cycles * cycleMs;
+    }
+    if (state.available > maxCredits) state.available = maxCredits;
+}
+
+// --- Guest "My Requests" log ---
+// Independent of activeQueue/playedHistory so a guest can still see a song's fate
+// (played or dropped) even after it leaves the live queue entirely.
+let requestLog = [];
+
+// Every song that leaves the active queue (played or dropped) gets one entry
+// here, with its final vote counts and requester list captured before that
+// data would otherwise be lost. This is what the Stats tab reads from.
+let queueHistoryLog = [];
+
+function markRequestLogStatus(trackId, newStatus) {
+    requestLog.forEach(entry => {
+        if (entry.trackId === trackId && entry.status === 'queued') {
+            entry.status = newStatus;
+            entry.resolvedAt = Date.now();
+        }
+    });
+}
+
+function logDepartedTrack(track, outcome) {
+    queueHistoryLog.push({
+        title: track.title,
+        artist: track.artist,
+        artwork: track.artwork,
+        // "system-generated" is an internal marker (see /api/request) for a
+        // duplicate request re-upvoting an existing queue entry, not a real guest.
+        ups: (track.upvoters || []).filter(v => v !== 'system-generated' && v !== 'forced-admin-boost').length,
+        downs: (track.downvoters || []).length,
+        requesters: track.requesters || [],
+        outcome, // 'played' | 'dropped'
+        timestamp: Date.now()
+    });
+    // Keep this from growing forever across a long-running server.
+    if (queueHistoryLog.length > 3000) queueHistoryLog = queueHistoryLog.slice(-3000);
+}
+
+
+function formatDuration(ms) {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(0);
+    return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+}
+
+// Detects extended/club/dub/DJ-style mixes by the descriptor Spotify usually
+// puts in the track title, e.g. "Song Name - Extended Mix" or "(Club Mix)".
+// Deliberately does NOT flag "radio edit"/"radio mix"/"radio version" or plain
+// titles with no descriptor at all - those are exactly what should stay
+// available when this filter is on.
+const EXTENDED_MIX_PATTERN = /\b(extended|club|dub|instrumental|maxi[\s-]?mix|12["']?\s*mix|full[\s-]?length|uncut|dj\s*mix|extended\s*version|extended\s*edit)\b/i;
+function isExtendedOrClubMix(trackName) {
+    if (!trackName) return false;
+    return EXTENDED_MIX_PATTERN.test(trackName);
+}
+
+async function getSpotifyToken() {
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+        console.error("[SPOTIFY] Missing credentials in environment.");
+        return;
+    }
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: 'grant_type=client_credentials'
+        });
+        const data = await response.json();
+        if (data.access_token) {
+            spotifyAccessToken = data.access_token;
+            console.log("[SPOTIFY] Master token refreshed.");
+        }
+    } catch (err) {
+        console.error("[SPOTIFY] Auth error:", err.message);
+    }
+}
+setInterval(getSpotifyToken, 1000 * 60 * 50);
+
+// SEARCH ROUTE - Now strictly blocked if DJ turns off requests
+app.get('/api/search', async (req, res) => {
+    if (!systemConfigs.requestsAllowed || isQueueFull()) {
+        return res.json({ tracks: [] }); 
+    }
+
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [] });
+    if (!spotifyAccessToken) await getSpotifyToken();
+
+    try {
+        // Spotify's Feb 2026 API changes capped a single search request's `limit`
+        // at 10 (down from 50). To still return a longer result list (25, i.e.
+        // 2.5x the old default of 10), page through with `offset` across 3
+        // parallel requests instead of one bigger one.
+        const PAGE_SIZE = 10;
+        const TOTAL_RESULTS = 25;
+        const offsets = [];
+        for (let offset = 0; offset < TOTAL_RESULTS; offset += PAGE_SIZE) offsets.push(offset);
+
+        const responses = await Promise.all(offsets.map(offset =>
+            fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${PAGE_SIZE}&offset=${offset}`, {
+                headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+            })
+        ));
+
+        const failed = responses.find(r => !r.ok);
+        if (failed) {
+            const errBody = await failed.json().catch(() => ({}));
+            console.error('[SEARCH] Spotify rejected the request:', failed.status, JSON.stringify(errBody));
+            // Token may have gone bad mid-session - force a fresh one on the *next*
+            // search rather than silently returning empty results every time.
+            spotifyAccessToken = null;
+            return res.status(502).json({ error: "Spotify search temporarily unavailable." });
         }
 
-        html { overflow-x: hidden; }
-        body { 
-            background-color: var(--spotify-black); 
-            color: white; 
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
-            padding: 25px; 
-            margin: 0; 
-            box-sizing: border-box;
-            overflow-x: hidden;
-            /* Safety net: any text that isn't explicitly truncated (song
-               titles, usernames, etc.) wraps onto a new line instead of
-               pushing its box wider than the screen. */
-            overflow-wrap: break-word;
-            word-break: break-word;
-        }
-        * { box-sizing: border-box; }
+        const pages = await Promise.all(responses.map(r => r.json()));
+        const trackItems = pages.flatMap(page => page.tracks?.items || []).slice(0, TOTAL_RESULTS);
 
-        #admin-lock-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: var(--spotify-black);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            overflow-y: auto;
-            padding: 20px;
-            box-sizing: border-box;
-        }
-
-        .lock-container {
-            background-color: var(--panel-bg);
-            border: 1px solid #282828;
-            padding: 40px;
-            border-radius: 16px;
-            text-align: center;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            max-width: 320px;
-            width: 100%;
-            box-sizing: border-box;
-        }
-
-        .lock-container h2 {
-            margin-top: 0;
-            color: white;
-            font-size: 1.6rem;
-            margin-bottom: 20px;
-        }
-
-        .lock-input {
-            width: 100%;
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            padding: 12px;
-            color: white;
-            border-radius: 8px;
-            font-size: 1rem;
-            box-sizing: border-box;
-            outline: none;
-            text-align: center;
-            margin-bottom: 15px;
-        }
-        .lock-input:focus { border-color: var(--spotify-green); }
-
-        .lock-btn {
-            background-color: var(--spotify-green);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 50px;
-            font-weight: 700;
-            cursor: pointer;
-            width: 100%;
-            font-size: 1rem;
-        }
-        .lock-btn:hover { filter: brightness(1.1); }
-        .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 10px; display: none; }
-
-        .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            border-bottom: 1px solid #282828; 
-            padding-bottom: 20px; 
-            margin-bottom: 20px; 
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-
-        h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
-
-        .config-dashboard {
-            display: flex;
-            gap: 20px;
-            align-items: flex-end;
-            flex-wrap: wrap;
-            box-sizing: border-box;
-        }
-
-        .event-name-box {
-            box-sizing: border-box;
-        }
-
-        .input-group { display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; max-width: 100%; }
-        .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
-        .input-group input { 
-            background-color: var(--card-bg); 
-            border: 1px solid #333; 
-            padding: 10px 14px; 
-            color: white; 
-            border-radius: 6px; 
-            font-size: 1rem; 
-            width: 140px;
-            font-weight: bold;
-            box-sizing: border-box;
-        }
-
-        .save-config-btn {
-            background-color: white;
-            color: black;
-            border: none;
-            padding: 11px 22px;
-            border-radius: 6px;
-            font-weight: 700;
-            cursor: pointer;
-            font-size: 0.95rem;
-            transition: all 0.15s ease;
-        }
-        .save-config-btn:hover { background-color: var(--spotify-green); color: white; }
-
-        .control-bar { display: flex; gap: 15px; flex-wrap: wrap; }
-
-        /* Consistent container for each settings section - replaces the old
-           mix of scattered inline margin-bottoms and same-colour nested
-           boxes with one uniform card pattern (matches .stat-card elsewhere
-           in this file: card-bg against the panel's darker background). */
-        .settings-card {
-            background: var(--card-bg);
-            border: 1px solid #2c2c2c;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-sizing: border-box;
-        }
-        .settings-card:last-child { margin-bottom: 0; }
-        .settings-card .settings-section-label { margin-bottom: 16px; }
-        .settings-card-hint {
-            color: #888;
-            font-size: 0.85rem;
-            margin: 0 0 16px 0;
-            max-width: 600px;
-        }
-        .settings-card.danger-zone { border-color: rgba(233, 20, 41, 0.35); }
-
-        .toggle-btn { 
-            padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
-            transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-
-        .fullscreen-icon-btn {
-            background: none;
-            border: none;
-            color: #a7a7a7;
-            cursor: pointer;
-            padding: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: color 0.2s ease, transform 0.1s ease;
-        }
-        .fullscreen-icon-btn:hover { color: white; }
-        .fullscreen-icon-btn:active { transform: scale(0.95); }
-        .fullscreen-icon-btn svg { width: 24px; height: 24px; fill: currentColor; }
-
-        .utility-btn {
-            padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
-            background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
-        }
-        .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
-
-        .open-status { background-color: var(--spotify-green); color: white; }
-        .closed-status { background-color: var(--red-action); color: white; }
-
-        /* TAB NAVIGATION STYLES */
-        .tab-bar {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #282828;
-            padding-bottom: 10px;
-            /* 4 tab buttons don't fit narrow phones - scroll horizontally
-               instead of overflowing the page. */
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .tab-button {
-            background-color: transparent;
-            color: #a7a7a7;
-            border: none;
-            padding: 12px 24px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            cursor: pointer;
-            border-radius: 8px;
-            flex-shrink: 0;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-        }
-        .tab-button:hover { color: white; background-color: var(--card-bg); }
-        .tab-button.active-tab {
-            color: white;
-            background-color: var(--spotify-green);
-        }
-
-        .tab-content {
-            display: none; /* Hidden by default */
-            width: 100%;
-        }
-        .tab-content.active-content {
-            display: block; /* Visible when tab is selected */
-        }
+        let tracks = trackItems.map(track => {
+            const releaseYear = parseInt((track.album?.release_date || '').slice(0, 4), 10) || null;
+            return {
+                id: track.id,
+                name: track.name,
+                artist: track.artists.map(a => a.name).join(', '),
+                artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
+                explicit: track.explicit || false,
+                duration: formatDuration(track.duration_ms),
+                // Internal-only fields used for filtering below, stripped before response.
+                _releaseYear: releaseYear,
+                _primaryArtistId: track.artists?.[0]?.id || null
+            };
+        });
         
-        .panel { 
-            width: 100%;
-            background: var(--panel-bg); 
-            padding: 25px; 
-            border-radius: 16px; 
-            border: 1px solid #222; 
-            box-sizing: border-box;
+        // Filter out explicit tracks if explicit restriction lock is active
+        if (systemConfigs.explicitBlockActive) {
+            tracks = tracks.filter(track => !track.explicit);
         }
 
-        .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
-
-        .settings-section-label {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            color: #a7a7a7;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
+        // Radio-edits-only filter: strip extended/club/dub/instrumental mixes,
+        // keeping plain/radio-length versions.
+        if (systemConfigs.radioEditsOnly) {
+            tracks = tracks.filter(track => !isExtendedOrClubMix(track.name));
         }
 
-        .song-row { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            padding: 14px; 
-            background: var(--card-bg); 
-            margin-bottom: 12px; 
-            border-radius: 10px; 
-            border: 1px solid #2c2c2c; 
-            gap: 15px;
-            box-sizing: border-box;
-            width: 100%;
-        }
-        
-        .song-details { 
-            display: flex; 
-            align-items: center; 
-            gap: 16px; 
-            flex: 1;
-            min-width: 0;
-        }
-        
-        .song-details img { 
-            width: 48px; 
-            height: 48px; 
-            border-radius: 6px; 
-            object-fit: cover; 
-            flex-shrink: 0;
-        }
-        
-        .text-container {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .title-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-
-        .song-title { 
-            font-weight: 700; 
-            margin: 0; 
-            font-size: 1.1rem; 
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .explicit-badge {
-            background-color: #7f7f7f;
-            color: var(--spotify-black);
-            font-size: 0.65rem;
-            font-weight: 700;
-            padding: 1px 4px;
-            border-radius: 2px;
-            text-transform: uppercase;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            line-height: 1;
-        }
-        
-        .song-artist { 
-            color: #a7a7a7; 
-            margin: 4px 0 0 0; 
-            font-size: 0.9rem; 
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        /* Requester panel - DJ-only visibility of who added each track */
-        .length-requester-row {
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            gap: 10px;
-            margin: 6px 0 0 0;
-        }
-        .length-text {
-            font-size: 0.85rem;
-            color: #a7a7a7;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-        .requester-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            line-height: 1;
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--spotify-green);
-            background-color: rgba(29, 185, 84, 0.12);
-            padding: 4px 9px;
-            border-radius: 20px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 60%;
-            flex-shrink: 0;
-        }
-        .requester-badge svg { width: 12px; height: 12px; fill: var(--spotify-green); flex-shrink: 0; display: block; }
-
-        .admin-vote-block {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-right: 10px;
-        }
-
-        .vote-display-node {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-width: 28px;
-        }
-
-        .vote-display-node svg {
-            width: 18px;
-            height: 18px;
-            stroke-width: 2.5;
-        }
-        .node-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
-        .node-down svg { stroke: var(--red-action); fill: var(--red-action); }
-
-        .vote-display-count {
-            font-size: 0.8rem;
-            font-weight: 700;
-            margin-top: 4px;
-            color: #a7a7a7;
-        }
-        .node-up .vote-display-count { color: var(--spotify-green); }
-        .node-down .vote-display-count { color: var(--red-action); }
-
-        .actions { 
-            display: flex; 
-            gap: 10px; 
-            align-items: center;
-            flex-shrink: 0;
-            flex-wrap: wrap; 
-            justify-content: flex-end;
-        }
-        
-        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
-        .btn:hover { filter: brightness(1.1); }
-        .btn-top { background-color: var(--blue-action); }
-        .btn-played { background-color: var(--spotify-green); }
-        .btn-remove { background-color: #3e3e3e; }
-        .btn-remove:hover { background-color: var(--red-action); }
-
-        .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
-        .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
-
-        .neutral-status { background-color: #3e3e3e; color: white; }
-
-        .filter-panel {
-            box-sizing: border-box;
-        }
-        .filter-hint { color: #a7a7a7; font-size: 0.85rem; margin: 0 0 14px 0; }
-        .filter-group-label { font-size: 0.8rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
-        .filter-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-        .filter-chip {
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            color: #ccc;
-            padding: 8px 16px;
-            border-radius: 50px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            user-select: none;
-            transition: all 0.15s ease;
-        }
-        .filter-chip:hover { border-color: var(--spotify-green); }
-        .filter-chip.is-selected {
-            background-color: var(--spotify-green);
-            color: white;
-            border-color: var(--spotify-green);
-        }
-        .queue-cap-status-text { width: 100%; color: #a7a7a7; font-size: 0.85rem; margin-top: 6px; }
-
-        .stat-grid { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-        .stat-card {
-            flex: 1; min-width: 140px;
-            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
-            padding: 20px; text-align: center;
-        }
-        .stat-number { font-size: 2.2rem; font-weight: 800; color: var(--spotify-green); }
-        .stat-label { color: #a7a7a7; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
-
-        .stat-box {
-            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
-            margin-bottom: 14px; overflow: hidden;
-        }
-        .stat-box summary {
-            padding: 16px 20px; cursor: pointer; font-weight: 700; font-size: 1.05rem;
-            list-style: none; display: flex; align-items: center; justify-content: space-between;
-        }
-        .stat-box summary::-webkit-details-marker { display: none; }
-        .stat-box summary::after { content: '▾'; color: #a7a7a7; transition: transform 0.15s ease; }
-        .stat-box[open] summary::after { transform: rotate(180deg); }
-        .stat-box summary:hover { background: rgba(255,255,255,0.03); }
-        .stat-box-body { padding: 0 16px 16px; max-height: 420px; overflow-y: auto; }
-
-        .stat-row {
-            display: flex; align-items: center; gap: 14px; padding: 10px 8px;
-            border-bottom: 1px solid #262626;
-        }
-        .stat-row:last-child { border-bottom: none; }
-        .stat-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
-        .stat-row-text { flex: 1; min-width: 0; }
-        .stat-row-title { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stat-row-artist { color: #a7a7a7; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stat-count { font-weight: 700; font-size: 0.9rem; color: #a7a7a7; flex-shrink: 0; }
-        .stat-count.up { color: var(--spotify-green); }
-        .stat-count.down { color: var(--red-action); }
-
-        .outcome-badge {
-            display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-            padding: 2px 7px; border-radius: 4px; margin-top: 3px;
-        }
-        .outcome-badge.played { background: rgba(29,185,84,0.15); color: var(--spotify-green); }
-        .outcome-badge.dropped { background: rgba(233,20,41,0.15); color: var(--red-action); }
-
-        @media (max-width: 600px) {
-            body { padding: 15px; }
-            h1 { font-size: 1.8rem; }
-            .song-row { flex-direction: column; align-items: flex-start; }
-            .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
-        }
-
-        /* Toast notifications - replace blocking alert() popups */
-        #toast-container {
-            position: fixed; top: max(24px, env(safe-area-inset-top, 24px)); left: 50%; transform: translateX(-50%);
-            z-index: 9999; display: flex; flex-direction: column; gap: 8px;
-            align-items: center; width: 100%; padding: 0 16px; box-sizing: border-box;
-            pointer-events: none;
-        }
-        .toast {
-            background: #242424; color: white; border: 1px solid #333;
-            border-left: 4px solid var(--spotify-green, #1DB954);
-            border-radius: 8px; padding: 12px 18px; font-size: 0.9rem; font-weight: 600;
-            max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-            opacity: 0; transform: translateY(-12px); transition: opacity 0.25s ease, transform 0.25s ease;
-        }
-        .toast-error { border-left-color: #e91429; }
-        .toast-visible { opacity: 1; transform: translateY(0); }
-    </style>
-</head>
-<body>
-
-    <div id="admin-lock-screen">
-        <div class="lock-container">
-            <h2>Enter DJ Password</h2>
-            <input type="password" id="password-input" class="lock-input" placeholder="••••••••" onkeydown="if(event.key === 'Enter') verifyPassword()">
-            <button class="lock-btn" onclick="verifyPassword()">Unlock Dashboard</button>
-            <div id="lock-error-msg" class="lock-error">Incorrect password. Access denied.</div>
-        </div>
-    </div>
-
-    <div class="header">
-        <h1>Current Requests</h1>
-        <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
-            <svg viewBox="0 0 24 24" id="fullscreen-svg">
-                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-            </svg>
-        </button>
-    </div>
-
-    <div class="tab-bar">
-        <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
-        <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
-        <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
-        <button id="tab-btn-stats" class="tab-button" onclick="switchTab('stats')">Stats</button>
-    </div>
-
-    <div id="tab-panel-queue" class="tab-content active-content">
-        <div class="panel">
-            <h2>Current Queue</h2>
-            <div id="queue-list"></div>
-        </div>
-    </div>
-
-    <div id="tab-panel-history" class="tab-content">
-        <div class="panel">
-            <h2>Song History (Played)</h2>
-            <div id="history-list"></div>
-        </div>
-    </div>
-
-    <div id="tab-panel-settings" class="tab-content">
-        <div class="panel">
-            <h2>Settings</h2>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Access Controls</div>
-                <div class="control-bar">
-                    <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-                    <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-                    <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
-                    <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Spotify Queue Relay</div>
-                <div class="control-bar">
-                    <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
-                    <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
-                </div>
-                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                    When connected, every newly-accepted request is automatically added to your live Spotify app queue.
-                    This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
-                    device (open Spotify and play something first). Click to (re)connect.
-                </p>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Fallback Playlist</div>
-                <div class="config-dashboard">
-                    <div class="input-group" style="width: 100%; max-width: 460px;">
-                        <label>Spotify Playlist Link</label>
-                        <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
-                    </div>
-                    <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
-                </div>
-                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
-                    Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
-                    replaced. If a request happens to be playing right now, this will interrupt it, so best used
-                    between songs. Guest requests you've explicitly queued aren't affected by this - they still get
-                    added to the queue as normal and play before anything from a playlist.
-                </p>
-                <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">System Rules</div>
-                <div class="event-name-box" style="margin-bottom: 20px;">
-                    <div class="input-group" style="width: 100%;">
-                        <label>Event Name</label>
-                        <input type="text" id="input-event-name" placeholder="Song Requests" maxlength="60" style="width: 100%;">
-                    </div>
-                </div>
-                <div class="config-dashboard">
-                    <div class="input-group">
-                        <label>Max Credit Bank</label>
-                        <input type="number" id="input-max-credits" min="1">
-                    </div>
-                    <div class="input-group">
-                        <label>Regen Timer (Secs)</label>
-                        <input type="number" id="input-countdown" min="5">
-                    </div>
-                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Queue Length Cap</div>
-                <div class="config-dashboard">
-                    <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
-                    <div class="input-group">
-                        <label>Max Queue Length</label>
-                        <input type="number" id="input-max-queue" min="1" value="50">
-                    </div>
-                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-                    <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
-                <div class="filter-panel">
-                    <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
-                    <div class="filter-group-label">Genres</div>
-                    <div class="filter-chip-row" id="genre-filter-chips"></div>
-                    <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
-                    <div class="filter-chip-row" id="decade-filter-chips"></div>
-                    <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Export</div>
-                <div class="control-bar">
-                    <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
-                <p class="settings-card-hint" style="margin-top: 0;">
-                    Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
-                </p>
-                <div class="control-bar" style="margin-bottom: 20px;">
-                    <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
-                    <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
-                </div>
-                <div class="config-dashboard">
-                    <div class="input-group">
-                        <label>Kiosk Max Credit Bank</label>
-                        <input type="number" id="input-kiosk-max-credits" min="1">
-                    </div>
-                    <div class="input-group">
-                        <label>Kiosk Regen Timer (Secs)</label>
-                        <input type="number" id="input-kiosk-countdown" min="5">
-                    </div>
-                    <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
-                </div>
-            </div>
-
-            <div class="settings-card danger-zone">
-                <div class="settings-section-label">Danger Zone</div>
-                <div class="control-bar">
-                    <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-                    <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="tab-panel-stats" class="tab-content">
-        <div class="panel">
-            <h2>Stats</h2>
-
-            <div class="stat-grid">
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-played">0</div>
-                    <div class="stat-label">Songs Played</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-dropped">0</div>
-                    <div class="stat-label">Songs Dropped</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-queued">0</div>
-                    <div class="stat-label">Still Queued</div>
-                </div>
-            </div>
-
-            <details class="stat-box" open>
-                <summary>👍 Top Liked Songs</summary>
-                <div id="stat-top-liked" class="stat-box-body"></div>
-            </details>
-
-            <details class="stat-box">
-                <summary>👎 Top Disliked Songs</summary>
-                <div id="stat-top-disliked" class="stat-box-body"></div>
-            </details>
-
-            <details class="stat-box">
-                <summary>🏆 Requesters Leaderboard</summary>
-                <div id="stat-requesters" class="stat-box-body"></div>
-            </details>
-
-            <details class="stat-box">
-                <summary>📜 All Requests</summary>
-                <div id="stat-all-requests" class="stat-box-body"></div>
-            </details>
-        </div>
-    </div>
-
-    <script>
-        // Toast notifications - non-blocking replacement for alert()
-        let toastTimer = null;
-        function showToast(message, type = "error") {
-            const container = document.getElementById("toast-container");
-            if (!container) { console.log(message); return; }
-            container.innerHTML = "";
-            const toast = document.createElement("div");
-            toast.className = `toast toast-${type}`;
-            toast.textContent = message;
-            container.appendChild(toast);
-            requestAnimationFrame(() => toast.classList.add("toast-visible"));
-            clearTimeout(toastTimer);
-            toastTimer = setTimeout(() => {
-                toast.classList.remove("toast-visible");
-                setTimeout(() => toast.remove(), 300);
-            }, 3500);
-        }
-        let requestsAllowed = true;
-        let explicitBlockActive = false;
-        let radioEditsOnly = false;
-        let queueCapEnabled = false;
-        let guestSpotifyEnabled = false;
-        let kioskRequestsAllowed = true;
-        let kioskSpotifyEnabled = false;
-        let isAuthorized = false; 
-
-        // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
-        const GENRE_OPTIONS = [
-            { key: 'pop', label: 'Pop' },
-            { key: 'hiphop', label: 'Hip-Hop/Rap' },
-            { key: 'rock', label: 'Rock/Metal' },
-            { key: 'rnb', label: 'R&B/Soul' },
-            { key: 'country', label: 'Country' },
-            { key: 'electronic', label: 'Electronic/Dance' },
-            { key: 'latin', label: 'Latin' },
-            { key: 'indie', label: 'Indie/Alt' },
-            { key: 'jazz', label: 'Jazz/Blues' },
-            { key: 'classical', label: 'Classical' },
-            { key: 'reggae', label: 'Reggae' },
-            { key: 'kpop', label: 'K-Pop' },
-            { key: 'afrobeats', label: 'Afrobeats' }
-        ];
-        const DECADE_OPTIONS = [1960, 1970, 1980, 1990, 2000, 2010, 2020];
-
-        let selectedGenres = [];
-        let selectedDecades = [];
-        // Only seed the two arrays above from the server once - otherwise the
-        // 3-second polling in updateDashboard would wipe out a DJ's in-progress
-        // chip selection before they hit "Save Filters".
-        let filtersInitialized = false;
-
-        const TAB_NAMES = ['queue', 'history', 'settings', 'stats'];
-
-        // Tab selection switching algorithm
-        function switchTab(targetTab) {
-            TAB_NAMES.forEach(name => {
-                const isActive = name === targetTab;
-                document.getElementById(`tab-btn-${name}`).classList.toggle('active-tab', isActive);
-                document.getElementById(`tab-panel-${name}`).classList.toggle('active-content', isActive);
+        // Decade filter (DJ-configured, e.g. theme night restricted to the 90s/2000s)
+        if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
+            tracks = tracks.filter(track => {
+                if (!track._releaseYear) return false;
+                const decade = Math.floor(track._releaseYear / 10) * 10;
+                return systemConfigs.decadeFilter.includes(decade);
             });
-            if (targetTab === 'stats') loadStats();
         }
 
-let adminPassword = '';
-
-async function verifyPassword() {
-            const inputField = document.getElementById('password-input');
-            const errorMsg = document.getElementById('lock-error-msg');
-            const attempt = inputField.value;
-
-            // Verified against the server now, not a hardcoded value in this file -
-            // that hardcoded value used to be visible to anyone via "View Source".
-            try {
-                const res = await fetch('/api/admin/data', { headers: { 'x-admin-password': attempt } });
-                if (res.ok) {
-                    adminPassword = attempt;
-                    isAuthorized = true;
-                    document.getElementById('admin-lock-screen').style.display = 'none';
-                    updateDashboard();
-                    return;
-                }
-            } catch (e) { /* fall through to error state below */ }
-
-            errorMsg.style.display = 'block';
-            inputField.value = '';
-            inputField.focus();
-        }
-
-        // Builds the DJ-only "Requested by" badge HTML for a track's requesters list.
-        function buildRequesterBadge(requesters) {
-            if (!requesters || requesters.length === 0) return '';
-            const label = requesters.length > 1
-                ? `${requesters[0]} +${requesters.length - 1} more`
-                : requesters[0];
-            // Guest usernames are free text - escape before inserting via innerHTML,
-            // otherwise a guest could set a name like <img onerror=...> and run
-            // arbitrary JS in the DJ's own browser the next time the queue renders.
-            return `<span class="requester-badge"><svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 8 1.34 8 4v2H4v-2c0-2.66 5.3-4 8-4zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>${escapeHtml(label)}</span>`;
-        }
-
-        function escapeHtml(str) {
-            if (str === null || str === undefined) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // Every authenticated admin call goes through this so the password header
-        // is never forgotten on a new fetch.
-        function adminHeaders(extra) {
-            return Object.assign({ 'x-admin-password': adminPassword }, extra || {});
-        }
-
-        function renderFilterChips() {
-            const genreEl = document.getElementById('genre-filter-chips');
-            genreEl.innerHTML = GENRE_OPTIONS.map(g => `
-                <div class="filter-chip ${selectedGenres.includes(g.key) ? 'is-selected' : ''}" onclick="toggleGenreChip('${g.key}')">${g.label}</div>
-            `).join('');
-
-            const decadeEl = document.getElementById('decade-filter-chips');
-            decadeEl.innerHTML = DECADE_OPTIONS.map(d => `
-                <div class="filter-chip ${selectedDecades.includes(d) ? 'is-selected' : ''}" onclick="toggleDecadeChip(${d})">${d}s</div>
-            `).join('');
-        }
-
-        function toggleGenreChip(key) {
-            selectedGenres = selectedGenres.includes(key)
-                ? selectedGenres.filter(g => g !== key)
-                : [...selectedGenres, key];
-            renderFilterChips();
-        }
-
-        function toggleDecadeChip(decade) {
-            selectedDecades = selectedDecades.includes(decade)
-                ? selectedDecades.filter(d => d !== decade)
-                : [...selectedDecades, decade];
-            renderFilterChips();
-        }
-
-        async function saveFilters() {
-            if (!isAuthorized) return;
-            const res = await fetch('/api/admin/config', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ genreFilter: selectedGenres, decadeFilter: selectedDecades })
+        // Genre filter (DJ-configured allow-list, matched against the primary artist's genres)
+        if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0 && tracks.length > 0) {
+            const artistIds = [...new Set(tracks.map(t => t._primaryArtistId).filter(Boolean))];
+            const genresByArtist = await getArtistGenres(artistIds);
+            const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+            tracks = tracks.filter(track => {
+                const artistGenres = genresByArtist.get(track._primaryArtistId) || [];
+                return artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
             });
-            if (res.ok) showToast("Filters updated.", "success");
-            updateDashboard();
         }
 
-        async function toggleQueueCap() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-queue-cap', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !queueCapEnabled })
-            });
-            updateDashboard();
-        }
+        // Strip internal filtering-only fields before sending to the client.
+        tracks = tracks.map(({ _releaseYear, _primaryArtistId, ...publicFields }) => publicFields);
 
-        function connectDjSpotify() {
-            // Plain navigation (not fetch) since this needs to become a real
-            // browser redirect through Spotify's login page and back.
-            window.location.href = '/admin/spotify-login?password=' + encodeURIComponent(adminPassword);
-        }
+        res.json({ tracks });
+    } catch (err) {
+        console.error('[SEARCH] Failed:', err.message);
+        res.status(500).json({ error: "Search feature unavailable" });
+    }
+});
 
-        let spotifyAutoQueueEnabled = true;
-        async function toggleSpotifyAutoQueue() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-spotify-auto-queue', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !spotifyAutoQueueEnabled })
-            });
-            updateDashboard();
-        }
+app.post('/api/request', async (req, res) => {
+    const { track, username, isKiosk } = req.body;
+    // Kiosk devices (kiosk.html) and regular guests (index.html) have their
+    // own independent requestsAllowed toggle and credit rules, set separately
+    // in the admin dashboard - everything else (explicit filter, genre/decade
+    // filters, queue cap) is shared, since those describe the event itself.
+    const modeConfig = isKiosk === true ? kioskConfigs : systemConfigs;
 
-        async function toggleGuestSpotify() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-guest-spotify', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !guestSpotifyEnabled })
-            });
-            updateDashboard();
-        }
+    if (!modeConfig.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+    if (isQueueFull()) return res.status(403).json({ error: `Queue is full (max ${systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
+    if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
+    // Identity now comes from the server-issued cookie, not a client-supplied
+    // value - see the cookie middleware near the top of this file.
+    const voterId = req.serverVoterId;
 
-        async function toggleKioskRequests() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/kiosk/toggle', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ allow: !kioskRequestsAllowed })
-            });
-            updateDashboard();
-        }
+    // Spotify track IDs are always 22-character base62 strings - reject anything
+    // that isn't even shaped like one before spending an API call on it.
+    if (!/^[A-Za-z0-9]{22}$/.test(track.id)) {
+        return res.status(400).json({ error: "Invalid track ID." });
+    }
 
-        async function toggleKioskSpotify() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/kiosk/toggle-spotify', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !kioskSpotifyEnabled })
-            });
-            updateDashboard();
-        }
-
-        async function saveKioskConfig() {
-            if (!isAuthorized) return;
-            const maxVal = document.getElementById('input-kiosk-max-credits').value;
-            const downVal = document.getElementById('input-kiosk-countdown').value;
-            const res = await fetch('/api/admin/kiosk/config', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
-            });
-            if (res.ok) showToast("Kiosk rules updated.", "success");
-            updateDashboard();
-        }
-
-        function csvEscape(value) {
-            const str = String(value ?? '');
-            return /[",\n\r]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
-        }
-
-        // Reads from /api/admin/stats (rather than whatever's currently rendered in
-        // the Stats tab) so this works correctly even if the DJ never opened that
-        // tab this session.
-        async function exportStatsCSV() {
-            if (!isAuthorized) return;
-            try {
-                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
-                if (!res.ok) { showToast("Could not load stats to export.", "error"); return; }
-                const data = await res.json();
-
-                const rows = [['Title', 'Artist', 'Requested By', 'Outcome', 'Timestamp']];
-                data.allRequests.forEach(r => {
-                    rows.push([r.title, r.artist, r.username, r.outcome, new Date(r.timestamp).toLocaleString()]);
-                });
-                const csvContent = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
-
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const eventSlug = (document.getElementById('input-event-name').value || 'song-requests')
-                    .trim().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'song-requests';
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${eventSlug}-stats-${new Date().toISOString().slice(0, 10)}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            } catch (e) {
-                showToast("Export failed.", "error");
-            }
-        }
-
-        async function updateDashboard() {
-            if (!isAuthorized) return; 
-            
-            try {
-                const res = await fetch('/api/admin/data', { headers: adminHeaders() });
-                if (!res.ok) return;
-                const data = await res.json();
-                
-                if(document.activeElement !== document.getElementById('input-event-name')) {
-                    document.getElementById('input-event-name').value = data.eventName || '';
-                }
-                if(document.activeElement !== document.getElementById('input-max-credits')) {
-                    document.getElementById('input-max-credits').value = data.maxCredits;
-                }
-                if(document.activeElement !== document.getElementById('input-countdown')) {
-                    document.getElementById('input-countdown').value = data.countdownLength;
-                }
-
-                const toggleBtn = document.getElementById('toggle-requests');
-                requestsAllowed = data.requestsAllowed;
-                toggleBtn.innerText = requestsAllowed ? "Requests: OPEN" : "Requests: CLOSED";
-                toggleBtn.className = requestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                const explicitBtn = document.getElementById('toggle-explicit');
-                explicitBlockActive = data.explicitBlockActive || false;
-                explicitBtn.innerText = explicitBlockActive ? "Explicit: BLOCKED" : "Explicit: ALLOWED";
-                explicitBtn.className = explicitBlockActive ? "toggle-btn closed-status" : "toggle-btn open-status";
-
-                const radioEditsBtn = document.getElementById('toggle-radio-edits');
-                radioEditsOnly = data.radioEditsOnly || false;
-                radioEditsBtn.innerText = radioEditsOnly ? "Radio Edits Only: ON" : "Radio Edits Only: OFF";
-                radioEditsBtn.className = radioEditsOnly ? "toggle-btn closed-status" : "toggle-btn open-status";
-
-                if (document.activeElement !== document.getElementById('input-max-queue')) {
-                    document.getElementById('input-max-queue').value = data.maxQueueLength;
-                }
-                const capBtn = document.getElementById('toggle-queue-cap');
-                queueCapEnabled = data.queueCapEnabled || false;
-                capBtn.innerText = queueCapEnabled ? "Queue Cap: ON" : "Queue Cap: OFF";
-                capBtn.className = queueCapEnabled ? "toggle-btn open-status" : "toggle-btn neutral-status";
-                document.getElementById('queue-cap-status-text').innerText = queueCapEnabled
-                    ? `Current queue: ${data.queue.length} / ${data.maxQueueLength}${data.queueFull ? ' — FULL, requests auto-closed until it drains' : ''}`
-                    : "Cap is off — the queue can grow without limit.";
-
-                const guestSpotifyBtn = document.getElementById('toggle-guest-spotify');
-                guestSpotifyEnabled = data.guestSpotifyConnectEnabled !== false;
-                guestSpotifyBtn.innerText = guestSpotifyEnabled ? "Guest Spotify Connect: ON" : "Guest Spotify Connect: OFF";
-                guestSpotifyBtn.className = guestSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                const relayBtn = document.getElementById('spotify-relay-status');
-                relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Queue Relay: CONNECTED (click to reconnect)" : "Spotify Queue Relay: NOT CONNECTED (click to connect)";
-                relayBtn.className = data.djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                const autoQueueBtn = document.getElementById('toggle-spotify-auto-queue');
-                spotifyAutoQueueEnabled = data.spotifyAutoQueueEnabled !== false;
-                autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
-                autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                if (data.lastSwitchedPlaylist) {
-                    const fallbackInput = document.getElementById('input-fallback-playlist');
-                    if (document.activeElement !== fallbackInput && !fallbackInput.value) {
-                        fallbackInput.value = data.lastSwitchedPlaylist;
-                    }
-                    document.getElementById('fallback-playlist-status').innerText = `Currently playing from: ${data.lastSwitchedPlaylist}`;
-                }
-
-                if (data.kiosk) {
-                    const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
-                    kioskRequestsAllowed = data.kiosk.requestsAllowed;
-                    kioskReqBtn.innerText = kioskRequestsAllowed ? "Kiosk Requests: OPEN" : "Kiosk Requests: CLOSED";
-                    kioskReqBtn.className = kioskRequestsAllowed ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    const kioskSpotifyBtn = document.getElementById('toggle-kiosk-spotify');
-                    kioskSpotifyEnabled = data.kiosk.spotifyConnectEnabled !== false;
-                    kioskSpotifyBtn.innerText = kioskSpotifyEnabled ? "Kiosk Spotify Connect: ON" : "Kiosk Spotify Connect: OFF";
-                    kioskSpotifyBtn.className = kioskSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    if (document.activeElement !== document.getElementById('input-kiosk-max-credits')) {
-                        document.getElementById('input-kiosk-max-credits').value = data.kiosk.maxCredits;
-                    }
-                    if (document.activeElement !== document.getElementById('input-kiosk-countdown')) {
-                        document.getElementById('input-kiosk-countdown').value = data.kiosk.countdownLength;
-                    }
-                }
-
-                if (!filtersInitialized) {
-                    selectedGenres = data.genreFilter || [];
-                    selectedDecades = data.decadeFilter || [];
-                    filtersInitialized = true;
-                }
-                renderFilterChips();
-
-                const queueList = document.getElementById('queue-list');
-                queueList.innerHTML = data.queue.length === 0 ? '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>' : data.queue.map(song => `
-                    <div class="song-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div class="text-container">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${escapeHtml(song.title)}</p>
-                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </div>
-                                <p class="song-artist">${escapeHtml(song.artist)}</p>
-                                <div class="length-requester-row">
-                                    <span class="length-text">Length: ${song.duration}</span>
-                                    ${buildRequesterBadge(song.requesters)}
-                                </div>
-                            </div>
-                        </div>
-                        <div class="actions">
-                            <div class="admin-vote-block">
-                                <div class="vote-display-node node-up">
-                                    <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-                                    <span class="vote-display-count">${song.ups || 0}</span>
-                                </div>
-                                <div class="vote-display-node node-down">
-                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                                    <span class="vote-display-count">${song.downs || 0}</span>
-                                </div>
-                            </div>
-                            <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
-                            <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
-                            <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
-                        </div>
-                    </div>
-                `).join('');
-
-                const historyList = document.getElementById('history-list');
-                historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
-                    <div class="song-row history-row">
-                        <div class="song-details">
-                            <img src="${song.artwork}">
-                            <div class="text-container">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${escapeHtml(song.title)}</p>
-                                    ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                </div>
-                                <p class="song-artist">${escapeHtml(song.artist)}</p>
-                                <div class="length-requester-row">
-                                    <span class="length-text">Length: ${song.duration}</span>
-                                    ${buildRequesterBadge(song.requesters)}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            } catch(e) { console.log("Sync error."); }
-        }
-
-        async function saveSystemRules() {
-            if (!isAuthorized) return;
-            const maxVal = document.getElementById('input-max-credits').value;
-            const downVal = document.getElementById('input-countdown').value;
-            const eventNameVal = document.getElementById('input-event-name').value;
-            const maxQueueVal = document.getElementById('input-max-queue').value;
-
-            const res = await fetch('/api/admin/config', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal, maxQueueLength: maxQueueVal })
-            });
-            if(res.ok) showToast("System parameters updated successfully.", "success");
-            updateDashboard();
-        }
-
-        async function triggerAction(id, action) {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/action', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ id, action })
-            });
-            updateDashboard();
-        }
-
-        async function clearSystem(actionType, message) {
-            if (!isAuthorized) return;
-            if (confirm(message)) {
-                await fetch('/api/admin/action', {
-                    method: 'POST',
-                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ id: null, action: actionType })
-                });
-                updateDashboard();
-            }
-        }
-
-        async function toggleRequests() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ allow: !requestsAllowed })
-            });
-            updateDashboard();
-        }
-
-        async function toggleExplicitLock() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-explicit', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ blockExplicit: !explicitBlockActive })
-            });
-            updateDashboard();
-        }
-
-        async function toggleRadioEditsOnly() {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-radio-edits', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ radioEditsOnly: !radioEditsOnly })
-            });
-            updateDashboard();
-        }
-
-        async function switchFallbackPlaylist() {
-            if (!isAuthorized) return;
-            const input = document.getElementById('input-fallback-playlist');
-            const statusEl = document.getElementById('fallback-playlist-status');
-            const url = input.value.trim();
-            if (!url) { showToast('Paste a Spotify playlist link first.', 'error'); return; }
-
-            statusEl.innerText = 'Switching…';
-            try {
-                const res = await fetch('/api/admin/switch-playlist', {
-                    method: 'POST',
-                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ playlistUrl: url })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    showToast('Switched to the new playlist.', 'success');
-                    statusEl.innerText = `Currently playing from: ${url}`;
-                } else {
-                    showToast(data.error || 'Could not switch playlist.', 'error');
-                    statusEl.innerText = '';
-                }
-            } catch (e) {
-                showToast('Could not reach the server.', 'error');
-                statusEl.innerText = '';
-            }
-        }
-
-        function statSongRow(entry, rightSideHtml) {
-            return `
-                <div class="stat-row">
-                    <img src="${entry.artwork || 'https://picsum.photos/48'}">
-                    <div class="stat-row-text">
-                        <div class="stat-row-title">${escapeHtml(entry.title)}</div>
-                        <div class="stat-row-artist">${escapeHtml(entry.artist)}</div>
-                    </div>
-                    ${rightSideHtml}
-                </div>`;
-        }
-
-        async function loadStats() {
-            if (!isAuthorized) return;
-            try {
-                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
-                if (!res.ok) return;
-                const data = await res.json();
-
-                document.getElementById('stat-played').innerText = data.totals.played;
-                document.getElementById('stat-dropped').innerText = data.totals.dropped;
-                document.getElementById('stat-queued').innerText = data.totals.stillQueued;
-
-                const likedEl = document.getElementById('stat-top-liked');
-                likedEl.innerHTML = data.topLiked.length === 0
-                    ? '<p class="empty-placeholder">No liked songs yet.</p>'
-                    : data.topLiked.map(e => statSongRow(e, `<div class="stat-count up">👍 ${e.count}</div>`)).join('');
-
-                const dislikedEl = document.getElementById('stat-top-disliked');
-                dislikedEl.innerHTML = data.topDisliked.length === 0
-                    ? '<p class="empty-placeholder">No disliked songs yet.</p>'
-                    : data.topDisliked.map(e => statSongRow(e, `<div class="stat-count down">👎 ${e.count}</div>`)).join('');
-
-                const reqEl = document.getElementById('stat-requesters');
-                reqEl.innerHTML = data.topRequesters.length === 0
-                    ? '<p class="empty-placeholder">No requests yet.</p>'
-                    : data.topRequesters.map(r => `
-                        <div class="stat-row">
-                            <div class="stat-row-text">
-                                <div class="stat-row-title">${escapeHtml(r.username)}</div>
-                            </div>
-                            <div class="stat-count">${r.count} song${r.count === 1 ? '' : 's'}</div>
-                        </div>`).join('');
-
-                const allEl = document.getElementById('stat-all-requests');
-                allEl.innerHTML = data.allRequests.length === 0
-                    ? '<p class="empty-placeholder">No requests yet.</p>'
-                    : data.allRequests.map(r => {
-                        const badge = r.outcome === 'played'
-                            ? '<span class="outcome-badge played">Played</span>'
-                            : '<span class="outcome-badge dropped">Dropped</span>';
-                        return statSongRow(r, `
-                            <div class="stat-row-text" style="text-align:right; flex:0;">
-                                <div class="stat-row-title">${escapeHtml(r.username)}</div>
-                                ${badge}
-                            </div>`);
-                    }).join('');
-            } catch (e) { console.log('Stats load failed.'); }
-        }
-
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen()
-                    .catch(err => {
-                        console.log(`Error enabling fullscreen: ${err.message}`);
-                    });
-            } else {
-                document.exitFullscreen();
-            }
-        }
-
-        function updateFullscreenIcon() {
-            const svgNode = document.getElementById('fullscreen-svg');
-            if (!document.fullscreenElement) {
-                // Expand Icon
-                svgNode.innerHTML = `<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>`;
-            } else {
-                // Shrink / Exit Icon
-                svgNode.innerHTML = `<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>`;
-            }
-        }
-
-        document.addEventListener('fullscreenchange', updateFullscreenIcon);
-
-        window.onload = () => {
-            document.getElementById('password-input').focus();
+    // Re-fetch the track from Spotify's own catalog rather than trusting whatever
+    // name/artist/artwork/duration the client sent - otherwise anyone could POST
+    // fabricated metadata (offensive titles, arbitrary image URLs) straight into
+    // the live queue without it ever being a real, searchable track.
+    let verifiedTrack;
+    let releaseYear = null;
+    let primaryArtistId = null;
+    try {
+        if (!spotifyAccessToken) await getSpotifyToken();
+        const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        if (!lookupRes.ok) return res.status(400).json({ error: "Track not found on Spotify." });
+        const t = await lookupRes.json();
+        if (!t || !t.id) return res.status(400).json({ error: "Track not found on Spotify." });
+        verifiedTrack = {
+            id: t.id,
+            name: t.name,
+            artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            explicit: t.explicit || false,
+            duration: formatDuration(t.duration_ms || 0)
         };
+        releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
+        primaryArtistId = t.artists?.[0]?.id || null;
+    } catch (err) {
+        return res.status(500).json({ error: "Could not verify track with Spotify." });
+    }
 
-        setInterval(updateDashboard, 3000);
-    </script>
-    <div id="toast-container"></div>
-</body>
-</html>
+    // API block safety gate against manual requests injection of explicit songs
+    if (systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
+        return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+    }
+
+    // Same idea, for extended/club/dub mixes when radio-edits-only is active -
+    // re-checked here so it can't be bypassed by POSTing a track ID directly.
+    if (systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
+        return res.status(403).json({ error: "Only radio edits are currently allowed - try searching for the standard version." });
+    }
+
+    // Same idea as the explicit gate above, but for genre/decade theme-night
+    // restrictions - re-checked here so a guest can't bypass the DJ's filters
+    // by POSTing a track ID directly instead of going through /api/search.
+    if (systemConfigs.decadeFilter && systemConfigs.decadeFilter.length > 0) {
+        const decade = releaseYear ? Math.floor(releaseYear / 10) * 10 : null;
+        if (decade === null || !systemConfigs.decadeFilter.includes(decade)) {
+            return res.status(403).json({ error: "That song's decade isn't part of tonight's theme." });
+        }
+    }
+    if (systemConfigs.genreFilter && systemConfigs.genreFilter.length > 0) {
+        const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
+        const artistGenres = genresByArtist.get(primaryArtistId) || [];
+        const allowedKeywords = systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+        const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
+        if (!matches) {
+            return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
+        }
+    }
+
+    // Server-authoritative credit check (abuse/spam control) - separate from the
+    // client's own locally-displayed credit counter, can't be bypassed client-side.
+    // Kiosk and guest each use their own maxCredits/countdownLength, but the
+    // per-device tracking mechanism (keyed by the voter cookie) is identical -
+    // each physical kiosk device naturally gets its own independent credit
+    // bank, same as any guest's phone would.
+    const creditState = getOrCreateVoterCreditState(voterId, modeConfig.maxCredits);
+    refillVoterCredits(creditState, modeConfig.maxCredits, modeConfig.countdownLength);
+    if (creditState.available <= 0) {
+        return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
+    }
+    creditState.available -= 1;
+
+    // DJ-only attribution: never sent back down via /data, only via /api/admin/data
+    const requesterName = (typeof username === 'string' && username.trim() !== '')
+        ? username.trim().slice(0, 30)
+        : 'Anonymous';
+
+    const trackId = verifiedTrack.id;
+
+    const existingTrack = activeQueue.find(t => t.id === trackId);
+    if (existingTrack) {
+        if (!existingTrack.upvoters.includes('system-generated')) {
+            existingTrack.upvoters.push('system-generated');
+        }
+        if (!existingTrack.requesters) existingTrack.requesters = [];
+        existingTrack.requesters.push(requesterName);
+    } else {
+        activeQueue.push({
+            id: trackId,
+            title: verifiedTrack.name,
+            artist: verifiedTrack.artist,
+            artwork: verifiedTrack.artwork,
+            explicit: verifiedTrack.explicit,
+            duration: verifiedTrack.duration,
+            upvoters: [],
+            downvoters: [],
+            requesters: [requesterName]
+        });
+        // Relay to the DJ's actual Spotify playback queue. Only on first entry -
+        // a duplicate request just upvotes the existing local entry above, it
+        // shouldn't queue the same song twice on Spotify. Fire-and-forget: never
+        // let a slow/failed Spotify call delay or fail the guest's request.
+        if (systemConfigs.spotifyAutoQueueEnabled) {
+            queueTrackOnSpotify(trackId);
+        }
+    }
+
+    requestLog.push({
+        trackId,
+        title: verifiedTrack.name,
+        artist: verifiedTrack.artist,
+        artwork: verifiedTrack.artwork,
+        explicit: verifiedTrack.explicit,
+        voterId,
+        status: 'queued',
+        requestedAt: Date.now()
+    });
+    // Keep the log from growing forever on a long night
+    if (requestLog.length > 2000) requestLog = requestLog.slice(-2000);
+
+    res.json({ success: true });
+});
+
+app.post('/api/vote', (req, res) => {
+    const { id, type } = req.body;
+    const voterId = req.serverVoterId;
+
+    // Abuse/spam control: block rapid-fire vote-button mashing per guest
+    const lastVoteAt = voterLastVoteAt.get(voterId) || 0;
+    if (Date.now() - lastVoteAt < MIN_VOTE_INTERVAL_MS) {
+        return res.status(429).json({ error: "Please slow down." });
+    }
+    voterLastVoteAt.set(voterId, Date.now());
+
+    const track = activeQueue.find(t => t.id === id);
+    if (!track) return res.status(404).json({ error: "Track missing from live pool." });
+
+    if (!track.upvoters) track.upvoters = [];
+    if (!track.downvoters) track.downvoters = [];
+
+    const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
+    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
+
+    if (type === 'up') {
+        if (track.upvoters.includes(voterId)) {
+            clearUp();
+        } else {
+            clearDown();
+            track.upvoters.push(voterId);
+        }
+    } else if (type === 'down') {
+        if (track.downvoters.includes(voterId)) {
+            clearDown();
+        } else {
+            clearUp();
+            track.downvoters.push(voterId);
+        }
+    }
+
+    res.json({ success: true });
+});
+
+// Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
+function buildSortedQueue() {
+    return activeQueue.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork,
+        explicit: t.explicit,
+        duration: t.duration,
+        ups: t.upvoters?.length || 0,
+        downs: t.downvoters?.length || 0,
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || []
+    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+// Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
+function buildSortedQueueForAdmin() {
+    return activeQueue.map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork,
+        explicit: t.explicit,
+        duration: t.duration,
+        ups: t.upvoters?.length || 0,
+        downs: t.downvoters?.length || 0,
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || [],
+        requesters: t.requesters || []
+    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+app.get('/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
+        eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
+        spotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        queue: buildSortedQueue(),
+        history: playedHistory
+    });
+});
+
+// Same shape as /data, but sourcing requestsAllowed/spotifyConnectEnabled/
+// credit rules from kioskConfigs instead - everything else (queue, explicit
+// filter, genre/decade filters, queue cap) is shared with regular guests.
+app.get('/kiosk-data', (req, res) => {
+    res.json({
+        maxCredits: kioskConfigs.maxCredits,
+        countdownLength: kioskConfigs.countdownLength,
+        requestsAllowed: kioskConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
+        eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
+        spotifyConnectEnabled: kioskConfigs.spotifyConnectEnabled,
+        queue: buildSortedQueue(),
+        history: playedHistory
+    });
+});
+
+app.get('/api/admin/data', (req, res) => {
+    res.json({
+        maxCredits: systemConfigs.maxCredits,
+        countdownLength: systemConfigs.countdownLength,
+        requestsAllowed: systemConfigs.requestsAllowed,
+        explicitBlockActive: systemConfigs.explicitBlockActive,
+        radioEditsOnly: systemConfigs.radioEditsOnly,
+        eventName: systemConfigs.eventName || '',
+        queueCapEnabled: systemConfigs.queueCapEnabled,
+        maxQueueLength: systemConfigs.maxQueueLength,
+        queueFull: isQueueFull(),
+        genreFilter: systemConfigs.genreFilter || [],
+        decadeFilter: systemConfigs.decadeFilter || [],
+        guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
+        spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
+        djSpotifyQueueConnected: !!djRefreshToken,
+        lastSwitchedPlaylist: systemConfigs.lastSwitchedPlaylist || '',
+        kiosk: kioskConfigs,
+        queue: buildSortedQueueForAdmin(),
+        history: playedHistory
+    });
+});
+
+app.get('/api/admin/stats', (req, res) => {
+    // 1. Every song ever requested, one row per requester, newest first.
+    const allRequests = [];
+    queueHistoryLog.forEach(entry => {
+        const names = entry.requesters.length > 0 ? entry.requesters : ['Anonymous'];
+        names.forEach(name => {
+            allRequests.push({
+                title: entry.title,
+                artist: entry.artist,
+                artwork: entry.artwork,
+                username: name,
+                outcome: entry.outcome,
+                timestamp: entry.timestamp
+            });
+        });
+    });
+    allRequests.sort((a, b) => b.timestamp - a.timestamp);
+
+    // 2. Requester leaderboard - song count per username.
+    const usernameCounts = new Map();
+    allRequests.forEach(r => {
+        usernameCounts.set(r.username, (usernameCounts.get(r.username) || 0) + 1);
+    });
+    const topRequesters = [...usernameCounts.entries()]
+        .map(([username, count]) => ({ username, count }))
+        .sort((a, b) => b.count - a.count);
+
+    // 3. Played vs dropped totals.
+    const totals = {
+        played: queueHistoryLog.filter(e => e.outcome === 'played').length,
+        dropped: queueHistoryLog.filter(e => e.outcome === 'dropped').length,
+        stillQueued: activeQueue.length
+    };
+
+    // 4. Top liked / disliked songs by final vote count.
+    const topLiked = [...queueHistoryLog]
+        .filter(e => e.ups > 0)
+        .sort((a, b) => b.ups - a.ups)
+        .slice(0, 5)
+        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.ups }));
+
+    const topDisliked = [...queueHistoryLog]
+        .filter(e => e.downs > 0)
+        .sort((a, b) => b.downs - a.downs)
+        .slice(0, 5)
+        .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.downs }));
+
+    res.json({ allRequests, topRequesters, totals, topLiked, topDisliked });
+});
+
+// Guest-only lookup of their own request history/status, keyed by their own
+// server-issued cookie identity (previously a client-supplied ?voterId= query
+// param, which meant anyone could view anyone else's request history just by
+// reusing their token in the URL).
+app.get('/api/my-requests', (req, res) => {
+    const voterId = req.serverVoterId;
+
+    const mine = requestLog
+        .filter(entry => entry.voterId === voterId)
+        .sort((a, b) => b.requestedAt - a.requestedAt)
+        .slice(0, 25)
+        .map(entry => ({
+            trackId: entry.trackId,
+            title: entry.title,
+            artist: entry.artist,
+            artwork: entry.artwork,
+            explicit: entry.explicit,
+            status: entry.status,
+            requestedAt: entry.requestedAt
+        }));
+
+    res.json({ requests: mine });
+});
+
+app.post('/api/admin/config', (req, res) => {
+    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
+    if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
+    if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
+    if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
+    if (maxQueueLength !== undefined) {
+        const parsed = parseInt(maxQueueLength);
+        if (parsed > 0) systemConfigs.maxQueueLength = parsed;
+    }
+    if (Array.isArray(genreFilter)) {
+        systemConfigs.genreFilter = genreFilter.filter(key => Object.prototype.hasOwnProperty.call(GENRE_CATEGORIES, key));
+    }
+    if (Array.isArray(decadeFilter)) {
+        systemConfigs.decadeFilter = decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
+    }
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-queue-cap', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.queueCapEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-guest-spotify', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.guestSpotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
+    res.json({ success: true });
+});
+
+// Kills whatever's currently lined up in Spotify's "up next" (from the old
+// playlist) and replaces it with a fresh playlist, starting immediately.
+// Spotify has no API to clear/replace "Next from" without changing the active
+// context, and changing context always starts playing it right away - so this
+// interrupts whatever's currently playing. Guest requests aren't affected by
+// this at all: they go through the separate explicit queue (see
+// queueTrackOnSpotify, called when a request comes in), which Spotify always
+// plays before falling back to "Next from" anyway.
+app.post('/api/admin/switch-playlist', async (req, res) => {
+    const { playlistUrl } = req.body;
+    if (!playlistUrl) return res.status(400).json({ error: 'Missing playlistUrl.' });
+    const result = await switchDjPlaylist(playlistUrl);
+    if (result.success) systemConfigs.lastSwitchedPlaylist = playlistUrl.trim();
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/api/admin/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') systemConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-explicit', (req, res) => {
+    const { blockExplicit } = req.body;
+    if (typeof blockExplicit === 'boolean') systemConfigs.explicitBlockActive = blockExplicit;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-radio-edits', (req, res) => {
+    const { radioEditsOnly } = req.body;
+    if (typeof radioEditsOnly === 'boolean') systemConfigs.radioEditsOnly = radioEditsOnly;
+    res.json({ success: true });
+});
+
+// Kiosk-specific equivalents of the toggles above - independent from the
+// guest page's settings.
+app.post('/api/admin/kiosk/toggle', (req, res) => {
+    const { allow } = req.body;
+    if (typeof allow === 'boolean') kioskConfigs.requestsAllowed = allow;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/kiosk/toggle-spotify', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') kioskConfigs.spotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/kiosk/config', (req, res) => {
+    const { maxCredits, countdownLength } = req.body;
+    if (maxCredits !== undefined) kioskConfigs.maxCredits = parseInt(maxCredits) || kioskConfigs.maxCredits;
+    if (countdownLength !== undefined) kioskConfigs.countdownLength = parseInt(countdownLength) || kioskConfigs.countdownLength;
+    res.json({ success: true });
+});
+
+// Shared by the admin "Played" button and the auto-sync poller below - moves a
+// track out of the live local queue into playedHistory/stats. trackIndex must
+// already be a valid index into activeQueue.
+function markTrackPlayedByIndex(trackIndex) {
+    const [track] = activeQueue.splice(trackIndex, 1);
+    markRequestLogStatus(track.id, 'played');
+    playedHistory.unshift({
+        title: track.title,
+        artist: track.artist,
+        artwork: track.artwork,
+        explicit: track.explicit,
+        duration: track.duration,
+        requesters: track.requesters || []
+    });
+    logDepartedTrack(track, 'played');
+    return track;
+}
+
+app.post('/api/admin/action', (req, res) => {
+    const { id, action } = req.body;
+    if (action === 'clearQueue') {
+        activeQueue.forEach(t => markRequestLogStatus(t.id, 'removed'));
+        activeQueue = [];
+        return res.json({ success: true });
+    }
+    if (action === 'clearHistory') { playedHistory = []; return res.json({ success: true }); }
+
+    const trackIndex = activeQueue.findIndex(t => t.id === id);
+    if (trackIndex !== -1) {
+        if (action === 'top') {
+            const track = activeQueue[trackIndex];
+            const sorted = buildSortedQueue();
+            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
+            track.downvoters = [];
+            track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
+        } else if (action === 'played') {
+            markTrackPlayedByIndex(trackIndex);
+        } else if (action === 'remove') {
+            const [track] = activeQueue.splice(trackIndex, 1);
+            markRequestLogStatus(track.id, 'removed');
+            logDepartedTrack(track, 'dropped');
+        }
+    }
+    res.json({ success: true });
+});
+
+// --- Auto-sync: remove a request from the local queue the moment Spotify
+// actually starts playing it, so the DJ doesn't have to manually click
+// "Played" for every guest request. Only touches tracks that are still in
+// activeQueue - the DJ's regular playlist tracks never match anything here,
+// so this has no effect when nothing requested is currently playing.
+let lastSyncedNowPlayingId = null;
+async function syncNowPlayingWithQueue() {
+    const token = await getDjAccessToken();
+    if (!token) return;
+    try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204 || res.status === 404) return; // nothing playing
+        if (!res.ok) return;
+        const data = await res.json();
+        const nowPlayingId = data?.item?.id;
+        if (!nowPlayingId || nowPlayingId === lastSyncedNowPlayingId) return;
+        lastSyncedNowPlayingId = nowPlayingId;
+
+        const trackIndex = activeQueue.findIndex(t => t.id === nowPlayingId);
+        if (trackIndex !== -1) {
+            const track = markTrackPlayedByIndex(trackIndex);
+            console.log('[SPOTIFY SYNC] Now playing, removed from local queue:', track.title);
+        }
+    } catch (err) {
+        console.error('[SPOTIFY SYNC] Poll failed:', err.message);
+    }
+}
+setInterval(syncNowPlayingWithQueue, 5000);
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, async () => {
+    console.log(`[SERVER] Running on port ${PORT}`);
+    await getSpotifyToken();
+});
