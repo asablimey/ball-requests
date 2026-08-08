@@ -119,7 +119,7 @@ async function getDjAccessToken() {
 // Spotify isn't open, isn't Premium, or hasn't been connected yet.
 async function queueTrackOnSpotify(trackId) {
     const token = await getDjAccessToken();
-    if (!token) return;
+    if (!token) return false;
     try {
         const uri = `spotify:track:${trackId}`;
         const res = await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`, {
@@ -128,6 +128,7 @@ async function queueTrackOnSpotify(trackId) {
         });
         if (res.status === 204 || res.status === 200) {
             console.log('[SPOTIFY QUEUE] Added to live queue:', trackId);
+            return true;
         } else if (res.status === 404) {
             console.warn('[SPOTIFY QUEUE] No active device - open Spotify and play something first.');
         } else if (res.status === 403) {
@@ -136,8 +137,10 @@ async function queueTrackOnSpotify(trackId) {
             const body = await res.text();
             console.error('[SPOTIFY QUEUE] Unexpected response', res.status, body);
         }
+        return false;
     } catch (err) {
         console.error('[SPOTIFY QUEUE] Request failed:', err.message);
+        return false;
     }
 }
 
@@ -151,6 +154,35 @@ function extractSpotifyPlaylistId(input) {
     if (match) return match[1];
     if (/^[a-zA-Z0-9]+$/.test(str)) return str; // already a bare ID
     return null;
+}
+
+// Grabs up to `count` random, unique track IDs from a playlist (one fetch,
+// shuffled locally). Used to "buffer" Spotify's explicit queue during a
+// deferred fallback switch - see switch-playlist below.
+async function getRandomTracksFromPlaylist(playlistId, token, count) {
+    try {
+        const res = await fetch(
+            `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50&fields=items(track(id))`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (!res.ok) {
+            console.error('[SPOTIFY QUEUE] Could not fetch playlist tracks for buffering:', res.status);
+            return [];
+        }
+        const data = await res.json();
+        const ids = (data.items || [])
+            .map(item => item.track?.id)
+            .filter(Boolean);
+        // Fisher-Yates shuffle, then take the first `count`.
+        for (let i = ids.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [ids[i], ids[j]] = [ids[j], ids[i]];
+        }
+        return ids.slice(0, count);
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Failed to fetch playlist tracks for buffering:', err.message);
+        return [];
+    }
 }
 
 // Holds a fallback-playlist switch that's waiting for the currently playing
@@ -1012,9 +1044,35 @@ app.post('/api/admin/switch-playlist', async (req, res) => {
 
         // Something's playing - defer. syncNowPlayingWithQueue (polling every 5s,
         // below) fires the actual switch once it sees playback move on from this
-        // track, so the current song finishes naturally instead of being cut off.
+        // track and the local queue is empty, so guest requests finish naturally
+        // instead of being cut off.
         pendingFallbackSwitch = { playlistUrl: trimmedUrl, watchedTrackId };
         console.log('[SPOTIFY QUEUE] Fallback playlist switch scheduled for after current track finishes:', watchedTrackId);
+
+        // Without this, once the explicit queue runs dry, Spotify falls back to
+        // autoplaying "Next from: [old playlist]" before our poller even notices -
+        // that's the sneak-in the DJ was seeing. Queuing several random tracks from
+        // the NEW playlist right now occupies those slots instead, so whatever the
+        // old context would have picked never gets a turn. We await this (rather
+        // than fire-and-forget) so it's confirmed to be in Spotify's queue before
+        // we respond - and queue several, not just one, as a safety margin in case
+        // one add fails or the DJ clicked this with very little time left in the
+        // current song. Once the first buffer track starts playing, activeQueue
+        // will be empty (nothing real left to defer for), so the poller cuts to
+        // the real context switch right after it starts.
+        const playlistId = extractSpotifyPlaylistId(trimmedUrl);
+        if (playlistId) {
+            const bufferTrackIds = await getRandomTracksFromPlaylist(playlistId, token, 3);
+            if (bufferTrackIds.length === 0) {
+                console.warn('[SPOTIFY QUEUE] Could not get any tracks from the new playlist to buffer the queue with - old playlist may sneak in one more song.');
+            }
+            for (const id of bufferTrackIds) {
+                await queueTrackOnSpotify(id);
+            }
+        } else {
+            console.warn('[SPOTIFY QUEUE] Could not parse a playlist ID from the fallback playlist URL - queue could not be buffered.');
+        }
+
         return res.json({ success: true, scheduled: true });
     } catch (err) {
         console.error('[SPOTIFY QUEUE] Failed to check current playback before switching:', err.message);
