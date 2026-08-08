@@ -805,11 +805,13 @@
                                 <div class="title-wrapper">
                                     <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                                    ${song.fromPlaylist ? '<span class="explicit-badge" style="background:var(--spotify-green); color:white;">FROM PLAYLIST</span>' : ''}
                                 </div>
                                 <p class="song-artist">${escapeHtml(song.artist)}</p>
                             </div>
                         </div>
                         <div class="actions">
+                            ${song.fromPlaylist ? '' : `
                             <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
                                 <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
                                     <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
@@ -822,6 +824,7 @@
                                 </button>
                                 <span class="vote-count">${song.downs || 0}</span>
                             </div>
+                            `}
                         </div>
                     </div>
                 `;
