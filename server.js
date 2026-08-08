@@ -1027,6 +1027,19 @@ async function syncNowPlayingWithQueue() {
 }
 setInterval(syncNowPlayingWithQueue, 5000);
 
+// Serves the full-screen display page
+app.get('/display', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'display.html'));
+});
+
+// Returns the sorted active queue JSON for display.html
+app.get('/api/queue-state', (req, res) => {
+    res.json({
+        queue: buildSortedQueue(),
+        playedHistory: playedHistory
+    });
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
