@@ -447,30 +447,6 @@
         }
         .queue-cap-status-text { width: 100%; color: #a7a7a7; font-size: 0.85rem; margin-top: 6px; }
 
-        .station-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 12px 16px;
-            background: var(--card-bg);
-            border: 1px solid #2c2c2c;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-        .station-row.is-active { border-color: var(--spotify-green); }
-        .station-row-name { font-weight: 700; display: flex; align-items: center; gap: 8px; }
-        .station-active-pill {
-            background-color: var(--spotify-green);
-            color: white;
-            font-size: 0.7rem;
-            font-weight: 700;
-            padding: 3px 10px;
-            border-radius: 20px;
-            text-transform: uppercase;
-        }
-        .station-row-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
         .stat-grid { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
         .stat-card {
             flex: 1; min-width: 140px;
@@ -592,42 +568,16 @@
                 <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
             </div>
 
-            <div class="settings-section-label">Auto-DJ Mode</div>
+            <div class="settings-section-label">Spotify Queue Relay</div>
             <div class="control-bar" style="margin-bottom: 10px;">
                 <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
-                <button id="toggle-auto-dj" class="toggle-btn closed-status" onclick="toggleAutoDj()">Auto-DJ Mode: OFF</button>
+                <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
             </div>
-            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:14px; max-width:600px;">
-                When on, this app directly controls Spotify Connect playback: it loops continuously through whichever
-                genre station is set active below, and any accepted request always plays next ahead of the station
-                filler. Meant for unattended stretches like setup and packdown - <strong>turn this off before you go live on Serato</strong>,
-                since it issues direct play commands that would fight with manual mixing. Requires Spotify Premium and an
-                active device (open Spotify and play something once to give it a device to target).
+            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:30px; max-width:600px;">
+                When connected, every newly-accepted request is automatically added to your live Spotify app queue.
+                This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
+                device (open Spotify and play something first). Click to (re)connect.
             </p>
-            <div class="filter-panel" id="auto-dj-now-playing-box" style="margin-bottom: 24px; display: none;">
-                <div class="filter-group-label">Now Playing (Auto-DJ)</div>
-                <p id="auto-dj-now-playing-text" style="margin: 0; font-weight: 700;">—</p>
-                <p id="auto-dj-status-note" style="margin: 6px 0 0 0; color: #888; font-size: 0.8rem;"></p>
-            </div>
-
-            <div class="settings-section-label">Genre Stations</div>
-            <p class="filter-hint">
-                Add Spotify playlists to loop through as filler when Auto-DJ Mode is on and no requests are waiting.
-                Must be playlists the connected Spotify account owns or collaborates on - Spotify won't hand over
-                contents of playlists it only follows.
-            </p>
-            <div class="config-dashboard" style="margin-bottom: 16px;">
-                <div class="input-group">
-                    <label>Station Name</label>
-                    <input type="text" id="input-station-name" placeholder="e.g. Hip-Hop" maxlength="40">
-                </div>
-                <div class="input-group" style="flex: 1; min-width: 220px;">
-                    <label>Spotify Playlist Link</label>
-                    <input type="text" id="input-station-playlist" placeholder="Paste playlist share link" style="width: 100%;">
-                </div>
-                <button class="save-config-btn" onclick="addStation()">Add Station</button>
-            </div>
-            <div id="stations-list" style="margin-bottom: 30px;"></div>
 
             <div class="settings-section-label">System Rules</div>
             <div class="event-name-box">
@@ -913,81 +863,13 @@ async function verifyPassword() {
             window.location.href = '/admin/spotify-login?password=' + encodeURIComponent(adminPassword);
         }
 
-        let autoDjModeEnabled = false;
-        async function toggleAutoDj() {
+        let spotifyAutoQueueEnabled = true;
+        async function toggleSpotifyAutoQueue() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-auto-dj', {
+            await fetch('/api/admin/toggle-spotify-auto-queue', {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !autoDjModeEnabled })
-            });
-            updateDashboard();
-        }
-
-        let genreStations = [];
-        let activeStationId = null;
-
-        function renderStations() {
-            const listEl = document.getElementById('stations-list');
-            if (genreStations.length === 0) {
-                listEl.innerHTML = '<p class="empty-placeholder">No stations added yet.</p>';
-                return;
-            }
-            listEl.innerHTML = genreStations.map(s => {
-                const isActive = s.id === activeStationId;
-                return `
-                    <div class="station-row ${isActive ? 'is-active' : ''}">
-                        <div class="station-row-name">
-                            ${escapeHtml(s.name)}
-                            ${isActive ? '<span class="station-active-pill">Live</span>' : ''}
-                        </div>
-                        <div class="station-row-actions">
-                            ${isActive
-                                ? `<button class="btn btn-remove" onclick="activateStation(null)">Stop</button>`
-                                : `<button class="btn btn-played" onclick="activateStation('${s.id}')">Set Active</button>`}
-                            <button class="btn btn-remove" onclick="removeStation('${s.id}')">✖ Remove</button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        async function addStation() {
-            if (!isAuthorized) return;
-            const name = document.getElementById('input-station-name').value;
-            const playlistInput = document.getElementById('input-station-playlist').value;
-            const res = await fetch('/api/admin/stations', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ name, playlistInput })
-            });
-            if (res.ok) {
-                document.getElementById('input-station-name').value = '';
-                document.getElementById('input-station-playlist').value = '';
-                showToast("Station added.", "success");
-            } else {
-                const data = await res.json().catch(() => ({}));
-                showToast(data.error || "Could not add station.", "error");
-            }
-            updateDashboard();
-        }
-
-        async function removeStation(id) {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/stations/remove', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ id })
-            });
-            updateDashboard();
-        }
-
-        async function activateStation(id) {
-            if (!isAuthorized) return;
-            await fetch('/api/admin/stations/activate', {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ id })
+                body: JSON.stringify({ enabled: !spotifyAutoQueueEnabled })
             });
             updateDashboard();
         }
@@ -1122,26 +1004,13 @@ async function verifyPassword() {
                 guestSpotifyBtn.className = guestSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                 const relayBtn = document.getElementById('spotify-relay-status');
-                relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Account: CONNECTED (click to reconnect)" : "Spotify Account: NOT CONNECTED (click to connect)";
+                relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Queue Relay: CONNECTED (click to reconnect)" : "Spotify Queue Relay: NOT CONNECTED (click to connect)";
                 relayBtn.className = data.djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
 
-                const autoDjBtn = document.getElementById('toggle-auto-dj');
-                autoDjModeEnabled = data.autoDjModeEnabled === true;
-                autoDjBtn.innerText = autoDjModeEnabled ? "Auto-DJ Mode: ON" : "Auto-DJ Mode: OFF";
-                autoDjBtn.className = autoDjModeEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                const nowPlayingBox = document.getElementById('auto-dj-now-playing-box');
-                nowPlayingBox.style.display = autoDjModeEnabled ? 'block' : 'none';
-                if (autoDjModeEnabled) {
-                    document.getElementById('auto-dj-now-playing-text').innerText = data.autoDjNowPlaying
-                        ? `${data.autoDjNowPlaying.title} — ${data.autoDjNowPlaying.artist}`
-                        : 'Nothing commanded yet';
-                    document.getElementById('auto-dj-status-note').innerText = data.autoDjStatusNote || '';
-                }
-
-                genreStations = data.genreStations || [];
-                activeStationId = data.activeStationId || null;
-                renderStations();
+                const autoQueueBtn = document.getElementById('toggle-spotify-auto-queue');
+                spotifyAutoQueueEnabled = data.spotifyAutoQueueEnabled !== false;
+                autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
+                autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
