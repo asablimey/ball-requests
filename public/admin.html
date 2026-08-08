@@ -116,27 +116,15 @@
         h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
 
         .config-dashboard {
-            background-color: var(--panel-bg);
-            border: 1px solid #282828;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 25px;
             display: flex;
             gap: 20px;
             align-items: flex-end;
             flex-wrap: wrap;
             box-sizing: border-box;
-            overflow: hidden;
         }
 
         .event-name-box {
-            background-color: var(--panel-bg);
-            border: 1px solid #282828;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
             box-sizing: border-box;
-            overflow: hidden;
         }
 
         .input-group { display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; max-width: 100%; }
@@ -166,7 +154,29 @@
         }
         .save-config-btn:hover { background-color: var(--spotify-green); color: white; }
 
-        .control-bar { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
+        .control-bar { display: flex; gap: 15px; flex-wrap: wrap; }
+
+        /* Consistent container for each settings section - replaces the old
+           mix of scattered inline margin-bottoms and same-colour nested
+           boxes with one uniform card pattern (matches .stat-card elsewhere
+           in this file: card-bg against the panel's darker background). */
+        .settings-card {
+            background: var(--card-bg);
+            border: 1px solid #2c2c2c;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+        .settings-card:last-child { margin-bottom: 0; }
+        .settings-card .settings-section-label { margin-bottom: 16px; }
+        .settings-card-hint {
+            color: #888;
+            font-size: 0.85rem;
+            margin: 0 0 16px 0;
+            max-width: 600px;
+        }
+        .settings-card.danger-zone { border-color: rgba(233, 20, 41, 0.35); }
 
         .toggle-btn { 
             padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
@@ -418,10 +428,6 @@
         .neutral-status { background-color: #3e3e3e; color: white; }
 
         .filter-panel {
-            background-color: var(--panel-bg);
-            border: 1px solid #282828;
-            border-radius: 12px;
-            padding: 20px;
             box-sizing: border-box;
         }
         .filter-hint { color: #a7a7a7; font-size: 0.85rem; margin: 0 0 14px 0; }
@@ -560,108 +566,127 @@
         <div class="panel">
             <h2>Settings</h2>
 
-            <div class="settings-section-label">Access Controls</div>
-            <div class="control-bar" style="margin-bottom: 30px;">
-                <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-                <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-                <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
-                <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
-            </div>
-
-            <div class="settings-section-label">Spotify Queue Relay</div>
-            <div class="control-bar" style="margin-bottom: 10px;">
-                <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
-                <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
-            </div>
-            <p style="color:#888; font-size:0.85rem; margin-top:0; margin-bottom:20px; max-width:600px;">
-                When connected, every newly-accepted request is automatically added to your live Spotify app queue.
-                This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
-                device (open Spotify and play something first). Click to (re)connect.
-            </p>
-
-            <div class="config-dashboard" style="margin-bottom: 30px;">
-                <div class="input-group" style="width: 100%; max-width: 460px;">
-                    <label>Fallback Playlist (Spotify link)</label>
-                    <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
-                </div>
-                <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
-            </div>
-            <p style="color:#888; font-size:0.78rem; margin-top:-20px; margin-bottom:8px; max-width:600px;">
-                Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
-                replaced. If a request happens to be playing right now, this will interrupt it, so best used
-                between songs.
-            </p>
-            <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin-top:0; margin-bottom:30px;"></p>
-
-            <div class="settings-section-label">System Rules</div>
-            <div class="event-name-box">
-                <div class="input-group" style="width: 100%;">
-                    <label>Event Name</label>
-                    <input type="text" id="input-event-name" placeholder="Song Requests" maxlength="60" style="width: 100%;">
+            <div class="settings-card">
+                <div class="settings-section-label">Access Controls</div>
+                <div class="control-bar">
+                    <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+                    <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+                    <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
+                    <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
                 </div>
             </div>
-            <div class="config-dashboard" style="margin-bottom: 30px;">
-                <div class="input-group">
-                    <label>Max Credit Bank</label>
-                    <input type="number" id="input-max-credits" min="1">
+
+            <div class="settings-card">
+                <div class="settings-section-label">Spotify Queue Relay</div>
+                <div class="control-bar">
+                    <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
+                    <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
                 </div>
-                <div class="input-group">
-                    <label>Regen Timer (Secs)</label>
-                    <input type="number" id="input-countdown" min="5">
-                </div>
-                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                    When connected, every newly-accepted request is automatically added to your live Spotify app queue.
+                    This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
+                    device (open Spotify and play something first). Click to (re)connect.
+                </p>
             </div>
 
-            <div class="settings-section-label">Queue Length Cap</div>
-            <div class="config-dashboard" style="margin-bottom: 30px;">
-                <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
-                <div class="input-group">
-                    <label>Max Queue Length</label>
-                    <input type="number" id="input-max-queue" min="1" value="50">
+            <div class="settings-card">
+                <div class="settings-section-label">Fallback Playlist</div>
+                <div class="config-dashboard">
+                    <div class="input-group" style="width: 100%; max-width: 460px;">
+                        <label>Spotify Playlist Link</label>
+                        <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
+                    </div>
+                    <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
                 </div>
-                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-                <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
+                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
+                    Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
+                    replaced. If a request happens to be playing right now, this will interrupt it, so best used
+                    between songs.
+                </p>
+                <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
             </div>
 
-            <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
-            <div class="filter-panel" style="margin-bottom: 30px;">
-                <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
-                <div class="filter-group-label">Genres</div>
-                <div class="filter-chip-row" id="genre-filter-chips"></div>
-                <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
-                <div class="filter-chip-row" id="decade-filter-chips"></div>
-                <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
-            </div>
-
-            <div class="settings-section-label">Export</div>
-            <div class="control-bar" style="margin-bottom: 30px;">
-                <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
-            </div>
-
-            <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
-            <p class="filter-hint" style="margin-top: -6px; margin-bottom: 14px;">
-                Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
-            </p>
-            <div class="control-bar" style="margin-bottom: 16px;">
-                <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
-                <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
-            </div>
-            <div class="config-dashboard" style="margin-bottom: 30px;">
-                <div class="input-group">
-                    <label>Kiosk Max Credit Bank</label>
-                    <input type="number" id="input-kiosk-max-credits" min="1">
+            <div class="settings-card">
+                <div class="settings-section-label">System Rules</div>
+                <div class="event-name-box" style="margin-bottom: 20px;">
+                    <div class="input-group" style="width: 100%;">
+                        <label>Event Name</label>
+                        <input type="text" id="input-event-name" placeholder="Song Requests" maxlength="60" style="width: 100%;">
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label>Kiosk Regen Timer (Secs)</label>
-                    <input type="number" id="input-kiosk-countdown" min="5">
+                <div class="config-dashboard">
+                    <div class="input-group">
+                        <label>Max Credit Bank</label>
+                        <input type="number" id="input-max-credits" min="1">
+                    </div>
+                    <div class="input-group">
+                        <label>Regen Timer (Secs)</label>
+                        <input type="number" id="input-countdown" min="5">
+                    </div>
+                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
                 </div>
-                <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
             </div>
 
-            <div class="settings-section-label">Danger Zone</div>
-            <div class="control-bar">
-                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+            <div class="settings-card">
+                <div class="settings-section-label">Queue Length Cap</div>
+                <div class="config-dashboard">
+                    <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
+                    <div class="input-group">
+                        <label>Max Queue Length</label>
+                        <input type="number" id="input-max-queue" min="1" value="50">
+                    </div>
+                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+                    <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
+                <div class="filter-panel">
+                    <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
+                    <div class="filter-group-label">Genres</div>
+                    <div class="filter-chip-row" id="genre-filter-chips"></div>
+                    <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
+                    <div class="filter-chip-row" id="decade-filter-chips"></div>
+                    <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Export</div>
+                <div class="control-bar">
+                    <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
+                <p class="settings-card-hint" style="margin-top: 0;">
+                    Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
+                </p>
+                <div class="control-bar" style="margin-bottom: 20px;">
+                    <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
+                    <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
+                </div>
+                <div class="config-dashboard">
+                    <div class="input-group">
+                        <label>Kiosk Max Credit Bank</label>
+                        <input type="number" id="input-kiosk-max-credits" min="1">
+                    </div>
+                    <div class="input-group">
+                        <label>Kiosk Regen Timer (Secs)</label>
+                        <input type="number" id="input-kiosk-countdown" min="5">
+                    </div>
+                    <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
+                </div>
+            </div>
+
+            <div class="settings-card danger-zone">
+                <div class="settings-section-label">Danger Zone</div>
+                <div class="control-bar">
+                    <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+                    <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+                </div>
             </div>
         </div>
     </div>
