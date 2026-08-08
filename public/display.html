@@ -2,66 +2,207 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CrowdDJ Live Display</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <title>CrowdDJ — Live Queue Display</title>
     <style>
+        :root {
+            --spotify-green: #1DB954;
+            --spotify-black: #121212;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            background-color: #121212;
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--spotify-black);
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
-            padding: 40px;
+            padding: 40px 20px;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            box-sizing: border-box;
         }
-        h1 { color: #1DB954; font-size: 3rem; margin-bottom: 30px; }
-        .queue-container { width: 100%; max-width: 900px; }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: var(--spotify-green);
+            font-size: 3rem;
+            margin: 0 0 10px 0;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .header p {
+            color: #b3b3b3;
+            font-size: 1.4rem;
+            margin: 0;
+        }
+
+        .queue-container {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
         .queue-item {
             display: flex;
             align-items: center;
-            background: #181818;
-            padding: 15px 25px;
-            margin-bottom: 15px;
+            background: var(--panel-bg);
+            border: 1px solid #282828;
+            padding: 18px 24px;
             border-radius: 12px;
-            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s ease, background 0.2s ease;
         }
-        .queue-item img { width: 80px; height: 80px; border-radius: 8px; margin-right: 20px; }
-        .song-title { font-weight: bold; margin: 0; }
-        .song-artist { color: #b3b3b3; font-size: 1.1rem; margin-top: 5px; }
+
+        .queue-item:hover {
+            background: var(--card-bg);
+        }
+
+        .track-rank {
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: var(--spotify-green);
+            width: 60px;
+            flex-shrink: 0;
+            text-align: center;
+        }
+
+        .track-art {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+            margin-right: 20px;
+            background-color: #282828;
+            flex-shrink: 0;
+        }
+
+        .track-info {
+            flex-grow: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .song-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .song-title {
+            font-size: 1.6rem;
+            font-weight: 700;
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .explicit-badge {
+            background-color: #b3b3b3;
+            color: #121212;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 2px 5px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+
+        .song-artist {
+            font-size: 1.2rem;
+            color: #b3b3b3;
+            margin: 6px 0 0 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #888;
+            font-size: 1.8rem;
+            padding: 60px 0;
+            background: var(--panel-bg);
+            border-radius: 12px;
+            border: 1px dashed #333;
+        }
     </style>
 </head>
 <body>
-    <h1>UP NEXT ON CROWDDJ</h1>
-    <div id="queue-list" class="queue-container">Loading queue...</div>
+
+    <div class="header">
+        <h1>UP NEXT ON CROWDDJ</h1>
+        <p>Request songs or vote on the queue from your device!</p>
+    </div>
+
+    <div id="queue-list" class="queue-container">
+        <div class="empty-state">Loading live queue...</div>
+    </div>
 
     <script>
         async function fetchQueue() {
             try {
-                const res = await fetch('/api/queue');
-                const data = await res.json();
-                const container = document.getElementById('queue-list');
+                const res = await fetch('/api/queue-state');
                 
-                if (!data.queue || data.queue.length === 0) {
-                    container.innerHTML = '<p style="text-align:center; color:#888; font-size:1.8rem;">No songs in queue. Request a song!</p>';
+                // Verify server returned JSON
+                const contentType = res.headers.get("content-type");
+                if (!contentType || !contentType.includes("application/json")) {
+                    console.error("Endpoint did not return JSON.");
                     return;
                 }
 
-                container.innerHTML = data.queue.map((track, i) => `
+                const data = await res.json();
+                const container = document.getElementById('queue-list');
+                
+                // Active queue data from CrowdDJ
+                const queue = data.queue || [];
+                
+                if (queue.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No songs in queue. Submit a request to get started!</div>';
+                    return;
+                }
+
+                container.innerHTML = queue.map((track, i) => `
                     <div class="queue-item">
-                        <span style="margin-right:20px; color:#1DB954; font-weight:bold;">#${i + 1}</span>
-                        <img src="${track.artwork || ''}" alt="art">
-                        <div>
-                            <p class="song-title">${track.title}</p>
-                            <p class="song-artist">${track.artist}</p>
+                        <div class="track-rank">#${i + 1}</div>
+                        <img class="track-art" src="${track.artwork || ''}" alt="Album Art">
+                        <div class="track-info">
+                            <div class="song-title-row">
+                                <p class="song-title">${escapeHtml(track.title)}</p>
+                                ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                            </div>
+                            <p class="song-artist">${escapeHtml(track.artist)}</p>
                         </div>
                     </div>
                 `).join('');
-            } catch (err) { console.error(err); }
+            } catch (err) {
+                console.error('Failed to fetch queue:', err);
+            }
         }
 
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // Fetch immediately and update every 3 seconds
         fetchQueue();
         setInterval(fetchQueue, 3000);
     </script>
