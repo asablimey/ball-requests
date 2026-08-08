@@ -1075,9 +1075,7 @@ app.get('/api/queue-state', async (req, res) => {
         crowdDjQueue: buildSortedQueue() // CrowdDJ requests queue
     });
 });
-    });
-});
-
+    
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
