@@ -799,6 +799,12 @@ function buildSortedQueueForAdmin() {
 }
 
 app.get('/data', (req, res) => {
+    // /data is already fully public with no auth and no sensitive fields (no
+    // requester names, no voter ids) - it's the exact same payload the guest
+    // page's own JS fetches. This just lets a non-browser-page client (like the
+    // scheduler app, polling from a different origin) read it too, without
+    // opening up anything that wasn't already publicly visible.
+    res.set('Access-Control-Allow-Origin', '*');
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
