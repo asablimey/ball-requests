@@ -599,10 +599,10 @@
                     <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
                 </div>
                 <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
-                    Waits for the current song to finish before switching - it won't cut anything off. Guest requests
-                    always take priority: if there are still requests waiting in the queue, it keeps letting those
-                    play through and only switches once the queue is genuinely empty. If nothing's playing and the
-                    queue's already empty, it switches right away.
+                    Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
+                    replaced. If a request happens to be playing right now, this will interrupt it, so best used
+                    between songs. Guest requests you've explicitly queued aren't affected by this - they still get
+                    added to the queue as normal and play before anything from a playlist.
                 </p>
                 <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
             </div>
@@ -1226,10 +1226,7 @@ async function verifyPassword() {
                     body: JSON.stringify({ playlistUrl: url })
                 });
                 const data = await res.json();
-                if (data.success && data.scheduled) {
-                    showToast('Will switch once requests are done playing.', 'success');
-                    statusEl.innerText = `Queued: ${url} - starts once the queue is empty`;
-                } else if (data.success) {
+                if (data.success) {
                     showToast('Switched to the new playlist.', 'success');
                     statusEl.innerText = `Currently playing from: ${url}`;
                 } else {
