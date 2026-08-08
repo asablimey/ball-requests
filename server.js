@@ -1030,6 +1030,9 @@ setInterval(syncNowPlayingWithQueue, 5000);
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+app.get('/display', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'display.html'));
+});
 
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
