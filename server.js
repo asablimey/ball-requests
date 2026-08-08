@@ -153,6 +153,11 @@ function extractSpotifyPlaylistId(input) {
     return null;
 }
 
+// Holds a fallback-playlist switch that's waiting for the currently playing
+// track to finish, rather than cutting it off. Set by /api/admin/switch-playlist,
+// fired by maybeFireFallbackSwitch() from within the syncNowPlayingWithQueue poller.
+let pendingFallbackSwitch = null; // { playlistUrl, watchedTrackId }
+
 // Immediately switches Spotify's active playback to a new playlist. Unlike
 // queueTrackOnSpotify (which adds one track ahead of whatever's already
 // queued), this REPLACES the current context entirely - Spotify clears
@@ -970,13 +975,54 @@ app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
 });
 
 // Kills whatever's currently lined up in Spotify's "up next" (from the old
-// playlist) and replaces it with a fresh playlist, starting immediately.
+// playlist) and replaces it with a fresh playlist - but only once the track
+// that's currently playing finishes, rather than cutting it off. If nothing's
+// playing right now, there's nothing to wait for, so it switches immediately.
 app.post('/api/admin/switch-playlist', async (req, res) => {
     const { playlistUrl } = req.body;
     if (!playlistUrl) return res.status(400).json({ error: 'Missing playlistUrl.' });
-    const result = await switchDjPlaylist(playlistUrl);
-    if (result.success) systemConfigs.lastSwitchedPlaylist = playlistUrl.trim();
-    res.status(result.success ? 200 : 400).json(result);
+
+    const token = await getDjAccessToken();
+    if (!token) return res.status(400).json({ success: false, error: 'DJ Spotify account is not connected yet.' });
+
+    const trimmedUrl = playlistUrl.trim();
+    const switchImmediately = async () => {
+        const result = await switchDjPlaylist(trimmedUrl);
+        if (result.success) systemConfigs.lastSwitchedPlaylist = trimmedUrl;
+        return result;
+    };
+
+    try {
+        const nowRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        // Nothing playing to interrupt - just switch straight away like before.
+        if (nowRes.status === 204 || nowRes.status === 404 || !nowRes.ok) {
+            const result = await switchImmediately();
+            return res.status(result.success ? 200 : 400).json(result);
+        }
+
+        const nowData = await nowRes.json();
+        const watchedTrackId = nowData?.item?.id || null;
+        if (!watchedTrackId) {
+            const result = await switchImmediately();
+            return res.status(result.success ? 200 : 400).json(result);
+        }
+
+        // Something's playing - defer. syncNowPlayingWithQueue (polling every 5s,
+        // below) fires the actual switch once it sees playback move on from this
+        // track, so the current song finishes naturally instead of being cut off.
+        pendingFallbackSwitch = { playlistUrl: trimmedUrl, watchedTrackId };
+        console.log('[SPOTIFY QUEUE] Fallback playlist switch scheduled for after current track finishes:', watchedTrackId);
+        return res.json({ success: true, scheduled: true });
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Failed to check current playback before switching:', err.message);
+        // Couldn't tell what's playing - fall back to the old immediate-switch
+        // behaviour rather than silently doing nothing.
+        const result = await switchImmediately();
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 });
 
 app.post('/api/admin/toggle', (req, res) => {
@@ -1064,6 +1110,24 @@ app.post('/api/admin/action', (req, res) => {
     res.json({ success: true });
 });
 
+// Fires a scheduled "Switch Now" fallback-playlist switch once the track it
+// was waiting on is no longer playing (finished, skipped, or stopped) -
+// rather than cutting the current song off immediately when the button was clicked.
+async function maybeFireFallbackSwitch(nowPlayingId) {
+    if (!pendingFallbackSwitch) return;
+    if (nowPlayingId === pendingFallbackSwitch.watchedTrackId) return; // still playing - keep waiting
+
+    const { playlistUrl } = pendingFallbackSwitch;
+    pendingFallbackSwitch = null;
+    const result = await switchDjPlaylist(playlistUrl);
+    if (result.success) {
+        systemConfigs.lastSwitchedPlaylist = playlistUrl;
+        console.log('[SPOTIFY QUEUE] Fallback playlist switch fired now that the previous track ended:', playlistUrl);
+    } else {
+        console.error('[SPOTIFY QUEUE] Deferred fallback playlist switch failed:', result.error);
+    }
+}
+
 // --- Auto-sync: remove a request from the local queue the moment Spotify
 // actually starts playing it, so the DJ doesn't have to manually click
 // "Played" for every guest request. Only touches tracks that are still in
@@ -1077,10 +1141,18 @@ async function syncNowPlayingWithQueue() {
         const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.status === 204 || res.status === 404) return; // nothing playing
+        if (res.status === 204 || res.status === 404) {
+            // Nothing playing right now still counts as "the watched track
+            // is no longer playing" for a pending fallback switch.
+            await maybeFireFallbackSwitch(null);
+            return;
+        }
         if (!res.ok) return;
         const data = await res.json();
         const nowPlayingId = data?.item?.id;
+
+        await maybeFireFallbackSwitch(nowPlayingId || null);
+
         if (!nowPlayingId || nowPlayingId === lastSyncedNowPlayingId) return;
         lastSyncedNowPlayingId = nowPlayingId;
 
