@@ -153,58 +153,50 @@
     </div>
 
     <script>
-        async function fetchQueue() {
-            try {
-                const res = await fetch('/api/queue-state');
-                
-                // Verify server returned JSON
-                const contentType = res.headers.get("content-type");
-                if (!contentType || !contentType.includes("application/json")) {
-                    console.error("Endpoint did not return JSON.");
-                    return;
-                }
+    async function fetchQueue() {
+        try {
+            const res = await fetch('/api/queue-state');
+            if (!res.ok) return;
 
-                const data = await res.json();
-                const container = document.getElementById('queue-list');
-                
-                // Active queue data from CrowdDJ
-                const queue = data.queue || [];
-                
-                if (queue.length === 0) {
-                    container.innerHTML = '<div class="empty-state">No songs in queue. Submit a request to get started!</div>';
-                    return;
-                }
-
-                container.innerHTML = queue.map((track, i) => `
-                    <div class="queue-item">
-                        <div class="track-rank">#${i + 1}</div>
-                        <img class="track-art" src="${track.artwork || ''}" alt="Album Art">
-                        <div class="track-info">
-                            <div class="song-title-row">
-                                <p class="song-title">${escapeHtml(track.title)}</p>
-                                ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                            </div>
-                            <p class="song-artist">${escapeHtml(track.artist)}</p>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (err) {
-                console.error('Failed to fetch queue:', err);
+            const data = await res.json();
+            const container = document.getElementById('queue-list');
+            
+            const queue = data.queue || [];
+            
+            if (queue.length === 0) {
+                container.innerHTML = '<div class="empty-state">No songs in queue. Submit a request to get started!</div>';
+                return;
             }
-        }
 
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
+            container.innerHTML = queue.map((track, i) => `
+                <div class="queue-item">
+                    <div class="track-rank">#${i + 1}</div>
+                    <img class="track-art" src="${track.artwork || ''}" alt="Album Art">
+                    <div class="track-info">
+                        <div class="song-title-row">
+                            <p class="song-title">${escapeHtml(track.title)}</p>
+                            ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
+                        </div>
+                        <p class="song-artist">${escapeHtml(track.artist)}</p>
+                    </div>
+                </div>
+            `).join('');
+        } catch (err) {
+            console.error('Failed to fetch queue:', err);
         }
+    }
 
-        // Fetch immediately and update every 3 seconds
-        fetchQueue();
-        setInterval(fetchQueue, 3000);
-    </script>
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    fetchQueue();
+    setInterval(fetchQueue, 3000);
+</script>
 </body>
 </html>
