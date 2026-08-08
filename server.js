@@ -141,6 +141,60 @@ async function queueTrackOnSpotify(trackId) {
     }
 }
 
+// Extracts a bare playlist ID from whatever format the DJ pastes in -
+// a full open.spotify.com URL (with or without query params), a spotify:
+// URI, or just the bare ID itself.
+function extractSpotifyPlaylistId(input) {
+    if (!input) return null;
+    const str = input.trim();
+    let match = str.match(/playlist[\/:]([a-zA-Z0-9]+)/);
+    if (match) return match[1];
+    if (/^[a-zA-Z0-9]+$/.test(str)) return str; // already a bare ID
+    return null;
+}
+
+// Immediately switches Spotify's active playback to a new playlist. Unlike
+// queueTrackOnSpotify (which adds one track ahead of whatever's already
+// queued), this REPLACES the current context entirely - Spotify clears
+// whatever it had lined up next from the old playlist and starts fresh
+// from the new one. This is what "kill the old playlist's up-next and
+// switch" actually requires; there's no way to just clear Spotify's
+// auto-generated queue without starting new context playback.
+async function switchDjPlaylist(playlistUri) {
+    const token = await getDjAccessToken();
+    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
+
+    const playlistId = extractSpotifyPlaylistId(playlistUri);
+    if (!playlistId) return { success: false, error: 'Could not parse a playlist ID from that link.' };
+
+    try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/play', {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ context_uri: `spotify:playlist:${playlistId}` })
+        });
+        if (res.status === 204 || res.status === 200) {
+            console.log('[SPOTIFY QUEUE] Switched playlist to:', playlistId);
+            return { success: true };
+        } else if (res.status === 404) {
+            return { success: false, error: 'No active device - open Spotify and play something first, then try switching again.' };
+        } else if (res.status === 403) {
+            return { success: false, error: 'Forbidden - this usually means the account is not Spotify Premium.' };
+        } else {
+            const body = await res.text();
+            console.error('[SPOTIFY QUEUE] Switch failed', res.status, body);
+            return { success: false, error: `Spotify rejected the switch (status ${res.status}).` };
+        }
+    } catch (err) {
+        console.error('[SPOTIFY QUEUE] Switch request failed:', err.message);
+        return { success: false, error: 'Request to Spotify failed.' };
+    }
+}
+
+
 // One-time login: DJ opens this (from the admin dashboard) and authorizes with
 // their own Spotify account. Gated by the same admin password as everything else
 // in /api/admin, but this route can't live under that prefix since it needs to be
@@ -256,10 +310,9 @@ let systemConfigs = {
     // a run of troll requests) without disconnecting Spotify or closing requests
     // entirely. Requests still land in the local site queue either way.
     spotifyAutoQueueEnabled: true,
-    // Theme/fallback playlist: pastable Spotify playlist link/URI/ID. Its tracks
-    // pad out the visible "Live Queue" on all three pages whenever there aren't
-    // enough real guest requests to fill it - see padWithFallback() below.
-    fallbackPlaylistUri: ''
+    // Just for display in the admin dashboard - "what's the fallback playlist
+    // right now" - not used for anything functional server-side.
+    lastSwitchedPlaylist: ''
 };
 
 // Separate, independently-configurable settings for kiosk.html - a DJ-attended
@@ -322,87 +375,6 @@ async function getArtistGenres(artistIds) {
 let activeQueue = [];
 let playedHistory = [];
 let spotifyAccessToken = "";
-
-// --- Fallback / theme playlist -----------------------------------------
-// Pads the visible "Live Queue" with tracks from a DJ-chosen Spotify playlist
-// whenever real guest requests don't fill it out. This is DISPLAY-ONLY: it
-// never touches the DJ's actual Spotify device queue (that's still handled
-// entirely by the existing spotifyAutoQueueEnabled/queueTrackOnSpotify path
-// above, unaffected) - it only affects what shows up in the queue list on
-// all three pages. Refreshed on a timer rather than per-request, since /data
-// gets polled every few seconds and re-fetching a full playlist that often
-// would hammer Spotify's API for no reason.
-const FALLBACK_QUEUE_FILL_TARGET = 10;
-const FALLBACK_REFRESH_INTERVAL_MS = 60 * 1000;
-let fallbackPlaylistTracks = [];
-
-function parsePlaylistIdFromInput(raw) {
-    if (!raw) return null;
-    const trimmed = String(raw).trim();
-    if (!trimmed) return null;
-    const uriMatch = trimmed.match(/spotify:playlist:([a-zA-Z0-9]+)/);
-    if (uriMatch) return uriMatch[1];
-    const linkMatch = trimmed.match(/playlist\/([a-zA-Z0-9]+)/);
-    if (linkMatch) return linkMatch[1];
-    if (/^[a-zA-Z0-9]+$/.test(trimmed)) return trimmed; // bare ID
-    return null;
-}
-
-async function refreshFallbackPlaylistCache() {
-    const playlistId = parsePlaylistIdFromInput(systemConfigs.fallbackPlaylistUri);
-    if (!playlistId) {
-        fallbackPlaylistTracks = [];
-        return;
-    }
-    try {
-        if (!spotifyAccessToken) await getSpotifyToken();
-        const res = await fetch(
-            `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50&fields=items(track(id,name,explicit,duration_ms,artists(name),album(images)))`,
-            { headers: { 'Authorization': `Bearer ${spotifyAccessToken}` } }
-        );
-        if (!res.ok) {
-            console.error('[FALLBACK PLAYLIST] Fetch failed:', res.status);
-            return;
-        }
-        const data = await res.json();
-        const tracks = (data.items || [])
-            .map(item => item.track)
-            .filter(t => t && t.id)
-            .map(t => ({
-                id: `fallback-${t.id}`,
-                title: t.name,
-                artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
-                artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
-                explicit: t.explicit || false,
-                duration: formatDuration(t.duration_ms || 0),
-                ups: 0, downs: 0, upvoters: [], downvoters: [],
-                fromPlaylist: true
-            }));
-        // Shuffle so a long night doesn't always fill from track 1 in the same order.
-        for (let i = tracks.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
-        }
-        fallbackPlaylistTracks = tracks;
-        console.log(`[FALLBACK PLAYLIST] Cached ${tracks.length} tracks.`);
-    } catch (err) {
-        console.error('[FALLBACK PLAYLIST] Refresh failed:', err.message);
-    }
-}
-setInterval(refreshFallbackPlaylistCache, FALLBACK_REFRESH_INTERVAL_MS);
-
-// Appends fallback tracks after the real (vote-sorted) queue, up to the fill
-// target - real requests always come first and are never displaced.
-function padWithFallback(realQueue) {
-    if (!systemConfigs.fallbackPlaylistUri || fallbackPlaylistTracks.length === 0) return realQueue;
-    if (realQueue.length >= FALLBACK_QUEUE_FILL_TARGET) return realQueue;
-    const realIds = new Set(realQueue.map(t => t.id));
-    const filler = fallbackPlaylistTracks
-        .filter(t => !realIds.has(t.id))
-        .slice(0, FALLBACK_QUEUE_FILL_TARGET - realQueue.length);
-    return [...realQueue, ...filler];
-}
-
 
 // --- Abuse/spam control state ---
 // Server-authoritative credits per guest (voterId), mirrors the client's local display
@@ -792,7 +764,7 @@ app.post('/api/vote', (req, res) => {
 
 // Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
 function buildSortedQueue() {
-    const real = activeQueue.map(t => ({
+    return activeQueue.map(t => ({
         id: t.id,
         title: t.title,
         artist: t.artist,
@@ -804,12 +776,11 @@ function buildSortedQueue() {
         upvoters: t.upvoters || [],
         downvoters: t.downvoters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-    return padWithFallback(real);
 }
 
 // Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
 function buildSortedQueueForAdmin() {
-    const real = activeQueue.map(t => ({
+    return activeQueue.map(t => ({
         id: t.id,
         title: t.title,
         artist: t.artist,
@@ -822,7 +793,6 @@ function buildSortedQueueForAdmin() {
         downvoters: t.downvoters || [],
         requesters: t.requesters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-    return padWithFallback(real);
 }
 
 app.get('/data', (req, res) => {
@@ -881,8 +851,8 @@ app.get('/api/admin/data', (req, res) => {
         decadeFilter: systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: systemConfigs.guestSpotifyConnectEnabled,
         spotifyAutoQueueEnabled: systemConfigs.spotifyAutoQueueEnabled,
-        fallbackPlaylistUri: systemConfigs.fallbackPlaylistUri || '',
         djSpotifyQueueConnected: !!djRefreshToken,
+        lastSwitchedPlaylist: systemConfigs.lastSwitchedPlaylist || '',
         kiosk: kioskConfigs,
         queue: buildSortedQueueForAdmin(),
         history: playedHistory
@@ -964,7 +934,7 @@ app.get('/api/my-requests', (req, res) => {
 });
 
 app.post('/api/admin/config', (req, res) => {
-    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter, fallbackPlaylist } = req.body;
+    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
     if (maxCredits !== undefined) systemConfigs.maxCredits = parseInt(maxCredits) || systemConfigs.maxCredits;
     if (countdownLength !== undefined) systemConfigs.countdownLength = parseInt(countdownLength) || systemConfigs.countdownLength;
     if (typeof eventName === 'string') systemConfigs.eventName = eventName.trim().slice(0, 60);
@@ -977,10 +947,6 @@ app.post('/api/admin/config', (req, res) => {
     }
     if (Array.isArray(decadeFilter)) {
         systemConfigs.decadeFilter = decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
-    }
-    if (typeof fallbackPlaylist === 'string') {
-        systemConfigs.fallbackPlaylistUri = fallbackPlaylist.trim();
-        refreshFallbackPlaylistCache(); // fire-and-forget - don't make the DJ wait on the save
     }
     res.json({ success: true });
 });
@@ -1001,6 +967,16 @@ app.post('/api/admin/toggle-spotify-auto-queue', (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled === 'boolean') systemConfigs.spotifyAutoQueueEnabled = enabled;
     res.json({ success: true });
+});
+
+// Kills whatever's currently lined up in Spotify's "up next" (from the old
+// playlist) and replaces it with a fresh playlist, starting immediately.
+app.post('/api/admin/switch-playlist', async (req, res) => {
+    const { playlistUrl } = req.body;
+    if (!playlistUrl) return res.status(400).json({ error: 'Missing playlistUrl.' });
+    const result = await switchDjPlaylist(playlistUrl);
+    if (result.success) systemConfigs.lastSwitchedPlaylist = playlistUrl.trim();
+    res.status(result.success ? 200 : 400).json(result);
 });
 
 app.post('/api/admin/toggle', (req, res) => {
