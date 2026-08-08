@@ -1027,60 +1027,8 @@ async function syncNowPlayingWithQueue() {
 }
 setInterval(syncNowPlayingWithQueue, 5000);
 
-// Serves the full-screen display page
-app.get('/display', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'display.html'));
-});
-
-// Returns the sorted active queue JSON for display.html
-app.get('/api/queue-state', async (req, res) => {
-    let nowPlaying = null;
-    let spotifyLiveQueue = [];
-
-    // Fetch live playback & queue directly from Spotify API
-    const token = await getDjAccessToken();
-    if (token) {
-        try {
-            const spRes = await fetch('open.spotify.com/artist7', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (spRes.ok) {
-                const spData = await spRes.json();
-                
-                if (spData.currently_playing) {
-                    nowPlaying = {
-                        id: spData.currently_playing.id,
-                        title: spData.currently_playing.name,
-                        artist: (spData.currently_playing.artists || []).map(a => a.name).join(', '),
-                        artwork: spData.currently_playing.album?.images?.[0]?.url
-                    };
-                }
-
-                spotifyLiveQueue = (spData.queue || []).map(t => ({
-                    id: t.id,
-                    title: t.name,
-                    artist: (t.artists || []).map(a => a.name).join(', '),
-                    artwork: t.album?.images?.[0]?.url,
-                    explicit: t.explicit
-                }));
-            }
-        } catch (err) {
-            console.error('[SPOTIFY QUEUE FETCH] Error:', err.message);
-        }
-    }
-
-    res.json({
-        nowPlaying: nowPlaying,
-        spotifyQueue: spotifyLiveQueue, // Live queue from Spotify (includes CrowdDJ tracks)
-        crowdDjQueue: buildSortedQueue() // CrowdDJ requests queue
-    });
-});
-    
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-app.get('/display', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'display.html'));
 });
 
 app.listen(PORT, async () => {
