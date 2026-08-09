@@ -552,8 +552,8 @@
             border-top: 1px solid #282828;
             display: none;
             align-items: center;
-            gap: 12px;
-            padding: 0 16px;
+            gap: 10px;
+            padding: 0 10px 0 16px;
             box-sizing: border-box;
             z-index: 500;
             overflow: hidden;
@@ -569,7 +569,11 @@
             height: 100%;
             width: 0%;
             background-color: var(--spotify-green);
-            transition: width 0.9s linear;
+            /* No CSS transition here on purpose - a transition made the bar
+               visibly animate/slide backwards for a moment every time a new
+               track started (jumping from ~100% down to ~0%). Setting the
+               width directly in JS on every tick keeps it snapping straight
+               to the correct spot instead. */
         }
         .now-playing-artwork {
             width: 40px; height: 40px;
@@ -598,6 +602,57 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.35; }
         }
+        .now-playing-queue-toggle {
+            background: none;
+            border: none;
+            color: #a7a7a7;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+        .now-playing-queue-toggle:hover { color: white; }
+        .now-playing-queue-toggle.is-open { transform: rotate(180deg); color: var(--spotify-green); }
+        .now-playing-queue-toggle svg { width: 20px; height: 20px; fill: currentColor; }
+
+        .now-playing-queue-panel {
+            position: fixed;
+            left: 0; right: 0;
+            bottom: 60px;
+            max-height: 0;
+            overflow: hidden;
+            background-color: var(--panel-bg);
+            border-top: 1px solid #282828;
+            z-index: 499;
+            transition: max-height 0.25s ease;
+        }
+        .now-playing-queue-panel.is-open { max-height: 45vh; overflow-y: auto; }
+        .now-playing-queue-inner { padding: 10px 16px; max-width: 800px; margin: 0 auto; }
+        .now-playing-queue-label {
+            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;
+            color: #888; font-weight: 700; margin: 6px 0 10px 0;
+        }
+        .now-playing-queue-row {
+            display: flex; align-items: center; gap: 12px;
+            padding: 6px 0;
+        }
+        .now-playing-queue-row img {
+            width: 34px; height: 34px; border-radius: 4px; object-fit: cover;
+            flex-shrink: 0; background-color: var(--card-bg);
+        }
+        .now-playing-queue-row-text { min-width: 0; }
+        .now-playing-queue-row-title {
+            margin: 0; font-size: 0.85rem; font-weight: 600;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .now-playing-queue-row-artist {
+            margin: 1px 0 0 0; font-size: 0.75rem; color: #a7a7a7;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .now-playing-queue-empty { color: #666; font-style: italic; font-size: 0.85rem; padding: 10px 0; }
         body.has-now-playing-bar { padding-bottom: 76px; }
 
     </style>
@@ -1347,6 +1402,12 @@
     <div id="toast-container"></div>
 
     <!-- Now Playing bar - live from the DJ's connected Spotify account -->
+    <div class="now-playing-queue-panel" id="now-playing-queue-panel">
+        <div class="now-playing-queue-inner">
+            <div class="now-playing-queue-label">Up Next on Spotify</div>
+            <div id="now-playing-queue-list"></div>
+        </div>
+    </div>
     <div class="now-playing-bar" id="now-playing-bar">
         <div class="now-playing-progress-track">
             <div class="now-playing-progress-fill" id="now-playing-progress-fill"></div>
@@ -1357,6 +1418,9 @@
             <p class="now-playing-artist" id="now-playing-artist"></p>
         </div>
         <div class="now-playing-live-dot" id="now-playing-live-dot"></div>
+        <button type="button" class="now-playing-queue-toggle" id="now-playing-queue-toggle" onclick="toggleNowPlayingQueue()" title="Show what's up next">
+            <svg viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+        </button>
     </div>
 
     <script>
@@ -1366,6 +1430,8 @@
         // showing an empty/broken-looking bar.
         let nowPlayingState = null;
         let nowPlayingTicker = null;
+        let nowPlayingQueueOpen = false;
+        let nowPlayingLastTrackId = null;
 
         function renderNowPlayingProgress() {
             if (!nowPlayingState || !nowPlayingState.durationMs) return;
@@ -1375,6 +1441,30 @@
             if (fillEl) fillEl.style.width = pct + '%';
         }
 
+        function toggleNowPlayingQueue() {
+            nowPlayingQueueOpen = !nowPlayingQueueOpen;
+            document.getElementById('now-playing-queue-panel').classList.toggle('is-open', nowPlayingQueueOpen);
+            document.getElementById('now-playing-queue-toggle').classList.toggle('is-open', nowPlayingQueueOpen);
+        }
+
+        function renderNowPlayingQueue(upcoming) {
+            const listEl = document.getElementById('now-playing-queue-list');
+            if (!listEl) return;
+            if (!upcoming || upcoming.length === 0) {
+                listEl.innerHTML = '<p class="now-playing-queue-empty">Nothing queued up on Spotify right now.</p>';
+                return;
+            }
+            listEl.innerHTML = upcoming.map(t => `
+                <div class="now-playing-queue-row">
+                    <img src="${t.artwork || ''}">
+                    <div class="now-playing-queue-row-text">
+                        <p class="now-playing-queue-row-title">${(t.title || '').replace(/</g, '&lt;')}</p>
+                        <p class="now-playing-queue-row-artist">${(t.artist || '').replace(/</g, '&lt;')}</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         function updateNowPlayingBar(data) {
             const bar = document.getElementById('now-playing-bar');
             if (!bar) return;
@@ -1382,7 +1472,11 @@
             if (!data || !data.connected || !data.title) {
                 bar.classList.remove('is-visible');
                 document.body.classList.remove('has-now-playing-bar');
+                document.getElementById('now-playing-queue-panel').classList.remove('is-open');
+                document.getElementById('now-playing-queue-toggle').classList.remove('is-open');
+                nowPlayingQueueOpen = false;
                 nowPlayingState = null;
+                nowPlayingLastTrackId = null;
                 if (nowPlayingTicker) { clearInterval(nowPlayingTicker); nowPlayingTicker = null; }
                 return;
             }
@@ -1401,8 +1495,15 @@
                 isPlaying: !!data.isPlaying,
                 fetchedAt: Date.now()
             };
+            // Jump straight to the correct spot on every fresh poll (including
+            // track changes) rather than letting it drift - renderNowPlayingProgress
+            // sets width directly with no CSS transition, so this is instant.
             renderNowPlayingProgress();
-            if (!nowPlayingTicker) nowPlayingTicker = setInterval(renderNowPlayingProgress, 1000);
+            nowPlayingLastTrackId = data.trackId || null;
+
+            if (!nowPlayingTicker) nowPlayingTicker = setInterval(renderNowPlayingProgress, 250);
+
+            renderNowPlayingQueue(data.upcoming);
         }
 
         async function pollNowPlaying() {
