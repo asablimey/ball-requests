@@ -781,7 +781,13 @@
                 <div class="control-bar" style="margin-bottom: 20px;">
                     <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
                     <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
+                    <button id="toggle-kiosk-display-only" class="toggle-btn closed-status" onclick="toggleKioskDisplayOnly()">Display-Only Mode: OFF</button>
                 </div>
+                <p class="settings-card-hint" style="margin-top: -10px;">
+                    <strong>Display-Only Mode</strong> turns the kiosk page into a full-screen, read-only "now playing" board -
+                    no search, no credits, no voting, just the Live Queue blown up big. Good for a TV or monitor at the venue
+                    instead of a device guests interact with directly.
+                </p>
                 <div class="config-dashboard">
                     <div class="input-group">
                         <label>Kiosk Max Credit Bank</label>
@@ -871,6 +877,7 @@
         let guestSpotifyEnabled = false;
         let kioskRequestsAllowed = true;
         let kioskSpotifyEnabled = false;
+        let kioskDisplayOnlyMode = false;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1057,6 +1064,16 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function toggleKioskDisplayOnly() {
+            if (!isAuthorized) return;
+            await fetch('/api/admin/kiosk/toggle-display-only', {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !kioskDisplayOnlyMode })
+            });
+            updateDashboard();
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -1183,6 +1200,11 @@ async function verifyPassword() {
                     kioskSpotifyEnabled = data.kiosk.spotifyConnectEnabled !== false;
                     kioskSpotifyBtn.innerText = kioskSpotifyEnabled ? "Kiosk Spotify Connect: ON" : "Kiosk Spotify Connect: OFF";
                     kioskSpotifyBtn.className = kioskSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    const kioskDisplayBtn = document.getElementById('toggle-kiosk-display-only');
+                    kioskDisplayOnlyMode = data.kiosk.displayOnlyMode || false;
+                    kioskDisplayBtn.innerText = kioskDisplayOnlyMode ? "Display-Only Mode: ON" : "Display-Only Mode: OFF";
+                    kioskDisplayBtn.className = kioskDisplayOnlyMode ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                     if (document.activeElement !== document.getElementById('input-kiosk-max-credits')) {
                         document.getElementById('input-kiosk-max-credits').value = data.kiosk.maxCredits;
