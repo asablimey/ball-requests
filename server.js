@@ -1124,7 +1124,7 @@ async function syncNowPlayingWithQueue() {
             });
             if (queueRes.ok) {
                 const queueData = await queueRes.json();
-                upcoming = (queueData.queue || []).slice(0, 10).map(t => ({
+                upcoming = (queueData.queue || []).slice(0, 40).map(t => ({
                     id: t.id,
                     title: t.name,
                     artist: (t.artists || []).map(a => a.name).join(', '),
