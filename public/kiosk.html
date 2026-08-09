@@ -542,6 +542,64 @@
         }
         .toast-error { border-left-color: #e91429; }
         .toast-visible { opacity: 1; transform: translateY(0); }
+    
+        /* --- Now Playing bar (live from Spotify) --- */
+        .now-playing-bar {
+            position: fixed;
+            left: 0; right: 0; bottom: 0;
+            height: 60px;
+            background-color: var(--panel-bg);
+            border-top: 1px solid #282828;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 0 16px;
+            box-sizing: border-box;
+            z-index: 500;
+            overflow: hidden;
+        }
+        .now-playing-bar.is-visible { display: flex; }
+        .now-playing-progress-track {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background-color: rgba(255,255,255,0.08);
+        }
+        .now-playing-progress-fill {
+            height: 100%;
+            width: 0%;
+            background-color: var(--spotify-green);
+            transition: width 0.9s linear;
+        }
+        .now-playing-artwork {
+            width: 40px; height: 40px;
+            border-radius: 4px;
+            object-fit: cover;
+            flex-shrink: 0;
+            background-color: var(--card-bg);
+        }
+        .now-playing-text { flex: 1; min-width: 0; }
+        .now-playing-title {
+            margin: 0; font-weight: 700; font-size: 0.85rem;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .now-playing-artist {
+            margin: 2px 0 0 0; font-size: 0.75rem; color: #a7a7a7;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .now-playing-live-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background-color: var(--spotify-green);
+            flex-shrink: 0;
+            animation: now-playing-pulse 1.5s ease-in-out infinite;
+        }
+        .now-playing-live-dot.is-paused { animation: none; opacity: 0.3; }
+        @keyframes now-playing-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+        body.has-now-playing-bar { padding-bottom: 76px; }
+
     </style>
 </head>
 <body>
@@ -805,13 +863,11 @@
                                 <div class="title-wrapper">
                                     <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
-                                    ${song.fromPlaylist ? '<span class="explicit-badge" style="background:var(--spotify-green); color:white;">FROM PLAYLIST</span>' : ''}
                                 </div>
                                 <p class="song-artist">${escapeHtml(song.artist)}</p>
                             </div>
                         </div>
                         <div class="actions">
-                            ${song.fromPlaylist ? '' : `
                             <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
                                 <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
                                     <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
@@ -824,7 +880,6 @@
                                 </button>
                                 <span class="vote-count">${song.downs || 0}</span>
                             </div>
-                            `}
                         </div>
                     </div>
                 `;
@@ -1290,5 +1345,77 @@
         completeGuestSpotifyLogin();
     </script>
     <div id="toast-container"></div>
+
+    <!-- Now Playing bar - live from the DJ's connected Spotify account -->
+    <div class="now-playing-bar" id="now-playing-bar">
+        <div class="now-playing-progress-track">
+            <div class="now-playing-progress-fill" id="now-playing-progress-fill"></div>
+        </div>
+        <img class="now-playing-artwork" id="now-playing-artwork" src="" alt="">
+        <div class="now-playing-text">
+            <p class="now-playing-title" id="now-playing-title"></p>
+            <p class="now-playing-artist" id="now-playing-artist"></p>
+        </div>
+        <div class="now-playing-live-dot" id="now-playing-live-dot"></div>
+    </div>
+
+    <script>
+        // --- Now Playing bar: polls a cached, public endpoint (not Spotify
+        // directly) so this stays cheap even with many guests' browsers open
+        // at once. Hides itself entirely when nothing's playing, rather than
+        // showing an empty/broken-looking bar.
+        let nowPlayingState = null;
+        let nowPlayingTicker = null;
+
+        function renderNowPlayingProgress() {
+            if (!nowPlayingState || !nowPlayingState.durationMs) return;
+            const elapsed = nowPlayingState.isPlaying ? (Date.now() - nowPlayingState.fetchedAt) : 0;
+            const pct = Math.min(100, ((nowPlayingState.progressMs + elapsed) / nowPlayingState.durationMs) * 100);
+            const fillEl = document.getElementById('now-playing-progress-fill');
+            if (fillEl) fillEl.style.width = pct + '%';
+        }
+
+        function updateNowPlayingBar(data) {
+            const bar = document.getElementById('now-playing-bar');
+            if (!bar) return;
+
+            if (!data || !data.connected || !data.title) {
+                bar.classList.remove('is-visible');
+                document.body.classList.remove('has-now-playing-bar');
+                nowPlayingState = null;
+                if (nowPlayingTicker) { clearInterval(nowPlayingTicker); nowPlayingTicker = null; }
+                return;
+            }
+
+            document.getElementById('now-playing-artwork').src = data.artwork || '';
+            document.getElementById('now-playing-title').innerText = data.title;
+            document.getElementById('now-playing-artist').innerText = data.artist || '';
+            document.getElementById('now-playing-live-dot').classList.toggle('is-paused', !data.isPlaying);
+
+            bar.classList.add('is-visible');
+            document.body.classList.add('has-now-playing-bar');
+
+            nowPlayingState = {
+                progressMs: data.progressMs || 0,
+                durationMs: data.durationMs || 0,
+                isPlaying: !!data.isPlaying,
+                fetchedAt: Date.now()
+            };
+            renderNowPlayingProgress();
+            if (!nowPlayingTicker) nowPlayingTicker = setInterval(renderNowPlayingProgress, 1000);
+        }
+
+        async function pollNowPlaying() {
+            try {
+                const res = await fetch('/api/now-playing');
+                if (!res.ok) return;
+                updateNowPlayingBar(await res.json());
+            } catch (e) { /* keep last known state on a transient network hiccup */ }
+        }
+
+        pollNowPlaying();
+        setInterval(pollNowPlaying, 4000);
+    </script>
+
 </body>
 </html>
