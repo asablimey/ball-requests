@@ -1085,18 +1085,20 @@ let lastSyncedNowPlayingId = null;
 let cachedNowPlaying = {
     connected: false,
     isPlaying: false,
+    trackId: null,
     title: null,
     artist: null,
     artwork: null,
     progressMs: 0,
     durationMs: 0,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    upcoming: [] // [{ id, title, artist, artwork }] - what's queued next on Spotify
 };
 
 async function syncNowPlayingWithQueue() {
     const token = await getDjAccessToken();
     if (!token) {
-        cachedNowPlaying = { connected: false, isPlaying: false, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now() };
+        cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [] };
         return;
     }
     try {
@@ -1105,22 +1107,45 @@ async function syncNowPlayingWithQueue() {
         });
         if (res.status === 204 || res.status === 404) {
             // Connected, but nothing playing right now.
-            cachedNowPlaying = { connected: true, isPlaying: false, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now() };
+            cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [] };
             return;
         }
         if (!res.ok) return; // leave the last known cache in place on a transient error
         const data = await res.json();
         const item = data?.item;
 
+        // Fetch the actual upcoming queue in the same tick. Separate endpoint
+        // from the one above - /currently-playing has progress/is_playing but
+        // no upcoming list, /player/queue has the upcoming list but no progress.
+        let upcoming = cachedNowPlaying.upcoming; // keep last known list if this call fails
+        try {
+            const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (queueRes.ok) {
+                const queueData = await queueRes.json();
+                upcoming = (queueData.queue || []).slice(0, 10).map(t => ({
+                    id: t.id,
+                    title: t.name,
+                    artist: (t.artists || []).map(a => a.name).join(', '),
+                    artwork: t.album?.images?.[0]?.url || null
+                }));
+            }
+        } catch (err) {
+            console.error('[SPOTIFY SYNC] Upcoming queue fetch failed:', err.message);
+        }
+
         cachedNowPlaying = {
             connected: true,
             isPlaying: !!data.is_playing,
+            trackId: item?.id || null,
             title: item?.name || null,
             artist: item ? (item.artists || []).map(a => a.name).join(', ') : null,
             artwork: item?.album?.images?.[0]?.url || null,
             progressMs: data.progress_ms || 0,
             durationMs: item?.duration_ms || 0,
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            upcoming
         };
 
         const nowPlayingId = item?.id;
