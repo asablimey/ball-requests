@@ -799,12 +799,6 @@ function buildSortedQueueForAdmin() {
 }
 
 app.get('/data', (req, res) => {
-    // /data is already fully public with no auth and no sensitive fields (no
-    // requester names, no voter ids) - it's the exact same payload the guest
-    // page's own JS fetches. This just lets a non-browser-page client (like the
-    // scheduler app, polling from a different origin) read it too, without
-    // opening up anything that wasn't already publicly visible.
-    res.set('Access-Control-Allow-Origin', '*');
     res.json({
         maxCredits: systemConfigs.maxCredits,
         countdownLength: systemConfigs.countdownLength,
@@ -1079,23 +1073,57 @@ app.post('/api/admin/action', (req, res) => {
     res.json({ success: true });
 });
 
-// --- Auto-sync: remove a request from the local queue the moment Spotify
-// actually starts playing it, so the DJ doesn't have to manually click
-// "Played" for every guest request. Only touches tracks that are still in
-// activeQueue - the DJ's regular playlist tracks never match anything here,
-// so this has no effect when nothing requested is currently playing.
+// --- Auto-sync + now-playing cache ---
+// Two jobs share this one poll so we're not hitting Spotify twice a tick:
+//   1. Remove a request from the local queue the moment Spotify actually starts
+//      playing it, so the DJ doesn't have to manually click "Played" for every
+//      guest request.
+//   2. Cache the current track/progress so the "Now Playing" bar on all three
+//      pages can poll a cheap local endpoint instead of every browser hitting
+//      Spotify's API directly every few seconds.
 let lastSyncedNowPlayingId = null;
+let cachedNowPlaying = {
+    connected: false,
+    isPlaying: false,
+    title: null,
+    artist: null,
+    artwork: null,
+    progressMs: 0,
+    durationMs: 0,
+    updatedAt: Date.now()
+};
+
 async function syncNowPlayingWithQueue() {
     const token = await getDjAccessToken();
-    if (!token) return;
+    if (!token) {
+        cachedNowPlaying = { connected: false, isPlaying: false, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now() };
+        return;
+    }
     try {
         const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.status === 204 || res.status === 404) return; // nothing playing
-        if (!res.ok) return;
+        if (res.status === 204 || res.status === 404) {
+            // Connected, but nothing playing right now.
+            cachedNowPlaying = { connected: true, isPlaying: false, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now() };
+            return;
+        }
+        if (!res.ok) return; // leave the last known cache in place on a transient error
         const data = await res.json();
-        const nowPlayingId = data?.item?.id;
+        const item = data?.item;
+
+        cachedNowPlaying = {
+            connected: true,
+            isPlaying: !!data.is_playing,
+            title: item?.name || null,
+            artist: item ? (item.artists || []).map(a => a.name).join(', ') : null,
+            artwork: item?.album?.images?.[0]?.url || null,
+            progressMs: data.progress_ms || 0,
+            durationMs: item?.duration_ms || 0,
+            updatedAt: Date.now()
+        };
+
+        const nowPlayingId = item?.id;
         if (!nowPlayingId || nowPlayingId === lastSyncedNowPlayingId) return;
         lastSyncedNowPlayingId = nowPlayingId;
 
@@ -1108,7 +1136,14 @@ async function syncNowPlayingWithQueue() {
         console.error('[SPOTIFY SYNC] Poll failed:', err.message);
     }
 }
-setInterval(syncNowPlayingWithQueue, 5000);
+setInterval(syncNowPlayingWithQueue, 4000);
+
+// Public (no admin auth) - the guest, kiosk, and admin pages all poll this for
+// the live "Now Playing" bar. Only ever exposes playback state, nothing about
+// the connected account itself.
+app.get('/api/now-playing', (req, res) => {
+    res.json(cachedNowPlaying);
+});
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
