@@ -328,7 +328,11 @@ let kioskConfigs = {
     requestsAllowed: true,
     spotifyConnectEnabled: false,
     maxCredits: 3,
-    countdownLength: 60
+    countdownLength: 60,
+    // "Now Playing board" mode: strips the kiosk page down to just a full-screen,
+    // read-only Live Queue - no search, no credits, no voting. For a TV/monitor
+    // at the venue rather than a device guests interact with directly.
+    displayOnlyMode: false
 };
 
 function isQueueFull() {
@@ -834,6 +838,7 @@ app.get('/kiosk-data', (req, res) => {
         genreFilter: systemConfigs.genreFilter || [],
         decadeFilter: systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: kioskConfigs.spotifyConnectEnabled,
+        displayOnlyMode: kioskConfigs.displayOnlyMode,
         queue: buildSortedQueue(),
         history: playedHistory
     });
@@ -1017,6 +1022,12 @@ app.post('/api/admin/kiosk/toggle', (req, res) => {
 app.post('/api/admin/kiosk/toggle-spotify', (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled === 'boolean') kioskConfigs.spotifyConnectEnabled = enabled;
+    res.json({ success: true });
+});
+
+app.post('/api/admin/kiosk/toggle-display-only', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') kioskConfigs.displayOnlyMode = enabled;
     res.json({ success: true });
 });
 
