@@ -1382,6 +1382,17 @@
             document.getElementById('playlist-modal').classList.remove('is-visible');
         }
 
+        // Tapping the dimmed backdrop (not the modal box itself) closes whichever
+        // popup is open - applies to every .modal-overlay except the username
+        // prompt, which is required before requesting and has no close button
+        // by design, so it shouldn't be dismissable by an accidental tap.
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            if (overlay.id === 'username-modal') return;
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) overlay.classList.remove('is-visible');
+            });
+        });
+
         // --- My Requests (guest-only view of their own request status) ---
         function statusLabel(status) {
             if (status === 'played') return 'Played';
