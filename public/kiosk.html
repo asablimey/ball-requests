@@ -542,7 +542,47 @@
         }
         .toast-error { border-left-color: #e91429; }
         .toast-visible { opacity: 1; transform: translateY(0); }
-    
+
+        /* --- Display-Only Mode: full-screen read-only queue board --- */
+        body.kiosk-display-only .credits-container,
+        body.kiosk-display-only .search-bar-wrapper {
+            display: none !important;
+        }
+        body.kiosk-display-only .container {
+            max-width: 1100px;
+        }
+        body.kiosk-display-only .header {
+            justify-content: center;
+            border-bottom: none;
+        }
+        body.kiosk-display-only h1 {
+            font-size: 3rem;
+            text-align: center;
+        }
+        body.kiosk-display-only .section-title-row {
+            justify-content: center;
+        }
+        body.kiosk-display-only .section-title {
+            font-size: 1.8rem;
+        }
+        body.kiosk-display-only #main-display-list .song-row {
+            padding: 20px 22px;
+        }
+        body.kiosk-display-only #main-display-list .song-details img {
+            width: 68px;
+            height: 68px;
+        }
+        body.kiosk-display-only #main-display-list .song-title {
+            font-size: 1.5rem;
+        }
+        body.kiosk-display-only #main-display-list .song-artist {
+            font-size: 1.15rem;
+        }
+        /* Read-only: no voting on a board nobody's meant to touch */
+        body.kiosk-display-only #main-display-list .actions {
+            display: none !important;
+        }
+
         /* --- Now Playing bar (live from Spotify) --- */
         .now-playing-bar {
             position: fixed;
@@ -782,6 +822,12 @@
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
+
+                // "Display-Only Mode" (set from Admin > Kiosk Page settings): strips
+                // this down to a full-screen, read-only Live Queue board - no search,
+                // no credits, no voting. CSS does the actual hiding; this just toggles
+                // the class so it responds live if the DJ flips it mid-event.
+                document.body.classList.toggle('kiosk-display-only', !!data.displayOnlyMode);
 
                 const spotifyBtn = document.getElementById('connect-spotify-btn');
                 if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
@@ -1215,6 +1261,14 @@
         function closePlaylistModal() {
             document.getElementById('playlist-modal').classList.remove('is-visible');
         }
+
+        // Tapping the dimmed backdrop (not the modal box itself) closes whichever
+        // popup is open - applies to every .modal-overlay on the page.
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) overlay.classList.remove('is-visible');
+            });
+        });
 
         // --- My Requests (guest-only view of their own request status) ---
         function statusLabel(status) {
