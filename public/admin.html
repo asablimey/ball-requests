@@ -198,6 +198,30 @@
         .fullscreen-icon-btn:active { transform: scale(0.95); }
         .fullscreen-icon-btn svg { width: 24px; height: 24px; fill: currentColor; }
 
+        .hints-icon-btn {
+            background: none;
+            border: none;
+            color: #a7a7a7;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease, transform 0.1s ease;
+        }
+        .hints-icon-btn:hover { color: white; }
+        .hints-icon-btn:active { transform: scale(0.95); }
+        .hints-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
+        .hints-icon-btn.hints-on { color: var(--spotify-green); }
+
+        /* When hints are hidden, every settings-card-hint / filter-hint in
+           the document is collapsed. Scoped to body.hints-hidden so other
+           text (labels, statuses) is untouched. */
+        body.hints-hidden .settings-card-hint,
+        body.hints-hidden .filter-hint {
+            display: none;
+        }
+
         .utility-btn {
             padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
             background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
@@ -647,11 +671,18 @@
 
     <div class="header">
         <h1>Current Requests</h1>
-        <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
-            <svg viewBox="0 0 24 24" id="fullscreen-svg">
-                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-            </svg>
-        </button>
+        <div style="display:flex; align-items:center; gap:4px;">
+            <button id="toggle-hints" class="hints-icon-btn" title="Show/hide setting hints" onclick="toggleHints()">
+                <svg viewBox="0 0 24 24" id="hints-svg">
+                    <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V15h-4v-2.3l-.85-.6C7.8 11.16 7 9.63 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 .63-.8 2.16-2.15 3.1z"/>
+                </svg>
+            </button>
+            <button id="toggle-fullscreen" class="fullscreen-icon-btn" onclick="toggleFullscreen()">
+                <svg viewBox="0 0 24 24" id="fullscreen-svg">
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                </svg>
+            </button>
+        </div>
     </div>
 
     <div class="tab-bar">
@@ -1458,8 +1489,22 @@ async function verifyPassword() {
 
         document.addEventListener('fullscreenchange', updateFullscreenIcon);
 
+        function applyHintsVisibility(hintsOn) {
+            document.body.classList.toggle('hints-hidden', !hintsOn);
+            document.getElementById('toggle-hints').classList.toggle('hints-on', hintsOn);
+        }
+
+        function toggleHints() {
+            const hintsOn = document.body.classList.contains('hints-hidden');
+            applyHintsVisibility(hintsOn);
+            localStorage.setItem('adminHintsOn', hintsOn ? '1' : '0');
+        }
+
         window.onload = () => {
             document.getElementById('password-input').focus();
+            const savedHints = localStorage.getItem('adminHintsOn');
+            // Default to hints visible if nothing saved yet.
+            applyHintsVisibility(savedHints === null ? true : savedHints === '1');
         };
 
         setInterval(updateDashboard, 3000);
