@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Start a New Event</title>
+
+    <style>
+        :root {
+            --spotify-green: #1DB954;
+            --spotify-black: #121212;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+            --red-action: #e91429;
+        }
+        html { overflow-x: hidden; }
+        body {
+            background-color: var(--spotify-black);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 25px;
+            box-sizing: border-box;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .wrap { width: 100%; max-width: 460px; }
+        h1 { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.5px; margin: 0 0 6px 0; text-align: center; }
+        .subtitle { color: #a7a7a7; text-align: center; margin: 0 0 28px 0; font-size: 0.95rem; }
+
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid #282828;
+            border-radius: 14px;
+            padding: 24px;
+            margin-bottom: 16px;
+        }
+        .card h2 { font-size: 1.1rem; margin: 0 0 16px 0; }
+
+        .input-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+        .input-group label { font-size: 0.8rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
+        .input-group input {
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 12px 14px;
+            color: white;
+            border-radius: 6px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        .input-group input:focus { outline: none; border-color: var(--spotify-green); }
+        .url-preview { font-size: 0.8rem; color: #666; margin-top: 2px; }
+        .url-preview strong { color: #a7a7a7; }
+
+        .availability { font-size: 0.8rem; margin-top: 4px; min-height: 1em; }
+        .availability.ok { color: var(--spotify-green); }
+        .availability.taken { color: var(--red-action); }
+
+        .primary-btn {
+            width: 100%;
+            background-color: white;
+            color: black;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .primary-btn:hover { background-color: var(--spotify-green); color: white; }
+        .primary-btn:disabled { opacity: 0.5; cursor: default; }
+
+        .error-msg { color: var(--red-action); font-size: 0.85rem; margin-top: 12px; display: none; }
+
+        .divider { text-align: center; color: #555; font-size: 0.8rem; margin: 20px 0; }
+
+        .join-row { display: flex; gap: 10px; }
+        .join-row input { flex: 1; }
+        .join-row button {
+            background: var(--card-bg);
+            border: 1px solid #333;
+            color: white;
+            border-radius: 6px;
+            padding: 0 18px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .join-row button:hover { border-color: var(--spotify-green); }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>🎧 Song Request Station</h1>
+        <p class="subtitle">Every DJ gets their own independent event - own queue, own settings, own Spotify connection.</p>
+
+        <div class="card">
+            <h2>Start a new event</h2>
+            <div class="input-group">
+                <label>Event Name</label>
+                <input type="text" id="input-event-name" placeholder="Sam's Birthday Bash" maxlength="60">
+            </div>
+            <div class="input-group">
+                <label>Event URL</label>
+                <input type="text" id="input-slug" placeholder="sams-birthday" maxlength="40" autocapitalize="off" autocorrect="off">
+                <div class="url-preview">Guests will go to <strong id="url-preview-text">yoursite.com/e/sams-birthday</strong></div>
+                <div class="availability" id="availability-msg"></div>
+            </div>
+            <div class="input-group">
+                <label>Admin Password</label>
+                <input type="password" id="input-password" placeholder="At least 4 characters">
+            </div>
+            <button class="primary-btn" id="create-btn" onclick="createEvent()">Create Event</button>
+            <div class="error-msg" id="error-msg"></div>
+        </div>
+
+        <div class="divider">— or —</div>
+
+        <div class="card">
+            <h2>Already have an event?</h2>
+            <div class="join-row">
+                <input type="text" id="input-join-slug" placeholder="event-url" autocapitalize="off" autocorrect="off" onkeydown="if(event.key === 'Enter') goToEvent()">
+                <button onclick="goToEvent()">Go</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const slugInput = document.getElementById('input-slug');
+        const nameInput = document.getElementById('input-event-name');
+        const previewText = document.getElementById('url-preview-text');
+        const availabilityMsg = document.getElementById('availability-msg');
+        let slugManuallyEdited = false;
+        let availabilityCheckTimer = null;
+
+        function slugify(str) {
+            return str.toLowerCase()
+                .trim()
+                .replace(/[^a-z0-9\s-]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-')
+                .replace(/^-|-$/g, '')
+                .slice(0, 40);
+        }
+
+        nameInput.addEventListener('input', () => {
+            if (!slugManuallyEdited) {
+                slugInput.value = slugify(nameInput.value);
+                updatePreviewAndCheck();
+            }
+        });
+
+        slugInput.addEventListener('input', () => {
+            slugManuallyEdited = true;
+            slugInput.value = slugify(slugInput.value);
+            updatePreviewAndCheck();
+        });
+
+        function updatePreviewAndCheck() {
+            const slug = slugInput.value || '…';
+            previewText.textContent = `${location.host}/e/${slug}`;
+            clearTimeout(availabilityCheckTimer);
+            if (!slugInput.value) { availabilityMsg.textContent = ''; return; }
+            availabilityMsg.textContent = 'Checking...';
+            availabilityMsg.className = 'availability';
+            availabilityCheckTimer = setTimeout(checkAvailability, 400);
+        }
+
+        async function checkAvailability() {
+            const slug = slugInput.value;
+            if (!slug) return;
+            try {
+                const res = await fetch(`/api/events/${encodeURIComponent(slug)}/available`);
+                const data = await res.json();
+                if (data.available) {
+                    availabilityMsg.textContent = '✓ Available';
+                    availabilityMsg.className = 'availability ok';
+                } else {
+                    availabilityMsg.textContent = data.reason === 'invalid'
+                        ? 'Only lowercase letters, numbers, and hyphens.'
+                        : '✗ Already taken';
+                    availabilityMsg.className = 'availability taken';
+                }
+            } catch (err) {
+                availabilityMsg.textContent = '';
+            }
+        }
+
+        async function createEvent() {
+            const slug = slugInput.value;
+            const eventName = nameInput.value;
+            const adminPassword = document.getElementById('input-password').value;
+            const errorMsg = document.getElementById('error-msg');
+            const btn = document.getElementById('create-btn');
+            errorMsg.style.display = 'none';
+
+            if (!slug) { errorMsg.textContent = 'Pick an event URL.'; errorMsg.style.display = 'block'; return; }
+            if (!adminPassword || adminPassword.length < 4) { errorMsg.textContent = 'Admin password must be at least 4 characters.'; errorMsg.style.display = 'block'; return; }
+
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+            try {
+                const res = await fetch('/api/events', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slug, eventName, adminPassword })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    errorMsg.textContent = data.error || 'Something went wrong.';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Create Event';
+                    return;
+                }
+                window.location.href = `/e/${data.slug}/admin`;
+            } catch (err) {
+                errorMsg.textContent = 'Could not reach the server. Try again.';
+                errorMsg.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Create Event';
+            }
+        }
+
+        function goToEvent() {
+            const slug = slugify(document.getElementById('input-join-slug').value);
+            if (!slug) return;
+            window.location.href = `/e/${slug}/admin`;
+        }
+    </script>
+</body>
+</html>
