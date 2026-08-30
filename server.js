@@ -293,7 +293,7 @@ let systemConfigs = {
     // search results and blocked from being requested directly - see
     // isExtendedOrClubMix() below for exactly what counts as one.
     radioEditsOnly: false,
-    eventName: '',
+    eventName: 'crowdDJ',
     // Queue length cap: once activeQueue.length hits maxQueueLength, requests
     // auto-close. Nothing is "stuck closed" here - it's recomputed from the
     // live queue length on every request, so it reopens on its own as the
@@ -390,6 +390,8 @@ let spotifyAccessToken = "";
 let voterCreditState = new Map(); // voterId -> { available, lastRefill }
 let voterLastVoteAt = new Map(); // voterId -> timestamp of last vote action
 const MIN_VOTE_INTERVAL_MS = 400;
+let voterLastRequestAt = new Map(); // voterId -> timestamp of last submitted request
+const MIN_REQUEST_INTERVAL_MS = 1500;
 
 function getOrCreateVoterCreditState(voterId, maxCredits) {
     let state = voterCreditState.get(voterId);
@@ -600,6 +602,15 @@ app.post('/api/request', async (req, res) => {
     // Identity now comes from the server-issued cookie, not a client-supplied
     // value - see the cookie middleware near the top of this file.
     const voterId = req.serverVoterId;
+
+    // Abuse/spam control: block rapid-fire request submissions per guest,
+    // checked before the Spotify lookup below so spam can't burn API calls
+    // even when it's the same voterId re-submitting quickly.
+    const lastRequestAt = voterLastRequestAt.get(voterId) || 0;
+    if (Date.now() - lastRequestAt < MIN_REQUEST_INTERVAL_MS) {
+        return res.status(429).json({ error: "Please slow down." });
+    }
+    voterLastRequestAt.set(voterId, Date.now());
 
     // Spotify track IDs are always 22-character base62 strings - reject anything
     // that isn't even shaped like one before spending an API call on it.
@@ -1187,5 +1198,13 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+        console.warn('==========================================================');
+        console.warn('[SERVER] SPOTIFY_CLIENT_ID and/or SPOTIFY_CLIENT_SECRET are');
+        console.warn('not set. Search and song requests will not work until both');
+        console.warn('are set in your environment variables and the server is');
+        console.warn('redeployed/restarted.');
+        console.warn('==========================================================');
+    }
     await getSpotifyToken();
 });
