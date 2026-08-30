@@ -736,7 +736,7 @@
     <div class="container">
         <div class="header">
             <div class="header-title-block">
-                <h1 id="event-name-header">Song Requests</h1>
+                <h1 id="event-name-header">crowdDJ</h1>
             </div>
             <div class="credits-container">
                 <div class="top-pill-row">
@@ -954,7 +954,7 @@
                 if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
 
                 const nameHeader = document.getElementById('event-name-header');
-                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
+                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'crowdDJ';
                 if (nameHeader.innerText !== newName) {
                     nameHeader.innerText = newName;
                     document.title = newName;
