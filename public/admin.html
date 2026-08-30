@@ -884,6 +884,12 @@
     </div>
 
     <script>
+        // This page is served at /e/{slug}/admin, so the event's slug is
+        // always the second path segment - every relative API call below
+        // goes through eventUrl() so it hits the right event's data.
+        const EVENT_SLUG = location.pathname.split('/')[2] || '';
+        function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+
         // Toast notifications - non-blocking replacement for alert()
         let toastTimer = null;
         function showToast(message, type = "error") {
@@ -958,7 +964,7 @@ async function verifyPassword() {
             // Verified against the server now, not a hardcoded value in this file -
             // that hardcoded value used to be visible to anyone via "View Source".
             try {
-                const res = await fetch('/api/admin/data', { headers: { 'x-admin-password': attempt } });
+                const res = await fetch(eventUrl('/api/admin/data'), { headers: { 'x-admin-password': attempt } });
                 if (res.ok) {
                     adminPassword = attempt;
                     isAuthorized = true;
@@ -1029,7 +1035,7 @@ async function verifyPassword() {
 
         async function saveFilters() {
             if (!isAuthorized) return;
-            const res = await fetch('/api/admin/config', {
+            const res = await fetch(eventUrl('/api/admin/config'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ genreFilter: selectedGenres, decadeFilter: selectedDecades })
@@ -1040,7 +1046,7 @@ async function verifyPassword() {
 
         async function toggleQueueCap() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-queue-cap', {
+            await fetch(eventUrl('/api/admin/toggle-queue-cap'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !queueCapEnabled })
@@ -1051,13 +1057,13 @@ async function verifyPassword() {
         function connectDjSpotify() {
             // Plain navigation (not fetch) since this needs to become a real
             // browser redirect through Spotify's login page and back.
-            window.location.href = '/admin/spotify-login?password=' + encodeURIComponent(adminPassword);
+            window.location.href = eventUrl('/admin/spotify-login?password=' + encodeURIComponent(adminPassword));
         }
 
         let spotifyAutoQueueEnabled = true;
         async function toggleSpotifyAutoQueue() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-spotify-auto-queue', {
+            await fetch(eventUrl('/api/admin/toggle-spotify-auto-queue'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !spotifyAutoQueueEnabled })
@@ -1067,7 +1073,7 @@ async function verifyPassword() {
 
         async function toggleGuestSpotify() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-guest-spotify', {
+            await fetch(eventUrl('/api/admin/toggle-guest-spotify'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !guestSpotifyEnabled })
@@ -1077,7 +1083,7 @@ async function verifyPassword() {
 
         async function toggleKioskRequests() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/kiosk/toggle', {
+            await fetch(eventUrl('/api/admin/kiosk/toggle'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ allow: !kioskRequestsAllowed })
@@ -1087,7 +1093,7 @@ async function verifyPassword() {
 
         async function toggleKioskSpotify() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/kiosk/toggle-spotify', {
+            await fetch(eventUrl('/api/admin/kiosk/toggle-spotify'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !kioskSpotifyEnabled })
@@ -1097,7 +1103,7 @@ async function verifyPassword() {
 
         async function toggleKioskDisplayOnly() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/kiosk/toggle-display-only', {
+            await fetch(eventUrl('/api/admin/kiosk/toggle-display-only'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !kioskDisplayOnlyMode })
@@ -1109,7 +1115,7 @@ async function verifyPassword() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
             const downVal = document.getElementById('input-kiosk-countdown').value;
-            const res = await fetch('/api/admin/kiosk/config', {
+            const res = await fetch(eventUrl('/api/admin/kiosk/config'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal })
@@ -1129,7 +1135,7 @@ async function verifyPassword() {
         async function exportStatsCSV() {
             if (!isAuthorized) return;
             try {
-                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
+                const res = await fetch(eventUrl('/api/admin/stats'), { headers: adminHeaders() });
                 if (!res.ok) { showToast("Could not load stats to export.", "error"); return; }
                 const data = await res.json();
 
@@ -1159,7 +1165,7 @@ async function verifyPassword() {
             if (!isAuthorized) return; 
             
             try {
-                const res = await fetch('/api/admin/data', { headers: adminHeaders() });
+                const res = await fetch(eventUrl('/api/admin/data'), { headers: adminHeaders() });
                 if (!res.ok) return;
                 const data = await res.json();
                 
@@ -1316,7 +1322,7 @@ async function verifyPassword() {
             const eventNameVal = document.getElementById('input-event-name').value;
             const maxQueueVal = document.getElementById('input-max-queue').value;
 
-            const res = await fetch('/api/admin/config', {
+            const res = await fetch(eventUrl('/api/admin/config'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal, maxQueueLength: maxQueueVal })
@@ -1327,7 +1333,7 @@ async function verifyPassword() {
 
         async function triggerAction(id, action) {
             if (!isAuthorized) return;
-            await fetch('/api/admin/action', {
+            await fetch(eventUrl('/api/admin/action'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ id, action })
@@ -1338,7 +1344,7 @@ async function verifyPassword() {
         async function clearSystem(actionType, message) {
             if (!isAuthorized) return;
             if (confirm(message)) {
-                await fetch('/api/admin/action', {
+                await fetch(eventUrl('/api/admin/action'), {
                     method: 'POST',
                     headers: adminHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ id: null, action: actionType })
@@ -1349,7 +1355,7 @@ async function verifyPassword() {
 
         async function toggleRequests() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle', {
+            await fetch(eventUrl('/api/admin/toggle'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ allow: !requestsAllowed })
@@ -1359,7 +1365,7 @@ async function verifyPassword() {
 
         async function toggleExplicitLock() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-explicit', {
+            await fetch(eventUrl('/api/admin/toggle-explicit'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ blockExplicit: !explicitBlockActive })
@@ -1369,7 +1375,7 @@ async function verifyPassword() {
 
         async function toggleRadioEditsOnly() {
             if (!isAuthorized) return;
-            await fetch('/api/admin/toggle-radio-edits', {
+            await fetch(eventUrl('/api/admin/toggle-radio-edits'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ radioEditsOnly: !radioEditsOnly })
@@ -1386,7 +1392,7 @@ async function verifyPassword() {
 
             statusEl.innerText = 'Switching…';
             try {
-                const res = await fetch('/api/admin/switch-playlist', {
+                const res = await fetch(eventUrl('/api/admin/switch-playlist'), {
                     method: 'POST',
                     headers: adminHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ playlistUrl: url })
@@ -1420,7 +1426,7 @@ async function verifyPassword() {
         async function loadStats() {
             if (!isAuthorized) return;
             try {
-                const res = await fetch('/api/admin/stats', { headers: adminHeaders() });
+                const res = await fetch(eventUrl('/api/admin/stats'), { headers: adminHeaders() });
                 if (!res.ok) return;
                 const data = await res.json();
 
@@ -1618,7 +1624,7 @@ async function verifyPassword() {
 
         async function pollNowPlaying() {
             try {
-                const res = await fetch('/api/now-playing');
+                const res = await fetch(eventUrl('/api/now-playing'));
                 if (!res.ok) return;
                 updateNowPlayingBar(await res.json());
             } catch (e) { /* keep last known state on a transient network hiccup */ }
