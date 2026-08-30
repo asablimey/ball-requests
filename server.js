@@ -58,7 +58,11 @@ function voterIdentityMiddleware(req, res, next) {
     next();
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+// { index: false } stops express.static from auto-serving public/index.html
+// for GET '/' - without this, requests to the bare root would silently serve
+// the guest page directly, bypassing new-event.html and every /e/:slug route
+// below entirely (since static-file serving runs before our own routes).
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
