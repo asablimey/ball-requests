@@ -701,7 +701,7 @@
 
     <div class="container">
         <div class="header">
-            <h1 id="event-name-header">Song Requests</h1>
+            <h1 id="event-name-header">crowdDJ</h1>
             <div class="credits-container">
                 <div class="top-pill-row">
                     <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
@@ -833,7 +833,7 @@
                 if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
 
                 const nameHeader = document.getElementById('event-name-header');
-                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Song Requests';
+                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'crowdDJ';
                 if (nameHeader.innerText !== newName) {
                     nameHeader.innerText = newName;
                     // Tab title stays "Kiosk" here (unlike the guest page) so it's
