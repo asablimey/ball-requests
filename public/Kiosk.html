@@ -750,6 +750,12 @@
     </div>
 
     <script>
+        // This page is served at /e/{slug}/kiosk, so the event's slug is
+        // always the second path segment - every relative API call below
+        // goes through eventUrl() so it hits the right event's data.
+        const EVENT_SLUG = location.pathname.split('/')[2] || '';
+        function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+
         // Toast notifications - non-blocking replacement for alert()
         let toastTimer = null;
         function showToast(message, type = "error") {
@@ -813,7 +819,7 @@
 
         async function fetchSystemState() {
             try {
-                const res = await fetch('/kiosk-data');
+                const res = await fetch(eventUrl('/kiosk-data'));
                 if (!res.ok) return;
                 const data = await res.json();
 
@@ -989,7 +995,7 @@
 
         async function castVote(id, type) {
             try {
-                const res = await fetch('/api/vote', {
+                const res = await fetch(eventUrl('/api/vote'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id, type, voterId: voterSignatureToken })
@@ -1011,7 +1017,7 @@
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                    const res = await fetch(eventUrl(`/api/search?q=${encodeURIComponent(query)}`));
                     const data = await res.json();
 
                     document.getElementById('list-title').innerText = "Search Results";
@@ -1062,7 +1068,7 @@
                 return false;
             }
             try {
-                const res = await fetch('/api/request', {
+                const res = await fetch(eventUrl('/api/request'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ track, username: guestUsername, voterId: voterSignatureToken, isKiosk: true })
@@ -1158,7 +1164,7 @@
             }
 
             try {
-                const configRes = await fetch('/api/public-config');
+                const configRes = await fetch(eventUrl('/api/public-config'));
                 if (!configRes.ok) {
                     showToast("Could not reach the server to start Spotify login.", "error");
                     return;
@@ -1217,7 +1223,7 @@
             }
 
             try {
-                const configRes = await fetch('/api/public-config');
+                const configRes = await fetch(eventUrl('/api/public-config'));
                 const config = await configRes.json();
 
                 const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
@@ -1288,7 +1294,7 @@
             body.innerHTML = '<p class="modal-loading">Loading your requests…</p>';
 
             try {
-                const res = await fetch(`/api/my-requests?voterId=${encodeURIComponent(voterSignatureToken)}`);
+                const res = await fetch(eventUrl(`/api/my-requests?voterId=${encodeURIComponent(voterSignatureToken)}`));
                 if (!res.ok) {
                     body.innerHTML = '<p class="modal-empty">Could not load your requests. Try again.</p>';
                     return;
@@ -1562,7 +1568,7 @@
 
         async function pollNowPlaying() {
             try {
-                const res = await fetch('/api/now-playing');
+                const res = await fetch(eventUrl('/api/now-playing'));
                 if (!res.ok) return;
                 updateNowPlayingBar(await res.json());
             } catch (e) { /* keep last known state on a transient network hiccup */ }
