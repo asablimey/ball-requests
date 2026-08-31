@@ -644,34 +644,6 @@
         }
         body.has-now-playing-bar { padding-bottom: 76px; }
 
-        /* Spotify continuation rows in the Live Queue view - the DJ's actual
-           Spotify "up next" queue, shown as filler beneath real guest
-           requests (or in their place when there are none). Dashed border +
-           lower opacity distinguishes them at a glance from real requests,
-           which is important since they have no votes. */
-        .spotify-continuation-row {
-            opacity: 0.6;
-            border-style: dashed;
-        }
-        .spotify-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: var(--spotify-green);
-            white-space: nowrap;
-        }
-        .spotify-tag svg { width: 14px; height: 14px; fill: var(--spotify-green); flex-shrink: 0; }
-        .queue-section-divider {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #666;
-            font-weight: 700;
-            margin: 4px 0 10px 0;
-        }
-
     </style>
 </head>
 <body>
@@ -949,6 +921,18 @@
 
         function renderQueue(queue) {
             if (queue) lastGuestQueue = queue;
+
+            // The now-playing poll calls this every few seconds to refresh
+            // the Spotify continuation rows - but if search results are
+            // currently on screen, overwriting #main-display-list here
+            // would yank those results away a few seconds after they
+            // appeared. Only render the Live Queue view when that's
+            // actually what's on screen.
+            const searchInput = document.getElementById('search-input');
+            if (searchInput && searchInput.value.trim() !== '' && !searchInput.disabled) {
+                return;
+            }
+
             const display = document.getElementById('main-display-list');
 
             const guestIds = new Set(lastGuestQueue.map(s => s.id));
@@ -993,31 +977,22 @@
                 `;
             }).join('');
 
-            // Spotify continuation rows: no votes (they're not guest requests),
-            // visually muted, tagged so it's clear at a glance these are
-            // auto-filling from Spotify rather than something a guest asked for.
-            const spotifyRowsHtml = spotifyOnly.length === 0 ? '' : `
-                ${guestRowsHtml ? '<p class="queue-section-divider">Then playing from Spotify</p>' : ''}
-                ${spotifyOnly.map(t => `
-                    <div class="song-row spotify-continuation-row">
-                        <div class="song-details">
-                            <img src="${safeImageUrl(t.artwork)}">
-                            <div class="text-block">
-                                <div class="title-wrapper">
-                                    <p class="song-title">${escapeHtml(t.title)}</p>
-                                </div>
-                                <p class="song-artist">${escapeHtml(t.artist)}</p>
+            // Spotify continuation rows fill out the queue beneath real guest
+            // requests - rendered the same as any other row, no label or
+            // divider singling them out.
+            const spotifyRowsHtml = spotifyOnly.map(t => `
+                <div class="song-row">
+                    <div class="song-details">
+                        <img src="${safeImageUrl(t.artwork)}">
+                        <div class="text-block">
+                            <div class="title-wrapper">
+                                <p class="song-title">${escapeHtml(t.title)}</p>
                             </div>
-                        </div>
-                        <div class="actions">
-                            <span class="spotify-tag">
-                                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.59 14.4a.622.622 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.622.622 0 1 1-.277-1.215c3.809-.87 7.077-.496 9.712 1.115.293.18.386.563.207.857zm1.223-2.723a.78.78 0 0 1-1.072.257c-2.688-1.652-6.786-2.131-9.965-1.166a.78.78 0 0 1-.452-1.492c3.632-1.102 8.147-.568 11.232 1.329a.78.78 0 0 1 .257 1.072zm.105-2.835C14.692 9.084 9.375 8.897 6.297 9.847a.936.936 0 1 1-.543-1.79c3.532-1.072 9.404-.865 13.115 1.338a.936.936 0 0 1-.952 1.487z"/></svg>
-                                Playing next from Spotify
-                            </span>
+                            <p class="song-artist">${escapeHtml(t.artist)}</p>
                         </div>
                     </div>
-                `).join('')}
-            `;
+                </div>
+            `).join('');
 
             display.innerHTML = guestRowsHtml + spotifyRowsHtml;
         }
