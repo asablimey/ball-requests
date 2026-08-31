@@ -101,7 +101,7 @@
             <h2>Start a new event</h2>
             <div class="input-group">
                 <label>Event Name</label>
-                <input type="text" id="input-event-name" placeholder="Sam's Birthday Bash" maxlength="60">
+                <input type="text" id="input-event-name" placeholder="Friday Night Live" maxlength="60">
             </div>
             <div class="input-group">
                 <label>Event URL</label>
@@ -202,23 +202,40 @@
 
             btn.disabled = true;
             btn.textContent = 'Creating...';
+            // A free-tier host can take 30-60s to wake up from a cold start
+            // on the first request in a while - without this, that delay just
+            // looks like the button did nothing.
+            const slowNotice = setTimeout(() => {
+                btn.textContent = 'Still working - waking up the server, this can take up to a minute...';
+            }, 4000);
             try {
                 const res = await fetch('/api/events', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ slug, eventName, adminPassword })
                 });
-                const data = await res.json();
+                clearTimeout(slowNotice);
+                let data;
+                try {
+                    data = await res.json();
+                } catch (parseErr) {
+                    throw new Error('Server sent back something unexpected.');
+                }
                 if (!res.ok) {
-                    errorMsg.textContent = data.error || 'Something went wrong.';
+                    errorMsg.textContent = data.error || `Something went wrong (${res.status}).`;
                     errorMsg.style.display = 'block';
                     btn.disabled = false;
                     btn.textContent = 'Create Event';
                     return;
                 }
+                if (!data.slug) {
+                    throw new Error('Server did not return the new event URL.');
+                }
                 window.location.href = `/e/${data.slug}/admin`;
             } catch (err) {
-                errorMsg.textContent = 'Could not reach the server. Try again.';
+                clearTimeout(slowNotice);
+                console.error('Create event failed:', err);
+                errorMsg.textContent = 'Could not reach the server. Check your connection and try again.';
                 errorMsg.style.display = 'block';
                 btn.disabled = false;
                 btn.textContent = 'Create Event';
