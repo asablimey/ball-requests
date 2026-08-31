@@ -105,7 +105,7 @@
             </div>
             <div class="input-group">
                 <label>Event URL</label>
-                <input type="text" id="input-slug" placeholder="sams-birthday" maxlength="40" autocapitalize="off" autocorrect="off">
+                <input type="text" id="input-slug" placeholder="friday-night-live" maxlength="40" autocapitalize="off" autocorrect="off">
                 <div class="url-preview">Guests will go to <strong id="url-preview-text">yoursite.com/e/sams-birthday</strong></div>
                 <div class="availability" id="availability-msg"></div>
             </div>
@@ -113,7 +113,7 @@
                 <label>Admin Password</label>
                 <input type="password" id="input-password" placeholder="At least 4 characters">
             </div>
-            <button class="primary-btn" id="create-btn" onclick="createEvent()">Create Event</button>
+            <button class="primary-btn" id="create-btn" onclick="submitNewEvent()">Create Event</button>
             <div class="error-msg" id="error-msg"></div>
         </div>
 
@@ -189,7 +189,7 @@
             }
         }
 
-        async function createEvent() {
+        async function submitNewEvent() {
             const slug = slugInput.value;
             const eventName = nameInput.value;
             const adminPassword = document.getElementById('input-password').value;
