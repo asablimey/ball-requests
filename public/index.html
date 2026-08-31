@@ -676,58 +676,35 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.35; }
         }
-        .now-playing-queue-toggle {
-            background: none;
-            border: none;
-            color: #a7a7a7;
-            cursor: pointer;
-            padding: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            transition: transform 0.2s ease, color 0.2s ease;
-        }
-        .now-playing-queue-toggle:hover { color: white; }
-        .now-playing-queue-toggle.is-open { transform: rotate(180deg); color: var(--spotify-green); }
-        .now-playing-queue-toggle svg { width: 20px; height: 20px; fill: currentColor; }
-
-        .now-playing-queue-panel {
-            position: fixed;
-            left: 0; right: 0;
-            bottom: 60px;
-            max-height: 0;
-            overflow: hidden;
-            background-color: var(--panel-bg);
-            border-top: 1px solid #282828;
-            z-index: 499;
-            transition: max-height 0.25s ease;
-        }
-        .now-playing-queue-panel.is-open { max-height: 45vh; overflow-y: auto; }
-        .now-playing-queue-inner { padding: 10px 16px; max-width: 800px; margin: 0 auto; }
-        .now-playing-queue-label {
-            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;
-            color: #888; font-weight: 700; margin: 6px 0 10px 0;
-        }
-        .now-playing-queue-row {
-            display: flex; align-items: center; gap: 12px;
-            padding: 6px 0;
-        }
-        .now-playing-queue-row img {
-            width: 34px; height: 34px; border-radius: 4px; object-fit: cover;
-            flex-shrink: 0; background-color: var(--card-bg);
-        }
-        .now-playing-queue-row-text { min-width: 0; }
-        .now-playing-queue-row-title {
-            margin: 0; font-size: 0.85rem; font-weight: 600;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .now-playing-queue-row-artist {
-            margin: 1px 0 0 0; font-size: 0.75rem; color: #a7a7a7;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .now-playing-queue-empty { color: #666; font-style: italic; font-size: 0.85rem; padding: 10px 0; }
         body.has-now-playing-bar { padding-bottom: 76px; }
+
+        /* Spotify continuation rows in the Live Queue view - the DJ's actual
+           Spotify "up next" queue, shown as filler beneath real guest
+           requests (or in their place when there are none). Dashed border +
+           lower opacity distinguishes them at a glance from real requests,
+           which is important since they have no votes. */
+        .spotify-continuation-row {
+            opacity: 0.6;
+            border-style: dashed;
+        }
+        .spotify-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--spotify-green);
+            white-space: nowrap;
+        }
+        .spotify-tag svg { width: 14px; height: 14px; fill: var(--spotify-green); flex-shrink: 0; }
+        .queue-section-divider {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #666;
+            font-weight: 700;
+            margin: 4px 0 10px 0;
+        }
 
     </style>
 </head>
@@ -933,6 +910,8 @@
         let systemRequestsAllowed = true; // Local tracker for global toggling
         let explicitBlockActive = false;
         let queueIsFull = false; // Auto-close from the DJ's queue length cap, distinct from a manual close
+        let lastGuestQueue = [];
+        let spotifyUpcomingQueue = [];
 
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
@@ -1089,12 +1068,18 @@
         }
 
         function renderQueue(queue) {
+            if (queue) lastGuestQueue = queue;
             const display = document.getElementById('main-display-list');
-            if (queue.length === 0) {
+
+            const guestIds = new Set(lastGuestQueue.map(s => s.id));
+            const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
+
+            if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
                 display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
                 return;
             }
-            display.innerHTML = queue.map(song => {
+
+            const guestRowsHtml = lastGuestQueue.map(song => {
                 const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
                 const isDownvoted = song.downvoters && song.downvoters.includes(voterSignatureToken);
 
@@ -1127,6 +1112,34 @@
                     </div>
                 `;
             }).join('');
+
+            // Spotify continuation rows: no votes (they're not guest requests),
+            // visually muted, tagged so it's clear at a glance these are
+            // auto-filling from Spotify rather than something a guest asked for.
+            const spotifyRowsHtml = spotifyOnly.length === 0 ? '' : `
+                ${guestRowsHtml ? '<p class="queue-section-divider">Then playing from Spotify</p>' : ''}
+                ${spotifyOnly.map(t => `
+                    <div class="song-row spotify-continuation-row">
+                        <div class="song-details">
+                            <img src="${safeImageUrl(t.artwork)}">
+                            <div class="text-block">
+                                <div class="title-wrapper">
+                                    <p class="song-title">${escapeHtml(t.title)}</p>
+                                </div>
+                                <p class="song-artist">${escapeHtml(t.artist)}</p>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <span class="spotify-tag">
+                                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.59 14.4a.622.622 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.622.622 0 1 1-.277-1.215c3.809-.87 7.077-.496 9.712 1.115.293.18.386.563.207.857zm1.223-2.723a.78.78 0 0 1-1.072.257c-2.688-1.652-6.786-2.131-9.965-1.166a.78.78 0 0 1-.452-1.492c3.632-1.102 8.147-.568 11.232 1.329a.78.78 0 0 1 .257 1.072zm.105-2.835C14.692 9.084 9.375 8.897 6.297 9.847a.936.936 0 1 1-.543-1.79c3.532-1.072 9.404-.865 13.115 1.338a.936.936 0 0 1-.952 1.487z"/></svg>
+                                Playing next from Spotify
+                            </span>
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+
+            display.innerHTML = guestRowsHtml + spotifyRowsHtml;
         }
 
         async function castVote(id, type) {
@@ -1607,13 +1620,10 @@
     </script>
     <div id="toast-container"></div>
 
-    <!-- Now Playing bar - live from the DJ's connected Spotify account -->
-    <div class="now-playing-queue-panel" id="now-playing-queue-panel">
-        <div class="now-playing-queue-inner">
-            <div class="now-playing-queue-label">Up Next</div>
-            <div id="now-playing-queue-list"></div>
-        </div>
-    </div>
+    <!-- Now Playing bar - live from the DJ's connected Spotify account. The
+         "up next" queue used to live in a slide-up panel toggled from here;
+         it now renders inline in the Live Queue view instead (see
+         renderQueue() below), so this bar is just the current-track strip. -->
     <div class="now-playing-bar" id="now-playing-bar">
         <div class="now-playing-progress-track">
             <div class="now-playing-progress-fill" id="now-playing-progress-fill"></div>
@@ -1624,9 +1634,6 @@
             <p class="now-playing-artist" id="now-playing-artist"></p>
         </div>
         <div class="now-playing-live-dot" id="now-playing-live-dot"></div>
-        <button type="button" class="now-playing-queue-toggle" id="now-playing-queue-toggle" onclick="toggleNowPlayingQueue()" title="Show what's up next">
-            <svg viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
-        </button>
     </div>
 
     <script>
@@ -1636,7 +1643,6 @@
         // showing an empty/broken-looking bar.
         let nowPlayingState = null;
         let nowPlayingTicker = null;
-        let nowPlayingQueueOpen = false;
         let nowPlayingLastTrackId = null;
 
         function renderNowPlayingProgress() {
@@ -1647,30 +1653,6 @@
             if (fillEl) fillEl.style.width = pct + '%';
         }
 
-        function toggleNowPlayingQueue() {
-            nowPlayingQueueOpen = !nowPlayingQueueOpen;
-            document.getElementById('now-playing-queue-panel').classList.toggle('is-open', nowPlayingQueueOpen);
-            document.getElementById('now-playing-queue-toggle').classList.toggle('is-open', nowPlayingQueueOpen);
-        }
-
-        function renderNowPlayingQueue(upcoming) {
-            const listEl = document.getElementById('now-playing-queue-list');
-            if (!listEl) return;
-            if (!upcoming || upcoming.length === 0) {
-                listEl.innerHTML = '<p class="now-playing-queue-empty">Nothing queued up on Spotify right now.</p>';
-                return;
-            }
-            listEl.innerHTML = upcoming.map(t => `
-                <div class="now-playing-queue-row">
-                    <img src="${safeImageUrl(t.artwork)}">
-                    <div class="now-playing-queue-row-text">
-                        <p class="now-playing-queue-row-title">${(t.title || '').replace(/</g, '&lt;')}</p>
-                        <p class="now-playing-queue-row-artist">${(t.artist || '').replace(/</g, '&lt;')}</p>
-                    </div>
-                </div>
-            `).join('');
-        }
-
         function updateNowPlayingBar(data) {
             const bar = document.getElementById('now-playing-bar');
             if (!bar) return;
@@ -1678,12 +1660,11 @@
             if (!data || !data.connected || !data.title) {
                 bar.classList.remove('is-visible');
                 document.body.classList.remove('has-now-playing-bar');
-                document.getElementById('now-playing-queue-panel').classList.remove('is-open');
-                document.getElementById('now-playing-queue-toggle').classList.remove('is-open');
-                nowPlayingQueueOpen = false;
                 nowPlayingState = null;
                 nowPlayingLastTrackId = null;
                 if (nowPlayingTicker) { clearInterval(nowPlayingTicker); nowPlayingTicker = null; }
+                spotifyUpcomingQueue = [];
+                renderQueue();
                 return;
             }
 
@@ -1709,7 +1690,11 @@
 
             if (!nowPlayingTicker) nowPlayingTicker = setInterval(renderNowPlayingProgress, 250);
 
-            renderNowPlayingQueue(data.upcoming);
+            // Feeds the merged Live Queue renderer (see renderQueue() above)
+            // rather than drawing its own separate list - Spotify's live "up
+            // next" now shows inline in the main queue view.
+            spotifyUpcomingQueue = data.upcoming || [];
+            renderQueue();
         }
 
         async function pollNowPlaying() {
