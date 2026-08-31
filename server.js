@@ -2,9 +2,39 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
+const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./eventStore');
 const app = express();
 const PORT = process.env.PORT || 10000;
+
+// --- Rate limiting ---
+// Event creation needs no auth at all (anyone can spin one up), so without a
+// limit it's a free unauthenticated way to burn disk, memory, and CPU (every
+// create does a real scrypt hash). 20/hour/IP is generous for someone
+// legitimately setting up an event and still shuts down a flood.
+const createEventLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many events created from this address recently. Try again later.' }
+});
+
+// Applies to every /e/:slug/api/admin/* call. skipSuccessfulRequests means a
+// DJ typing their correct password repeatedly is never affected - only wrong
+// guesses count against the limit, which is what actually matters for both
+// brute-force resistance and stopping a flood of bad guesses from queuing up
+// expensive scrypt verifications.
+const adminAuthLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    message: { error: 'Too many failed admin attempts. Try again later.' }
+});
 
 // Render (and most hosts) terminate HTTPS at a proxy in front of your app -
 // needed so secure cookies and req.protocol behave correctly.
@@ -311,6 +341,19 @@ function logDepartedTrack(event, track, outcome) {
     if (event.queueHistoryLog.length > 3000) event.queueHistoryLog = event.queueHistoryLog.slice(-3000);
 }
 
+// Used only where user-supplied data (eventName) gets interpolated directly
+// into a server-rendered HTML response, rather than returned as JSON for the
+// client to render (where the client's own escapeHtml already handles it).
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function formatDuration(ms) {
     const minutes = Math.floor(ms / 60000);
     const seconds = ((ms % 60000) / 1000).toFixed(0);
@@ -411,10 +454,10 @@ function markTrackPlayedByIndex(event, trackIndex) {
 
 // The person picks a slug + admin password here; this is the only route that
 // doesn't require an existing event to already exist.
-app.post('/api/events', (req, res) => {
+app.post('/api/events', createEventLimiter, async (req, res) => {
     const { slug, eventName, adminPassword } = req.body || {};
     if (typeof slug !== 'string') return res.status(400).json({ error: 'Missing event URL.' });
-    const result = events.createEvent(slug.trim().toLowerCase(), eventName, adminPassword);
+    const result = await events.createEvent(slug.trim().toLowerCase(), eventName, adminPassword);
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ success: true, slug: result.event.slug });
 });
@@ -430,16 +473,21 @@ app.get('/api/events/:candidateSlug/available', (req, res) => {
     res.json({ available: !exists });
 });
 
-// One-time login: DJ opens this (from their event's admin dashboard) and
-// authorizes with their own Spotify account. Gated by that event's admin
-// password. The redirect_uri Spotify sends the browser back to is fixed and
-// shared by every event (see comment above SPOTIFY_REDIRECT_URI) - the
-// `state` param is what lets the shared callback route below know which
+// One-time login: DJ's browser is sent here (full-page navigation, so no
+// custom header is possible) carrying the ticket obtained above instead of
+// the password itself. The redirect_uri Spotify sends the browser back to is
+// fixed and shared by every event (see comment above SPOTIFY_REDIRECT_URI) -
+// the `state` param is what lets the shared callback route below know which
 // event this login belongs to.
 app.get('/e/:slug/admin/spotify-login', (req, res) => {
     const event = req.event;
-    if (!events.verifyPassword(req.query.password, event.adminPasswordHash)) {
-        return res.status(401).send('Unauthorized.');
+    const ticket = event.spotify.loginTicket;
+    const provided = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+    const valid = ticket && provided && ticket.value === provided && Date.now() < ticket.expiresAt;
+    event.spotify.loginTicket = null; // single-use, valid or not
+    events.scheduleSave(event.slug);
+    if (!valid) {
+        return res.status(401).send('This login link expired or was already used - go back to the admin dashboard and click "Connect Spotify" again.');
     }
     if (!SPOTIFY_REDIRECT_URI) {
         return res.status(500).send('SPOTIFY_REDIRECT_URI is not set in your environment variables. Set it to this app\'s URL + /admin/spotify-callback, add that exact URL to your Spotify Developer Dashboard app\'s Redirect URIs, then try again.');
@@ -492,11 +540,12 @@ app.get('/admin/spotify-callback', async (req, res) => {
         event.spotify.djAccessTokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
         events.scheduleSave(event.slug);
 
+        const displayName = escapeHtml(event.systemConfigs.eventName || event.slug);
         res.send(`
             <html><body style="font-family: sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.5;">
                 <h2>Spotify connected ✅</h2>
-                <p>Auto-queueing is now active for <strong>${event.systemConfigs.eventName || event.slug}</strong>, and this connection is saved - it'll still be there after a server restart.</p>
-                <p><a href="/e/${event.slug}/admin">Back to the admin dashboard</a></p>
+                <p>Auto-queueing is now active for <strong>${displayName}</strong>, and this connection is saved - it'll still be there after a server restart.</p>
+                <p><a href="/e/${encodeURIComponent(event.slug)}/admin">Back to the admin dashboard</a></p>
             </body></html>
         `);
     } catch (err) {
@@ -526,14 +575,41 @@ app.get('/e/:slug/kiosk', voterIdentityMiddleware, (req, res) => {
 });
 
 // Real, server-side admin auth - gates every /e/:slug/api/admin/* route below.
-function requireAdminAuth(req, res, next) {
+async function requireAdminAuth(req, res, next) {
     const provided = req.headers['x-admin-password'];
-    if (!events.verifyPassword(provided, req.event.adminPasswordHash)) {
+    const ok = await events.verifyPassword(provided, req.event.adminPasswordHash);
+    if (!ok) {
         return res.status(401).json({ error: 'Unauthorized.' });
     }
     next();
 }
-app.use('/e/:slug/api/admin', requireAdminAuth);
+app.use('/e/:slug/api/admin', adminAuthLimiter, requireAdminAuth);
+
+// Mints a short-lived, single-use ticket that stands in for the admin
+// password on the full-page redirect used by /e/:slug/admin/spotify-login
+// below. Protected by the requireAdminAuth middleware just registered above,
+// so this still requires the real password - it just avoids ever putting
+// that password itself in a URL, where it would land in server/proxy access
+// logs and the browser's own history.
+app.post('/e/:slug/api/admin/spotify-login-ticket', (req, res) => {
+    const event = req.event;
+    const ticket = crypto.randomUUID();
+    event.spotify.loginTicket = { value: ticket, expiresAt: Date.now() + 60 * 1000 };
+    events.scheduleSave(event.slug);
+    res.json({ ticket });
+});
+
+// Permanently closes/deletes this event. Protected by requireAdminAuth like
+// everything else under /api/admin - there's no undo, so the client makes
+// the person confirm before calling this.
+app.delete('/e/:slug/api/admin', async (req, res) => {
+    try {
+        await events.deleteEvent(req.event.slug);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not delete the event. Try again.' });
+    }
+});
 
 // The guest page's "Connect Spotify" button needs the Client ID (not the secret) to run
 // its own PKCE login. Client IDs aren't sensitive - this is safe to expose publicly.
@@ -629,127 +705,141 @@ app.get('/e/:slug/api/search', async (req, res) => {
     }
 });
 
-app.post('/e/:slug/api/request', voterIdentityMiddleware, async (req, res) => {
-    const event = req.event;
-    const { track, username, isKiosk } = req.body;
-    const modeConfig = isKiosk === true ? event.kioskConfigs : event.systemConfigs;
+// Which config (system vs kiosk) applies used to be decided by an `isKiosk`
+// flag the CLIENT sent in the request body - trivially spoofable by anyone
+// on the regular guest page, letting them borrow the kiosk's (often more
+// permissive) requestsAllowed/maxCredits/countdownLength, or keep requesting
+// after the DJ paused the main page while the kiosk toggle was still on.
+// Now it's determined purely by which route the request came in on, so a
+// guest can't opt themselves into kiosk rules from the guest page, and vice
+// versa. buildRequestHandler(isKiosk) is shared by both routes below since
+// the actual request-processing logic is otherwise identical.
+function buildRequestHandler(isKiosk) {
+    return async (req, res) => {
+        const event = req.event;
+        const { track, username } = req.body;
+        const modeConfig = isKiosk ? event.kioskConfigs : event.systemConfigs;
 
-    if (!modeConfig.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
-    if (isQueueFull(event)) return res.status(403).json({ error: `Queue is full (max ${event.systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
-    if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
-    const voterId = req.serverVoterId;
+        if (!modeConfig.requestsAllowed) return res.status(403).json({ error: "Submissions closed." });
+        if (isQueueFull(event)) return res.status(403).json({ error: `Queue is full (max ${event.systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
+        if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
+        const voterId = req.serverVoterId;
 
-    const lastRequestAt = event.voterLastRequestAt[voterId] || 0;
-    if (Date.now() - lastRequestAt < MIN_REQUEST_INTERVAL_MS) {
-        return res.status(429).json({ error: "Please slow down." });
-    }
-    event.voterLastRequestAt[voterId] = Date.now();
-
-    if (!/^[A-Za-z0-9]{22}$/.test(track.id)) {
-        return res.status(400).json({ error: "Invalid track ID." });
-    }
-
-    let verifiedTrack;
-    let releaseYear = null;
-    let primaryArtistId = null;
-    try {
-        if (!spotifyAccessToken) await getSpotifyToken();
-        const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
-            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
-        });
-        if (!lookupRes.ok) return res.status(400).json({ error: "Track not found on Spotify." });
-        const t = await lookupRes.json();
-        if (!t || !t.id) return res.status(400).json({ error: "Track not found on Spotify." });
-        verifiedTrack = {
-            id: t.id,
-            name: t.name,
-            artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
-            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
-            explicit: t.explicit || false,
-            duration: formatDuration(t.duration_ms || 0)
-        };
-        releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
-        primaryArtistId = t.artists?.[0]?.id || null;
-    } catch (err) {
-        return res.status(500).json({ error: "Could not verify track with Spotify." });
-    }
-
-    if (event.systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
-        return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
-    }
-
-    if (event.systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
-        return res.status(403).json({ error: "Only radio edits are currently allowed - try searching for the standard version." });
-    }
-
-    if (event.systemConfigs.decadeFilter && event.systemConfigs.decadeFilter.length > 0) {
-        const decade = releaseYear ? Math.floor(releaseYear / 10) * 10 : null;
-        if (decade === null || !event.systemConfigs.decadeFilter.includes(decade)) {
-            return res.status(403).json({ error: "That song's decade isn't part of tonight's theme." });
+        const lastRequestAt = event.voterLastRequestAt[voterId] || 0;
+        if (Date.now() - lastRequestAt < MIN_REQUEST_INTERVAL_MS) {
+            return res.status(429).json({ error: "Please slow down." });
         }
-    }
-    if (event.systemConfigs.genreFilter && event.systemConfigs.genreFilter.length > 0) {
-        const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
-        const artistGenres = genresByArtist.get(primaryArtistId) || [];
-        const allowedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
-        const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
-        if (!matches) {
-            return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
+        event.voterLastRequestAt[voterId] = Date.now();
+
+        if (!/^[A-Za-z0-9]{22}$/.test(track.id)) {
+            return res.status(400).json({ error: "Invalid track ID." });
         }
-    }
 
-    const creditState = getOrCreateVoterCreditState(event, voterId, modeConfig.maxCredits);
-    refillVoterCredits(creditState, modeConfig.maxCredits, modeConfig.countdownLength);
-    if (creditState.available <= 0) {
-        return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
-    }
-    creditState.available -= 1;
-
-    const requesterName = (typeof username === 'string' && username.trim() !== '')
-        ? username.trim().slice(0, 30)
-        : 'Anonymous';
-
-    const trackId = verifiedTrack.id;
-
-    const existingTrack = event.activeQueue.find(t => t.id === trackId);
-    if (existingTrack) {
-        if (!existingTrack.upvoters.includes('system-generated')) {
-            existingTrack.upvoters.push('system-generated');
+        let verifiedTrack;
+        let releaseYear = null;
+        let primaryArtistId = null;
+        try {
+            if (!spotifyAccessToken) await getSpotifyToken();
+            const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(track.id)}`, {
+                headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+            });
+            if (!lookupRes.ok) return res.status(400).json({ error: "Track not found on Spotify." });
+            const t = await lookupRes.json();
+            if (!t || !t.id) return res.status(400).json({ error: "Track not found on Spotify." });
+            verifiedTrack = {
+                id: t.id,
+                name: t.name,
+                artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+                artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+                explicit: t.explicit || false,
+                duration: formatDuration(t.duration_ms || 0)
+            };
+            releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
+            primaryArtistId = t.artists?.[0]?.id || null;
+        } catch (err) {
+            return res.status(500).json({ error: "Could not verify track with Spotify." });
         }
-        if (!existingTrack.requesters) existingTrack.requesters = [];
-        existingTrack.requesters.push(requesterName);
-    } else {
-        event.activeQueue.push({
-            id: trackId,
+
+        if (event.systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
+            return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+        }
+
+        if (event.systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
+            return res.status(403).json({ error: "Only radio edits are currently allowed - try searching for the standard version." });
+        }
+
+        if (event.systemConfigs.decadeFilter && event.systemConfigs.decadeFilter.length > 0) {
+            const decade = releaseYear ? Math.floor(releaseYear / 10) * 10 : null;
+            if (decade === null || !event.systemConfigs.decadeFilter.includes(decade)) {
+                return res.status(403).json({ error: "That song's decade isn't part of tonight's theme." });
+            }
+        }
+        if (event.systemConfigs.genreFilter && event.systemConfigs.genreFilter.length > 0) {
+            const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
+            const artistGenres = genresByArtist.get(primaryArtistId) || [];
+            const allowedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+            const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
+            if (!matches) {
+                return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
+            }
+        }
+
+        const creditState = getOrCreateVoterCreditState(event, voterId, modeConfig.maxCredits);
+        refillVoterCredits(creditState, modeConfig.maxCredits, modeConfig.countdownLength);
+        if (creditState.available <= 0) {
+            return res.status(429).json({ error: "You are out of credits! Wait for the regeneration cycle." });
+        }
+        creditState.available -= 1;
+
+        const requesterName = (typeof username === 'string' && username.trim() !== '')
+            ? username.trim().slice(0, 30)
+            : 'Anonymous';
+
+        const trackId = verifiedTrack.id;
+
+        const existingTrack = event.activeQueue.find(t => t.id === trackId);
+        if (existingTrack) {
+            if (!existingTrack.upvoters.includes('system-generated')) {
+                existingTrack.upvoters.push('system-generated');
+            }
+            if (!existingTrack.requesters) existingTrack.requesters = [];
+            existingTrack.requesters.push(requesterName);
+        } else {
+            event.activeQueue.push({
+                id: trackId,
+                title: verifiedTrack.name,
+                artist: verifiedTrack.artist,
+                artwork: verifiedTrack.artwork,
+                explicit: verifiedTrack.explicit,
+                duration: verifiedTrack.duration,
+                upvoters: [],
+                downvoters: [],
+                requesters: [requesterName]
+            });
+            if (event.systemConfigs.spotifyAutoQueueEnabled) {
+                queueTrackOnSpotify(event, trackId);
+            }
+        }
+
+        event.requestLog.push({
+            trackId,
             title: verifiedTrack.name,
             artist: verifiedTrack.artist,
             artwork: verifiedTrack.artwork,
             explicit: verifiedTrack.explicit,
-            duration: verifiedTrack.duration,
-            upvoters: [],
-            downvoters: [],
-            requesters: [requesterName]
+            voterId,
+            status: 'queued',
+            requestedAt: Date.now()
         });
-        if (event.systemConfigs.spotifyAutoQueueEnabled) {
-            queueTrackOnSpotify(event, trackId);
-        }
-    }
+        if (event.requestLog.length > 2000) event.requestLog = event.requestLog.slice(-2000);
 
-    event.requestLog.push({
-        trackId,
-        title: verifiedTrack.name,
-        artist: verifiedTrack.artist,
-        artwork: verifiedTrack.artwork,
-        explicit: verifiedTrack.explicit,
-        voterId,
-        status: 'queued',
-        requestedAt: Date.now()
-    });
-    if (event.requestLog.length > 2000) event.requestLog = event.requestLog.slice(-2000);
+        events.scheduleSave(event.slug);
+        res.json({ success: true });
+    };
+}
 
-    events.scheduleSave(event.slug);
-    res.json({ success: true });
-});
+app.post('/e/:slug/api/request', voterIdentityMiddleware, buildRequestHandler(false));
+app.post('/e/:slug/api/kiosk-request', voterIdentityMiddleware, buildRequestHandler(true));
 
 app.post('/e/:slug/api/vote', voterIdentityMiddleware, (req, res) => {
     const event = req.event;
@@ -1166,8 +1256,12 @@ app.get('*', (req, res) => {
 });
 
 // Flush any debounced-but-not-yet-written event saves on shutdown.
-process.on('SIGTERM', () => { events.flushAllSaves(); process.exit(0); });
-process.on('SIGINT', () => { events.flushAllSaves(); process.exit(0); });
+async function shutdown() {
+    await events.flushAllSaves();
+    process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 app.listen(PORT, async () => {
     console.log(`[SERVER] Running on port ${PORT}`);
