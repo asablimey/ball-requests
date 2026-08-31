@@ -907,6 +907,22 @@
                 .replace(/'/g, '&#39;');
         }
 
+        // Artwork URLs come from Spotify (trusted) but were being inserted into
+        // <img src="..."> attributes with no validation at all. This only allows
+        // actual http(s) URLs through - anything else (e.g. a stray quote that
+        // could break out of the attribute, or a javascript: URL) falls back to
+        // the same placeholder used elsewhere instead of being trusted blindly.
+        function safeImageUrl(url) {
+            if (typeof url !== 'string') return 'https://picsum.photos/48';
+            try {
+                const parsed = new URL(url, window.location.origin);
+                if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return 'https://picsum.photos/48';
+                return escapeHtml(parsed.href);
+            } catch (e) {
+                return 'https://picsum.photos/48';
+            }
+        }
+
         let availableCredits = 3;
         let maxCredits = 3;
         let searchTimeout = null;
@@ -1085,7 +1101,7 @@
                 return `
                     <div class="song-row">
                         <div class="song-details">
-                            <img src="${song.artwork}">
+                            <img src="${safeImageUrl(song.artwork)}">
                             <div class="text-block">
                                 <div class="title-wrapper">
                                     <p class="song-title">${escapeHtml(song.title)}</p>
@@ -1154,7 +1170,7 @@
                     display.innerHTML = data.tracks.map((track, index) => `
                         <div class="song-row">
                             <div class="song-details">
-                                <img src="${track.artwork}">
+                                <img src="${safeImageUrl(track.artwork)}">
                                 <div class="text-block">
                                     <div class="title-wrapper">
                                         <p class="song-title">${escapeHtml(track.name)}</p>
@@ -1432,7 +1448,7 @@
 
                 body.innerHTML = requests.map(r => `
                     <div class="my-request-row">
-                        <img src="${r.artwork}">
+                        <img src="${safeImageUrl(r.artwork)}">
                         <div class="my-request-text">
                             <p class="my-request-title">${escapeHtml(r.title)}</p>
                             <p class="my-request-artist">${escapeHtml(r.artist)}</p>
@@ -1485,7 +1501,7 @@
 
                 body.innerHTML = playlists.map(pl => `
                     <div class="playlist-row" onclick="showPlaylistTracks('${pl.id}', ${JSON.stringify(pl.name).replace(/"/g, '&quot;')})">
-                        <img src="${pl.images?.[0]?.url || ''}">
+                        <img src="${safeImageUrl(pl.images?.[0]?.url)}">
                         <div>
                             <p class="pl-name">${pl.name}</p>
                             <p class="pl-count">${pl.items?.total ?? pl.tracks?.total ?? 0} tracks</p>
@@ -1550,7 +1566,7 @@
                 body.innerHTML = tracks.map((t, index) => `
                     <div class="song-row" style="margin-bottom: 8px;">
                         <div class="song-details">
-                            <img src="${t.album?.images?.[0]?.url || ''}">
+                            <img src="${safeImageUrl(t.album?.images?.[0]?.url)}">
                             <div class="text-block">
                                 <div class="title-wrapper">
                                     <p class="song-title">${escapeHtml(t.name)}</p>
@@ -1646,7 +1662,7 @@
             }
             listEl.innerHTML = upcoming.map(t => `
                 <div class="now-playing-queue-row">
-                    <img src="${t.artwork || ''}">
+                    <img src="${safeImageUrl(t.artwork)}">
                     <div class="now-playing-queue-row-text">
                         <p class="now-playing-queue-row-title">${(t.title || '').replace(/</g, '&lt;')}</p>
                         <p class="now-playing-queue-row-artist">${(t.artist || '').replace(/</g, '&lt;')}</p>
