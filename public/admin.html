@@ -178,6 +178,31 @@
         }
         .settings-card.danger-zone { border-color: rgba(233, 20, 41, 0.35); }
 
+        .qr-card-body {
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .qr-code-box {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            width: 176px;
+            height: 176px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .qr-card-controls { flex: 1 1 260px; min-width: 220px; display: flex; flex-direction: column; gap: 14px; }
+        #guest-url-display { cursor: pointer; }
+        .qr-card-controls .toggle-btn {
+            padding: 10px 18px;
+            font-size: 0.85rem;
+            box-shadow: none;
+        }
+
         .toggle-btn { 
             padding: 14px 32px; font-weight: 700; border-radius: 50px; border: none; cursor: pointer; font-size: 1rem; 
             transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
@@ -711,6 +736,29 @@
             <h2>Settings</h2>
 
             <div class="settings-card">
+                <div class="settings-section-label">Guest QR Code</div>
+                <div class="qr-card-body">
+                    <div id="guest-qr-code" class="qr-code-box"></div>
+                    <div class="qr-card-controls">
+                        <div class="input-group" style="width: 100%;">
+                            <label>Guest Link</label>
+                            <input type="text" id="guest-url-display" readonly onclick="this.select()">
+                        </div>
+                        <div class="control-bar">
+                            <button class="toggle-btn neutral-status" onclick="copyGuestUrl()">Copy Link</button>
+                            <button class="toggle-btn neutral-status" onclick="downloadGuestQR()">Download QR</button>
+                            <button class="toggle-btn neutral-status" onclick="printGuestQR()">Print QR</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                    Guests scan this to open the request page directly - no typing a URL. Generated locally in your
+                    browser from the event link, so nothing about your event is sent to a third party to make it.
+                    Print it onto a table tent or poster before doors open.
+                </p>
+            </div>
+
+            <div class="settings-card">
                 <div class="settings-section-label">Access Controls</div>
                 <div class="control-bar">
                     <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
@@ -974,6 +1022,7 @@ async function verifyPassword() {
                     isAuthorized = true;
                     document.getElementById('admin-lock-screen').style.display = 'none';
                     updateDashboard();
+                    renderGuestQR();
                     return;
                 }
             } catch (e) { /* fall through to error state below */ }
@@ -1025,6 +1074,100 @@ async function verifyPassword() {
         // is never forgotten on a new fetch.
         function adminHeaders(extra) {
             return Object.assign({ 'x-admin-password': adminPassword }, extra || {});
+        }
+
+        // Guest link is just origin + /e/:slug - the plain guest page, not
+        // /admin. Built once and reused by the QR render, copy, download,
+        // and print helpers below so there's a single source of truth.
+        function guestUrl() {
+            return `${location.origin}/e/${EVENT_SLUG}`;
+        }
+
+        let guestQrInstance = null;
+
+        // Renders (or re-renders) the QR code into #guest-qr-code using the
+        // qrcodejs library loaded at the bottom of the page. Entirely client-side:
+        // no network request is made to generate the code, so nothing about the
+        // event leaves the DJ's own browser just to make this image.
+        function renderGuestQR() {
+            const url = guestUrl();
+            const urlField = document.getElementById('guest-url-display');
+            if (urlField) urlField.value = url;
+
+            const container = document.getElementById('guest-qr-code');
+            if (!container || typeof QRCode === 'undefined') return;
+            container.innerHTML = '';
+            guestQrInstance = new QRCode(container, {
+                text: url,
+                width: 152,
+                height: 152,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M
+            });
+        }
+
+        async function copyGuestUrl() {
+            const url = guestUrl();
+            try {
+                await navigator.clipboard.writeText(url);
+                showToast('Guest link copied.', 'success');
+            } catch (e) {
+                // Clipboard API can fail without HTTPS/permissions - fall back to
+                // a manual select so the DJ can still copy it themselves.
+                const field = document.getElementById('guest-url-display');
+                if (field) { field.focus(); field.select(); }
+                showToast('Could not auto-copy - link is selected, press Ctrl/Cmd+C.', 'error');
+            }
+        }
+
+        // qrcodejs renders onto an internal <canvas> (or an <img> fallback in
+        // browsers without canvas support) inside the container - grab whichever
+        // one is actually present and export that.
+        function downloadGuestQR() {
+            const container = document.getElementById('guest-qr-code');
+            const canvas = container?.querySelector('canvas');
+            const img = container?.querySelector('img');
+            const dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
+            if (!dataUrl) { showToast('QR code not ready yet.', 'error'); return; }
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = `${EVENT_SLUG || 'event'}-qr.png`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        // Opens a small dedicated print view instead of calling window.print()
+        // on the whole dashboard - a DJ printing this wants a clean poster-style
+        // page, not the entire admin UI with dark backgrounds and every tab's CSS.
+        function printGuestQR() {
+            const container = document.getElementById('guest-qr-code');
+            const canvas = container?.querySelector('canvas');
+            const img = container?.querySelector('img');
+            const dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
+            if (!dataUrl) { showToast('QR code not ready yet.', 'error'); return; }
+
+            const eventName = document.getElementById('event-name-header')?.innerText || 'Request a Song';
+            const win = window.open('', '_blank');
+            if (!win) { showToast('Pop-up blocked - allow pop-ups to print.', 'error'); return; }
+            win.document.write(`
+                <html><head><title>${escapeHtml(eventName)} - Guest QR</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 60px 20px; }
+                    h1 { font-size: 1.6rem; margin-bottom: 4px; }
+                    p { color: #555; margin-top: 0; }
+                    img { width: 320px; height: 320px; margin: 30px 0; }
+                </style>
+                </head><body>
+                    <h1>${escapeHtml(eventName)}</h1>
+                    <p>Scan to request a song</p>
+                    <img src="${dataUrl}">
+                    <p style="font-size:0.8rem;">${escapeHtml(guestUrl())}</p>
+                    <script>window.onload = () => window.print();</script>
+                </body></html>
+            `);
+            win.document.close();
         }
 
         function renderFilterChips() {
@@ -1697,5 +1840,8 @@ async function verifyPassword() {
         setInterval(pollNowPlaying, 4000);
     </script>
 
+    <!-- Renders the guest QR code entirely client-side (canvas-based, no data
+         sent anywhere) - see renderGuestQR() in the script above. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </body>
 </html>
