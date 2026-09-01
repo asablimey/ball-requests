@@ -83,7 +83,8 @@ function blankEventState(slug, eventName, adminPasswordHash) {
         cachedNowPlaying: {
             connected: false, isPlaying: false, trackId: null, title: null,
             artist: null, artwork: null, progressMs: 0, durationMs: 0,
-            updatedAt: Date.now(), upcoming: []
+            updatedAt: Date.now(), upcoming: [],
+            deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off'
         }
     };
 }
