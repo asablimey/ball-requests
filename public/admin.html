@@ -302,6 +302,63 @@
         .open-status { background-color: var(--spotify-green); color: white; }
         .closed-status { background-color: var(--red-action); color: white; }
 
+        /* PLAYBACK TAB */
+        .playback-panel { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+        .playback-artwork {
+            width: 220px; height: 220px; border-radius: 12px; object-fit: cover;
+            background: var(--card-bg); box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .playback-title { font-size: 1.4rem; font-weight: 800; margin: 0; }
+        .playback-artist { font-size: 1rem; color: #a7a7a7; margin: 4px 0 0 0; }
+        .playback-device { font-size: 0.8rem; color: #666; margin: 6px 0 0 0; }
+
+        .playback-progress-wrap { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 10px; }
+        .playback-progress-wrap span { font-size: 0.75rem; color: #888; min-width: 36px; }
+        .playback-progress-wrap input[type="range"] { flex: 1; }
+
+        .playback-transport { display: flex; align-items: center; justify-content: center; gap: 18px; }
+        .playback-icon-btn {
+            background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 50%;
+            width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.15s ease;
+        }
+        .playback-icon-btn:hover { border-color: var(--spotify-green); }
+        .playback-icon-btn:active { transform: scale(0.93); }
+        .playback-icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
+        .playback-icon-btn.playback-play-pause { width: 60px; height: 60px; background-color: white; color: black; }
+        .playback-icon-btn.playback-play-pause:hover { background-color: var(--spotify-green); color: white; }
+        .playback-icon-btn.playback-play-pause svg { width: 26px; height: 26px; }
+        .playback-icon-btn.toggled-on { background-color: var(--spotify-green); border-color: var(--spotify-green); }
+
+        .playback-volume-row { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 12px; }
+        .playback-volume-row svg { width: 20px; height: 20px; fill: #a7a7a7; flex-shrink: 0; }
+        .playback-volume-row input[type="range"] { flex: 1; }
+
+        input[type="range"] {
+            -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+            background: #333; outline: none; cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+            background: var(--spotify-green); cursor: pointer; border: none;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 14px; height: 14px; border-radius: 50%; background: var(--spotify-green); cursor: pointer; border: none;
+        }
+
+        .playback-repeat-row { display: flex; gap: 8px; }
+
+        .playback-disconnected { color: #a7a7a7; padding: 40px 20px; }
+        .playback-disconnected a { color: var(--spotify-green); }
+
+        .playback-upcoming { width: 100%; max-width: 460px; text-align: left; margin-top: 8px; }
+        .playback-upcoming h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; color: #a7a7a7; margin: 0 0 10px 0; }
+        .playback-upcoming-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #232323; }
+        .playback-upcoming-row img { width: 34px; height: 34px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .playback-upcoming-row .text-block { min-width: 0; }
+        .playback-upcoming-row .up-title { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .playback-upcoming-row .up-artist { font-size: 0.75rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
         /* TAB NAVIGATION STYLES */
         .tab-bar {
             display: flex;
@@ -718,10 +775,68 @@
     </div>
 
     <div class="tab-bar">
+        <button id="tab-btn-playback" class="tab-button" onclick="switchTab('playback')">Playback</button>
         <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
         <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
         <button id="tab-btn-stats" class="tab-button" onclick="switchTab('stats')">Stats</button>
+    </div>
+
+    <div id="tab-panel-playback" class="tab-content">
+        <div class="panel">
+            <h2>Playback</h2>
+            <div id="playback-connected-view" class="playback-panel" style="display:none;">
+                <img class="playback-artwork" id="playback-artwork" src="" alt="">
+                <div>
+                    <p class="playback-title" id="playback-title"></p>
+                    <p class="playback-artist" id="playback-artist"></p>
+                    <p class="playback-device" id="playback-device"></p>
+                </div>
+
+                <div class="playback-progress-wrap">
+                    <span id="playback-elapsed">0:00</span>
+                    <input type="range" id="playback-seek" min="0" max="1000" value="0"
+                        onmousedown="isDraggingSeek = true" ontouchstart="isDraggingSeek = true"
+                        onchange="onSeekSliderChange(this)">
+                    <span id="playback-duration">0:00</span>
+                </div>
+
+                <div class="playback-transport">
+                    <button class="playback-icon-btn" id="playback-shuffle-btn" onclick="togglePlaybackShuffle()" title="Shuffle">
+                        <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.42 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+                    </button>
+                    <button class="playback-icon-btn" onclick="playbackCommand('previous')" title="Previous">
+                        <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                    </button>
+                    <button class="playback-icon-btn playback-play-pause" id="playback-play-pause-btn" onclick="togglePlayPause()" title="Play/Pause">
+                        <svg id="playback-play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <svg id="playback-pause-icon" viewBox="0 0 24 24" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </button>
+                    <button class="playback-icon-btn" onclick="playbackCommand('next')" title="Next">
+                        <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                    </button>
+                    <button class="playback-icon-btn" id="playback-repeat-btn" onclick="cyclePlaybackRepeat()" title="Repeat">
+                        <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+                    </button>
+                </div>
+
+                <div class="playback-volume-row">
+                    <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    <input type="range" id="playback-volume" min="0" max="100" value="50"
+                        onmousedown="isDraggingVolume = true" ontouchstart="isDraggingVolume = true"
+                        oninput="onVolumeSliderInput(this)" onchange="onVolumeSliderChange(this); isDraggingVolume = false">
+                    <span id="playback-volume-label" style="font-size:0.8rem; color:#888; min-width:28px;">50%</span>
+                </div>
+
+                <div class="playback-upcoming" id="playback-upcoming-wrap" style="display:none;">
+                    <h3>Up Next (Spotify Queue)</h3>
+                    <div id="playback-upcoming-list"></div>
+                </div>
+            </div>
+            <div id="playback-disconnected-view" class="playback-disconnected">
+                Connect the DJ Spotify account under <strong>Settings → Spotify</strong> to control playback from here.
+            </div>
+        </div>
     </div>
 
     <div id="tab-panel-queue" class="tab-content active-content">
@@ -1034,7 +1149,7 @@
         // chip selection before they hit "Save Filters".
         let filtersInitialized = false;
 
-        const TAB_NAMES = ['queue', 'history', 'settings', 'stats'];
+        const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats'];
 
         // Tab selection switching algorithm
         function switchTab(targetTab) {
@@ -1856,6 +1971,8 @@ async function verifyPassword() {
             const bar = document.getElementById('now-playing-bar');
             if (!bar) return;
 
+            updatePlaybackTab(data);
+
             if (!data || !data.connected || !data.title) {
                 bar.classList.remove('is-visible');
                 document.body.classList.remove('has-now-playing-bar');
@@ -1894,6 +2011,145 @@ async function verifyPassword() {
             // Spotify's live "up next" now shows inline in the main queue tab.
             spotifyUpcomingQueue = data.upcoming || [];
             renderQueueList();
+        }
+
+        // ============================================================
+        // Playback tab - real transport controls, riding the same DJ
+        // Spotify connection that already powers auto-queue/switch-playlist.
+        // ============================================================
+        let isDraggingSeek = false;
+        let isDraggingVolume = false;
+        let playbackDurationMs = 0;
+
+        function formatMsToClock(ms) {
+            if (!ms && ms !== 0) return '0:00';
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+
+        // Fire-and-forget-ish: sends the command, then immediately re-polls
+        // now-playing so the UI reflects the new state without waiting for
+        // the next 4s tick. Errors surface as a toast rather than silently
+        // failing, since "nothing happened" otherwise looks like a bug.
+        async function playbackCommand(action, body) {
+            try {
+                const res = await fetch(eventUrl(`/api/admin/playback/${action}`), {
+                    method: 'POST',
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify(body || {})
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showToast(data.error || 'Playback command failed.');
+                    return false;
+                }
+                setTimeout(pollNowPlaying, 300);
+                return true;
+            } catch (e) {
+                showToast('Could not reach the server.');
+                return false;
+            }
+        }
+
+        function togglePlayPause() {
+            const isPlaying = document.getElementById('playback-pause-icon').style.display !== 'none';
+            playbackCommand(isPlaying ? 'pause' : 'play');
+        }
+
+        function togglePlaybackShuffle() {
+            const btn = document.getElementById('playback-shuffle-btn');
+            const currentlyOn = btn.classList.contains('toggled-on');
+            playbackCommand('shuffle', { enabled: !currentlyOn });
+        }
+
+        const REPEAT_CYCLE = ['off', 'context', 'track'];
+        function cyclePlaybackRepeat() {
+            const btn = document.getElementById('playback-repeat-btn');
+            const current = btn.dataset.repeatState || 'off';
+            const next = REPEAT_CYCLE[(REPEAT_CYCLE.indexOf(current) + 1) % REPEAT_CYCLE.length];
+            playbackCommand('repeat', { mode: next });
+        }
+
+        function onVolumeSliderInput(el) {
+            document.getElementById('playback-volume-label').textContent = el.value + '%';
+        }
+        function onVolumeSliderChange(el) {
+            playbackCommand('volume', { volumePercent: parseInt(el.value) });
+        }
+
+        function onSeekSliderChange(el) {
+            if (!playbackDurationMs) { isDraggingSeek = false; return; }
+            const positionMs = Math.round((parseInt(el.value) / 1000) * playbackDurationMs);
+            playbackCommand('seek', { positionMs });
+            isDraggingSeek = false;
+        }
+
+        function renderPlaybackUpcoming(upcoming) {
+            const wrap = document.getElementById('playback-upcoming-wrap');
+            const list = document.getElementById('playback-upcoming-list');
+            if (!upcoming || upcoming.length === 0) { wrap.style.display = 'none'; return; }
+            wrap.style.display = 'block';
+            list.innerHTML = upcoming.slice(0, 8).map(t => `
+                <div class="playback-upcoming-row">
+                    <img src="${safeImageUrl(t.artwork)}">
+                    <div class="text-block">
+                        <div class="up-title">${escapeHtml(t.title)}</div>
+                        <div class="up-artist">${escapeHtml(t.artist)}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Called from updateNowPlayingBar() on every 4s poll - keeps the tab
+        // in sync even when it isn't the active tab, so switching to it never
+        // shows a stale frame first.
+        function updatePlaybackTab(data) {
+            const connectedView = document.getElementById('playback-connected-view');
+            const disconnectedView = document.getElementById('playback-disconnected-view');
+
+            if (!data || !data.connected) {
+                connectedView.style.display = 'none';
+                disconnectedView.style.display = 'block';
+                return;
+            }
+            disconnectedView.style.display = 'none';
+            connectedView.style.display = 'flex';
+
+            if (!data.title) {
+                document.getElementById('playback-title').textContent = 'Nothing playing right now';
+                document.getElementById('playback-artist').textContent = '';
+                document.getElementById('playback-artwork').src = '';
+            } else {
+                document.getElementById('playback-artwork').src = safeImageUrl(data.artwork);
+                document.getElementById('playback-title').textContent = data.title;
+                document.getElementById('playback-artist').textContent = data.artist || '';
+            }
+            document.getElementById('playback-device').textContent = data.deviceName ? `Playing on ${data.deviceName}` : '';
+
+            document.getElementById('playback-play-icon').style.display = data.isPlaying ? 'none' : '';
+            document.getElementById('playback-pause-icon').style.display = data.isPlaying ? '' : 'none';
+
+            playbackDurationMs = data.durationMs || 0;
+            document.getElementById('playback-duration').textContent = formatMsToClock(playbackDurationMs);
+            if (!isDraggingSeek) {
+                document.getElementById('playback-elapsed').textContent = formatMsToClock(data.progressMs || 0);
+                const seekEl = document.getElementById('playback-seek');
+                seekEl.value = playbackDurationMs ? Math.round(((data.progressMs || 0) / playbackDurationMs) * 1000) : 0;
+            }
+
+            if (!isDraggingVolume && typeof data.volumePercent === 'number') {
+                document.getElementById('playback-volume').value = data.volumePercent;
+                document.getElementById('playback-volume-label').textContent = data.volumePercent + '%';
+            }
+
+            document.getElementById('playback-shuffle-btn').classList.toggle('toggled-on', !!data.shuffleState);
+            const repeatBtn = document.getElementById('playback-repeat-btn');
+            repeatBtn.dataset.repeatState = data.repeatState || 'off';
+            repeatBtn.classList.toggle('toggled-on', (data.repeatState || 'off') !== 'off');
+
+            renderPlaybackUpcoming(data.upcoming);
         }
 
         async function pollNowPlaying() {
