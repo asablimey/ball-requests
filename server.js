@@ -239,6 +239,31 @@ async function switchDjPlaylist(event, playlistUri) {
     }
 }
 
+// Shared by every transport-control route below (play/pause/next/previous/
+// volume/shuffle/repeat) - same token lookup and same 404 (no active
+// device)/403 (not Premium) handling switchDjPlaylist already uses, just
+// generalized to any method/path/query on the /me/player resource instead
+// of only the "start context playback" call.
+async function spotifyPlayerCommand(event, method, playerPath, query = '') {
+    const token = await getDjAccessToken(event);
+    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
+    try {
+        const res = await fetch(`https://api.spotify.com/v1/me/player${playerPath}${query}`, {
+            method,
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 204 || res.status === 200) return { success: true };
+        if (res.status === 404) return { success: false, error: 'No active device - open Spotify and play something first.' };
+        if (res.status === 403) return { success: false, error: 'Forbidden - this usually means the account is not Spotify Premium.' };
+        const body = await res.text();
+        console.error(`[SPOTIFY PLAYER] (${event.slug}) ${method} ${playerPath} failed`, res.status, body);
+        return { success: false, error: `Spotify rejected the request (status ${res.status}).` };
+    } catch (err) {
+        console.error(`[SPOTIFY PLAYER] (${event.slug}) ${method} ${playerPath} request failed:`, err.message);
+        return { success: false, error: 'Request to Spotify failed.' };
+    }
+}
+
 function isQueueFull(event) {
     return event.systemConfigs.queueCapEnabled && event.activeQueue.length >= event.systemConfigs.maxQueueLength;
 }
@@ -1065,6 +1090,63 @@ app.post('/e/:slug/api/admin/switch-playlist', async (req, res) => {
     res.status(result.success ? 200 : 400).json(result);
 });
 
+// --- DJ transport controls ---
+// All of these ride on the same user-modify-playback-state scope already
+// granted by the existing "Connect Spotify" flow (see DJ_QUEUE_SCOPES above)
+// - no new auth, no new Spotify app review, just routes that were never
+// wired up to that scope's other endpoints.
+app.post('/e/:slug/api/admin/playback/play', async (req, res) => {
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/play');
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/pause', async (req, res) => {
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/pause');
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/next', async (req, res) => {
+    const result = await spotifyPlayerCommand(req.event, 'POST', '/next');
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/previous', async (req, res) => {
+    const result = await spotifyPlayerCommand(req.event, 'POST', '/previous');
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/volume', async (req, res) => {
+    const vol = parseInt(req.body.volumePercent);
+    if (!Number.isInteger(vol) || vol < 0 || vol > 100) {
+        return res.status(400).json({ error: 'volumePercent must be an integer 0-100.' });
+    }
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/volume', `?volume_percent=${vol}`);
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/shuffle', async (req, res) => {
+    if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true/false.' });
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/shuffle', `?state=${req.body.enabled}`);
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/playback/repeat', async (req, res) => {
+    const mode = req.body.mode;
+    if (!['track', 'context', 'off'].includes(mode)) return res.status(400).json({ error: 'mode must be track, context, or off.' });
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/repeat', `?state=${mode}`);
+    res.status(result.success ? 200 : 400).json(result);
+});
+
+// Seeking needs the caller to know roughly where they clicked - client sends
+// the target position, we just relay it. Spotify clamps out-of-range values
+// itself rather than erroring, so no bounds-checking needed here.
+app.post('/e/:slug/api/admin/playback/seek', async (req, res) => {
+    const positionMs = parseInt(req.body.positionMs);
+    if (!Number.isInteger(positionMs) || positionMs < 0) return res.status(400).json({ error: 'positionMs must be a non-negative integer.' });
+    const result = await spotifyPlayerCommand(req.event, 'PUT', '/seek', `?position_ms=${positionMs}`);
+    res.status(result.success ? 200 : 400).json(result);
+});
+
 app.post('/e/:slug/api/admin/toggle', (req, res) => {
     const { allow } = req.body;
     if (typeof allow === 'boolean') req.event.systemConfigs.requestsAllowed = allow;
@@ -1162,15 +1244,18 @@ app.post('/e/:slug/api/admin/action', (req, res) => {
 async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
     if (!token) {
-        event.cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [] };
+        event.cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
         return;
     }
     try {
-        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+        // Full player state (not just /currently-playing) - this is the one call
+        // that also returns device name/volume, shuffle_state, and repeat_state,
+        // which the admin playback tab needs to show accurate button/slider state.
+        const res = await fetch('https://api.spotify.com/v1/me/player', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.status === 204 || res.status === 404) {
-            event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [] };
+            event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
             return;
         }
         if (!res.ok) return; // leave the last known cache in place on a transient error
@@ -1205,7 +1290,11 @@ async function syncNowPlayingForEvent(event) {
             progressMs: data.progress_ms || 0,
             durationMs: item?.duration_ms || 0,
             updatedAt: Date.now(),
-            upcoming
+            upcoming,
+            deviceName: data.device?.name || null,
+            volumePercent: typeof data.device?.volume_percent === 'number' ? data.device.volume_percent : null,
+            shuffleState: !!data.shuffle_state,
+            repeatState: data.repeat_state || 'off'
         };
 
         const nowPlayingId = item?.id;
