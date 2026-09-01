@@ -178,6 +178,52 @@
         }
         .settings-card.danger-zone { border-color: rgba(233, 20, 41, 0.35); }
 
+        /* Settings tab: sidebar categories instead of one long flat list of
+           cards - was 10 cards in a single scroll before this, no grouping
+           at all. Sidebar swaps which category's cards are shown rather
+           than showing all of them at once. */
+        .settings-layout {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+        }
+        .settings-sidebar {
+            width: 190px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            position: sticky;
+            top: 20px;
+        }
+        .settings-nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #a7a7a7;
+            font-size: 0.95rem;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+            text-align: left;
+            width: 100%;
+            box-sizing: border-box;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+        .settings-nav-item:hover { background: var(--card-bg); color: white; }
+        .settings-nav-item.active-nav { background: var(--spotify-green); color: white; }
+        .settings-nav-item.danger-nav { color: #e97b7b; }
+        .settings-nav-item.danger-nav:hover { background: var(--card-bg); color: #e97b7b; }
+        .settings-nav-item.danger-nav.active-nav { background: var(--red-action); color: white; }
+        .settings-nav-item .nav-icon { font-size: 1rem; flex-shrink: 0; }
+
+        .settings-content { flex: 1; min-width: 0; }
+        .settings-category-panel { display: none; }
+        .settings-category-panel.active-category { display: block; }
+
         .qr-card-body {
             display: flex;
             gap: 24px;
@@ -550,6 +596,18 @@
             h1 { font-size: 1.8rem; }
             .song-row { flex-direction: column; align-items: flex-start; }
             .actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
+            .settings-layout { flex-direction: column; }
+            .settings-sidebar {
+                flex-direction: row;
+                width: 100%;
+                position: static;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-bottom: 10px;
+                margin-bottom: 16px;
+                border-bottom: 1px solid #282828;
+            }
+            .settings-nav-item { flex-shrink: 0; white-space: nowrap; }
         }
 
         /* Toast notifications - replace blocking alert() popups */
@@ -712,164 +770,197 @@
         <div class="panel">
             <h2>Settings</h2>
 
-            <div class="settings-card">
-                <div class="settings-section-label">Guest QR Code</div>
-                <div class="qr-card-body">
-                    <div id="guest-qr-code" class="qr-code-box"></div>
-                    <div class="qr-card-controls">
-                        <div class="input-group" style="width: 100%;">
-                            <label>Guest Link</label>
-                            <input type="text" id="guest-url-display" readonly onclick="this.select()">
+            <div class="settings-layout">
+                <div class="settings-sidebar">
+                    <button type="button" id="settings-nav-general" class="settings-nav-item active-nav" onclick="switchSettingsCategory('general')">
+                        <span class="nav-icon">⚙️</span>General
+                    </button>
+                    <button type="button" id="settings-nav-access" class="settings-nav-item" onclick="switchSettingsCategory('access')">
+                        <span class="nav-icon">🔓</span>Access &amp; Guests
+                    </button>
+                    <button type="button" id="settings-nav-spotify" class="settings-nav-item" onclick="switchSettingsCategory('spotify')">
+                        <span class="nav-icon">🎧</span>Spotify
+                    </button>
+                    <button type="button" id="settings-nav-kiosk" class="settings-nav-item" onclick="switchSettingsCategory('kiosk')">
+                        <span class="nav-icon">📺</span>Kiosk
+                    </button>
+                    <button type="button" id="settings-nav-danger" class="settings-nav-item danger-nav" onclick="switchSettingsCategory('danger')">
+                        <span class="nav-icon">⚠️</span>Danger Zone
+                    </button>
+                </div>
+
+                <div class="settings-content">
+                    <div id="settings-category-general" class="settings-category-panel active-category">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Guest QR Code</div>
+                            <div class="qr-card-body">
+                                <div id="guest-qr-code" class="qr-code-box"></div>
+                                <div class="qr-card-controls">
+                                    <div class="input-group" style="width: 100%;">
+                                        <label>Guest Link</label>
+                                        <input type="text" id="guest-url-display" readonly onclick="this.select()">
+                                    </div>
+                                    <div class="control-bar">
+                                        <button class="toggle-btn neutral-status" onclick="copyGuestUrl()">Copy Link</button>
+                                        <button class="toggle-btn neutral-status" onclick="downloadGuestQR()">Download QR</button>
+                                        <button class="toggle-btn neutral-status" onclick="printGuestQR()">Print QR</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                Guests scan this to open the request page directly - no typing a URL. Generated locally in your
+                                browser from the event link, so nothing about your event is sent to a third party to make it.
+                                Print it onto a table tent or poster before doors open.
+                            </p>
                         </div>
-                        <div class="control-bar">
-                            <button class="toggle-btn neutral-status" onclick="copyGuestUrl()">Copy Link</button>
-                            <button class="toggle-btn neutral-status" onclick="downloadGuestQR()">Download QR</button>
-                            <button class="toggle-btn neutral-status" onclick="printGuestQR()">Print QR</button>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">System Rules</div>
+                            <div class="event-name-box" style="margin-bottom: 20px;">
+                                <div class="input-group" style="width: 100%;">
+                                    <label>Event Name</label>
+                                    <input type="text" id="input-event-name" placeholder="crowdDJ" maxlength="60" style="width: 100%;">
+                                </div>
+                            </div>
+                            <div class="config-dashboard">
+                                <div class="input-group">
+                                    <label>Max Credit Bank</label>
+                                    <input type="number" id="input-max-credits" min="1">
+                                </div>
+                                <div class="input-group">
+                                    <label>Regen Timer (Secs)</label>
+                                    <input type="number" id="input-countdown" min="5">
+                                </div>
+                                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Export</div>
+                            <div class="control-bar">
+                                <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="settings-category-access" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Access Controls</div>
+                            <div class="control-bar">
+                                <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
+                                <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
+                                <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
+                                <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Queue Length Cap</div>
+                            <div class="config-dashboard">
+                                <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
+                                <div class="input-group">
+                                    <label>Max Queue Length</label>
+                                    <input type="number" id="input-max-queue" min="1" value="50">
+                                </div>
+                                <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
+                                <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
+                            <div class="filter-panel">
+                                <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
+                                <div class="filter-group-label">Genres</div>
+                                <div class="filter-chip-row" id="genre-filter-chips"></div>
+                                <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
+                                <div class="filter-chip-row" id="decade-filter-chips"></div>
+                                <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="settings-category-spotify" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Spotify Queue Relay</div>
+                            <div class="control-bar">
+                                <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
+                                <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                When connected, every newly-accepted request is automatically added to your live Spotify app queue.
+                                This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
+                                device (open Spotify and play something first). Click to (re)connect.
+                            </p>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Fallback Playlist</div>
+                            <div class="config-dashboard">
+                                <div class="input-group" style="width: 100%; max-width: 460px;">
+                                    <label>Spotify Playlist Link</label>
+                                    <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
+                                </div>
+                                <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
+                                Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
+                                replaced. If a request happens to be playing right now, this will interrupt it, so best used
+                                between songs. Guest requests you've explicitly queued aren't affected by this - they still get
+                                added to the queue as normal and play before anything from a playlist.
+                            </p>
+                            <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
+                        </div>
+                    </div>
+
+                    <div id="settings-category-kiosk" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
+                            </p>
+                            <div class="control-bar" style="margin-bottom: 20px;">
+                                <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
+                                <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
+                                <button id="toggle-kiosk-display-only" class="toggle-btn closed-status" onclick="toggleKioskDisplayOnly()">Display-Only Mode: OFF</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: -10px;">
+                                <strong>Display-Only Mode</strong> turns the kiosk page into a full-screen, read-only "now playing" board -
+                                no search, no credits, no voting, just the Live Queue blown up big. Good for a TV or monitor at the venue
+                                instead of a device guests interact with directly.
+                            </p>
+                            <div class="config-dashboard">
+                                <div class="input-group">
+                                    <label>Kiosk Max Credit Bank</label>
+                                    <input type="number" id="input-kiosk-max-credits" min="1">
+                                </div>
+                                <div class="input-group">
+                                    <label>Kiosk Regen Timer (Secs)</label>
+                                    <input type="number" id="input-kiosk-countdown" min="5">
+                                </div>
+                                <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="settings-category-danger" class="settings-category-panel">
+                        <div class="settings-card danger-zone">
+                            <div class="settings-section-label">Danger Zone</div>
+                            <div class="control-bar">
+                                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
+                                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+                            </div>
+                            <div class="control-bar" style="margin-top: 10px;">
+                                <button class="utility-btn" style="background: var(--red-action, #e91429); border-color: var(--red-action, #e91429); color: white;" onclick="closeEvent()">⛔ Close This Event</button>
+                            </div>
+                            <p style="color: #a7a7a7; font-size: 0.8rem; margin: 8px 0 0 0;">Permanently deletes this event and everything in it - queue, history, settings, Spotify connection. This can't be undone, and the URL becomes free for anyone to reuse.</p>
                         </div>
                     </div>
                 </div>
-                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                    Guests scan this to open the request page directly - no typing a URL. Generated locally in your
-                    browser from the event link, so nothing about your event is sent to a third party to make it.
-                    Print it onto a table tent or poster before doors open.
-                </p>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Access Controls</div>
-                <div class="control-bar">
-                    <button id="toggle-requests" class="toggle-btn open-status" onclick="toggleRequests()">Requests: OPEN</button>
-                    <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
-                    <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
-                    <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Spotify Queue Relay</div>
-                <div class="control-bar">
-                    <button id="spotify-relay-status" class="toggle-btn closed-status" onclick="connectDjSpotify()">Checking...</button>
-                    <button id="toggle-spotify-auto-queue" class="toggle-btn open-status" onclick="toggleSpotifyAutoQueue()">Auto-Queue to Spotify: ON</button>
-                </div>
-                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                    When connected, every newly-accepted request is automatically added to your live Spotify app queue.
-                    This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
-                    device (open Spotify and play something first). Click to (re)connect.
-                </p>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Fallback Playlist</div>
-                <div class="config-dashboard">
-                    <div class="input-group" style="width: 100%; max-width: 460px;">
-                        <label>Spotify Playlist Link</label>
-                        <input type="text" id="input-fallback-playlist" placeholder="https://open.spotify.com/playlist/..." style="width: 100%;">
-                    </div>
-                    <button class="save-config-btn" onclick="switchFallbackPlaylist()">Switch Now</button>
-                </div>
-                <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 4px;">
-                    Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
-                    replaced. If a request happens to be playing right now, this will interrupt it, so best used
-                    between songs. Guest requests you've explicitly queued aren't affected by this - they still get
-                    added to the queue as normal and play before anything from a playlist.
-                </p>
-                <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">System Rules</div>
-                <div class="event-name-box" style="margin-bottom: 20px;">
-                    <div class="input-group" style="width: 100%;">
-                        <label>Event Name</label>
-                        <input type="text" id="input-event-name" placeholder="crowdDJ" maxlength="60" style="width: 100%;">
-                    </div>
-                </div>
-                <div class="config-dashboard">
-                    <div class="input-group">
-                        <label>Max Credit Bank</label>
-                        <input type="number" id="input-max-credits" min="1">
-                    </div>
-                    <div class="input-group">
-                        <label>Regen Timer (Secs)</label>
-                        <input type="number" id="input-countdown" min="5">
-                    </div>
-                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Queue Length Cap</div>
-                <div class="config-dashboard">
-                    <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
-                    <div class="input-group">
-                        <label>Max Queue Length</label>
-                        <input type="number" id="input-max-queue" min="1" value="50">
-                    </div>
-                    <button class="save-config-btn" onclick="saveSystemRules()">Update Rules</button>
-                    <div class="queue-cap-status-text" id="queue-cap-status-text"></div>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
-                <div class="filter-panel">
-                    <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
-                    <div class="filter-group-label">Genres</div>
-                    <div class="filter-chip-row" id="genre-filter-chips"></div>
-                    <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
-                    <div class="filter-chip-row" id="decade-filter-chips"></div>
-                    <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Export</div>
-                <div class="control-bar">
-                    <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
-                <p class="settings-card-hint" style="margin-top: 0;">
-                    Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
-                </p>
-                <div class="control-bar" style="margin-bottom: 20px;">
-                    <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
-                    <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
-                    <button id="toggle-kiosk-display-only" class="toggle-btn closed-status" onclick="toggleKioskDisplayOnly()">Display-Only Mode: OFF</button>
-                </div>
-                <p class="settings-card-hint" style="margin-top: -10px;">
-                    <strong>Display-Only Mode</strong> turns the kiosk page into a full-screen, read-only "now playing" board -
-                    no search, no credits, no voting, just the Live Queue blown up big. Good for a TV or monitor at the venue
-                    instead of a device guests interact with directly.
-                </p>
-                <div class="config-dashboard">
-                    <div class="input-group">
-                        <label>Kiosk Max Credit Bank</label>
-                        <input type="number" id="input-kiosk-max-credits" min="1">
-                    </div>
-                    <div class="input-group">
-                        <label>Kiosk Regen Timer (Secs)</label>
-                        <input type="number" id="input-kiosk-countdown" min="5">
-                    </div>
-                    <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
-                </div>
-            </div>
-
-            <div class="settings-card danger-zone">
-                <div class="settings-section-label">Danger Zone</div>
-                <div class="control-bar">
-                    <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-                    <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
-                </div>
-                <div class="control-bar" style="margin-top: 10px;">
-                    <button class="utility-btn" style="background: var(--red-action, #e91429); border-color: var(--red-action, #e91429); color: white;" onclick="closeEvent()">⛔ Close This Event</button>
-                </div>
-                <p style="color: #a7a7a7; font-size: 0.8rem; margin: 8px 0 0 0;">Permanently deletes this event and everything in it - queue, history, settings, Spotify connection. This can't be undone, and the URL becomes free for anyone to reuse.</p>
             </div>
         </div>
     </div>
+
 
     <div id="tab-panel-stats" class="tab-content">
         <div class="panel">
@@ -981,6 +1072,15 @@
                 document.getElementById(`tab-panel-${name}`).classList.toggle('active-content', isActive);
             });
             if (targetTab === 'stats') loadStats();
+        }
+
+        const SETTINGS_CATEGORIES = ['general', 'access', 'spotify', 'kiosk', 'danger'];
+        function switchSettingsCategory(category) {
+            SETTINGS_CATEGORIES.forEach(name => {
+                const isActive = name === category;
+                document.getElementById(`settings-nav-${name}`).classList.toggle('active-nav', isActive);
+                document.getElementById(`settings-category-${name}`).classList.toggle('active-category', isActive);
+            });
         }
 
 let adminPassword = '';
