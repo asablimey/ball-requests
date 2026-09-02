@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
     <title>CrowdDJ</title>
     <style>
         :root {
@@ -678,9 +679,198 @@
         }
         body.has-now-playing-bar { padding-bottom: 76px; }
 
+        /* --- Hamburger menu button (fixed, top right of the screen) --- */
+        .menu-btn {
+            position: fixed;
+            top: max(18px, env(safe-area-inset-top, 18px));
+            right: 18px;
+            z-index: 900;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background-color: var(--panel-bg);
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .menu-btn svg { width: 22px; height: 22px; fill: white; }
+        .menu-btn:hover { border-color: var(--spotify-green); }
+
+        /* --- Sidebar --- */
+        .sidebar-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 950; display: none;
+        }
+        .sidebar-backdrop.is-visible { display: block; }
+        .sidebar-panel {
+            position: fixed; top: 0; right: 0; bottom: 0;
+            width: min(320px, 84vw);
+            background: var(--panel-bg);
+            border-left: 1px solid #282828;
+            z-index: 951;
+            transform: translateX(100%);
+            transition: transform 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .sidebar-panel.is-visible { transform: translateX(0); }
+        .sidebar-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 20px; border-bottom: 1px solid #282828;
+        }
+        .sidebar-header h3 { margin: 0; font-size: 1.1rem; }
+        .sidebar-close-btn { background: none; border: none; color: #a7a7a7; font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
+        .sidebar-close-btn:hover { color: white; }
+        .sidebar-current-venue {
+            padding: 14px 20px; border-bottom: 1px solid #282828;
+            font-size: 0.8rem; color: #a7a7a7;
+        }
+        .sidebar-current-venue strong { display: block; color: white; font-size: 0.95rem; margin-top: 2px; }
+        .sidebar-item {
+            display: flex; align-items: center; gap: 14px;
+            padding: 16px 20px; cursor: pointer; border: none;
+            background: none; color: white; font-size: 0.95rem;
+            font-family: inherit; text-align: left; width: 100%;
+            border-bottom: 1px solid #232323;
+        }
+        .sidebar-item:hover { background-color: var(--card-bg); }
+        .sidebar-item svg { width: 20px; height: 20px; fill: #a7a7a7; flex-shrink: 0; }
+        .sidebar-item span { flex: 1; }
+
+        /* --- Change Venue screen (Venue List / Map) --- */
+        .venue-screen {
+            position: fixed; inset: 0; background: var(--spotify-black);
+            z-index: 960; display: none; flex-direction: column;
+        }
+        .venue-screen.is-visible { display: flex; }
+        .venue-screen-header {
+            display: flex; align-items: center; gap: 12px;
+            padding: 18px 20px; border-bottom: 1px solid #282828; flex-shrink: 0;
+        }
+        .venue-screen-header h3 { margin: 0; font-size: 1.15rem; flex: 1; }
+        .venue-screen-back { background: none; border: none; color: #a7a7a7; cursor: pointer; padding: 4px; display: flex; }
+        .venue-screen-back svg { width: 22px; height: 22px; fill: currentColor; }
+        .venue-tabs { display: flex; border-bottom: 1px solid #282828; flex-shrink: 0; }
+        .venue-tab {
+            flex: 1; text-align: center; padding: 14px; background: none; border: none;
+            color: #a7a7a7; font-weight: 700; font-family: inherit; font-size: 0.95rem;
+            cursor: pointer; border-bottom: 2px solid transparent;
+        }
+        .venue-tab.is-active { color: var(--spotify-green); border-bottom-color: var(--spotify-green); }
+        .venue-tab-content { flex: 1; overflow-y: auto; display: none; }
+        .venue-tab-content.is-active { display: block; }
+
+        .venue-list-item {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; padding: 16px 20px; border-bottom: 1px solid #232323;
+        }
+        .venue-list-item-name { font-weight: 700; font-size: 1rem; }
+        .venue-list-item-sub { color: #a7a7a7; font-size: 0.8rem; margin-top: 2px; }
+        .venue-select-btn {
+            background-color: var(--spotify-green); color: white; border: none;
+            padding: 9px 18px; border-radius: 50px; font-weight: 700; font-size: 0.85rem;
+            font-family: inherit; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+        }
+        .venue-select-btn:hover { filter: brightness(1.1); }
+
+        #venue-map { width: 100%; height: 100%; }
+        .maplibregl-ctrl-attrib a { color: rgba(255,255,255,0.7) !important; }
+
+        /* Small round marker icon on the venue map - same icon as the
+           browser tab favicon, per spec. Plain <img>, not a MapLibre default
+           pin, so it stays a flat circular dot rather than a teardrop. */
+        .venue-map-marker {
+            width: 30px; height: 30px; border-radius: 50%;
+            border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+            cursor: pointer; background: var(--spotify-black) url('/assets/favicon.png') center/70% no-repeat;
+        }
+
+        /* Popup shown when a marker is tapped - venue info on top, the
+           Select Venue button pinned at the bottom of the box. */
+        .venue-popup-box { min-width: 200px; }
+        .venue-popup-name { font-weight: 800; font-size: 1rem; margin: 0 0 4px 0; color: var(--spotify-black); }
+        .venue-popup-sub { font-size: 0.8rem; color: #555; margin: 0 0 12px 0; }
+        .venue-popup-select-btn {
+            display: block; width: 100%; background-color: var(--spotify-green); color: white;
+            border: none; padding: 9px 0; border-radius: 50px; font-weight: 700;
+            font-size: 0.85rem; font-family: inherit; cursor: pointer;
+        }
+        .maplibregl-popup-content { padding: 14px; border-radius: 10px; }
+
+        .venue-empty-msg { color: #a7a7a7; text-align: center; padding: 40px 20px; font-style: italic; }
+
     </style>
 </head>
 <body>
+
+    <!-- Hamburger menu button - fixed top-right of the screen -->
+    <button type="button" class="menu-btn" onclick="openSidebar()" aria-label="Menu">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </button>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+    <div class="sidebar-panel" id="sidebar-panel">
+        <div class="sidebar-header">
+            <h3>Menu</h3>
+            <button class="sidebar-close-btn" onclick="closeSidebar()">✕</button>
+        </div>
+        <div class="sidebar-current-venue">
+            Current venue
+            <strong id="sidebar-current-venue-name">None selected</strong>
+        </div>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); openVenueScreen();">
+            <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+            <span>Change Venue</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); handleSpotifyConnectClick();">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.586 14.424a.622.622 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.622.622 0 1 1-.277-1.215c3.809-.871 7.077-.496 9.712 1.115a.622.622 0 0 1 .207.857zm1.223-2.722a.78.78 0 0 1-1.072.257c-2.688-1.652-6.786-2.131-9.965-1.166a.78.78 0 0 1-.453-1.492c3.632-1.102 8.147-.568 11.233 1.329a.78.78 0 0 1 .257 1.072zm.105-2.835C14.692 9.115 9.375 8.93 6.297 9.885a.936.936 0 1 1-.55-1.79c3.532-1.095 9.404-.882 13.115 1.36a.936.936 0 0 1-.948 1.612z"/></svg>
+            <span id="sidebar-spotify-label">Connect Spotify</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); openPlaylistModal();">
+            <svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>
+            <span>Copy Playlist</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); openMyRequestsModal();">
+            <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-2h2zm0-4h-2V7h2z"/></svg>
+            <span>My Requests</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); openChangeNameModal();">
+            <svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 8 1.34 8 4v2H4v-2c0-2.66 5.3-4 8-4zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>
+            <span>Change Your Name</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); openPrivacyModal();">
+            <svg viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11z"/></svg>
+            <span>Privacy Settings</span>
+        </button>
+        <button type="button" class="sidebar-item" onclick="closeSidebar(); leaveVenue();">
+            <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+            <span>Leave Venue</span>
+        </button>
+    </div>
+
+    <!-- CHANGE VENUE SCREEN -->
+    <div class="venue-screen" id="venue-screen">
+        <div class="venue-screen-header">
+            <button class="venue-screen-back" onclick="closeVenueScreen()" title="Back">
+                <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+            </button>
+            <h3>Change Venue</h3>
+        </div>
+        <div class="venue-tabs">
+            <button class="venue-tab is-active" id="venue-tab-list" onclick="switchVenueTab('list')">Venue List</button>
+            <button class="venue-tab" id="venue-tab-map" onclick="switchVenueTab('map')">Map</button>
+        </div>
+        <div class="venue-tab-content is-active" id="venue-list-content">
+            <p class="venue-empty-msg" id="venue-list-status">Loading venues…</p>
+        </div>
+        <div class="venue-tab-content" id="venue-map-content">
+            <div id="venue-map"></div>
+        </div>
+    </div>
 
     <div class="container">
         <div class="header">
@@ -808,11 +998,197 @@
     </div>
 
     <script>
-        // This page is served at /e/{slug}, so the event's slug is always the
-        // second path segment - every relative API call below goes through
-        // eventUrl() so it hits the right event's data, not the wrong one.
-        const EVENT_SLUG = location.pathname.split('/')[2] || '';
+        // The whole site now lives on one guest URL - there's no more
+        // /e/{slug} in the address bar for guests. Instead the chosen venue's
+        // slug is kept here in memory + localStorage (so it survives a
+        // refresh), and every relative API call still goes through eventUrl()
+        // so it hits the right event's data, not the wrong one. It starts
+        // empty ("no venue selected") until restoreSelectedVenue() runs.
+        let EVENT_SLUG = '';
         function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+        function hasVenueSelected() { return EVENT_SLUG !== ''; }
+
+        // Per-venue localStorage keys. Before this page supported switching
+        // venues in place, each event lived at its own URL path and a guest's
+        // credits/username were (accidentally) shared across every event on
+        // the same origin - switching venues in one tab makes that bug a lot
+        // more visible, so credits are now scoped per-venue. Username stays
+        // global on purpose (same person, same name, wherever they go).
+        function creditsStorageKey() { return `userCredits_${EVENT_SLUG}`; }
+        const SELECTED_VENUE_KEY = 'crowddj_selected_venue';
+
+        // --- Sidebar ---
+        function openSidebar() {
+            document.getElementById('sidebar-backdrop').classList.add('is-visible');
+            document.getElementById('sidebar-panel').classList.add('is-visible');
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar-backdrop').classList.remove('is-visible');
+            document.getElementById('sidebar-panel').classList.remove('is-visible');
+        }
+
+        // --- Venue selection (switches the active event without ever
+        // navigating away from this one guest URL) ---
+        let venueMap = null;
+        let venueMapInitialized = false;
+        let activeVenueTab = 'list';
+
+        function updateSidebarCurrentVenueLabel(name) {
+            const el = document.getElementById('sidebar-current-venue-name');
+            if (el) el.innerText = name || 'None selected';
+        }
+
+        function selectVenue(slug, displayName) {
+            EVENT_SLUG = slug;
+            localStorage.setItem(SELECTED_VENUE_KEY, slug);
+            updateSidebarCurrentVenueLabel(displayName || slug);
+            closeVenueScreen();
+            closeSidebar();
+            // Fresh venue = fresh local view of its state; the actual credit
+            // count for this venue (if the guest has been here before) still
+            // comes back from creditsStorageKey() inside fetchSystemState.
+            lastGuestQueue = [];
+            spotifyUpcomingQueue = [];
+            fetchSystemState();
+            pollNowPlaying();
+        }
+
+        // Used both by the sidebar's "Leave Venue" action and internally when
+        // a previously-selected venue turns out not to exist anymore (e.g.
+        // it was deleted, or a stale value from an old localStorage entry).
+        function clearSelectedVenue(reason) {
+            EVENT_SLUG = '';
+            localStorage.removeItem(SELECTED_VENUE_KEY);
+            updateSidebarCurrentVenueLabel(null);
+            renderNoVenueState();
+            if (reason) showToast(reason, "error");
+        }
+
+        function leaveVenue() {
+            closeSidebar();
+            clearSelectedVenue();
+        }
+
+        // Runs once on page load - picks back up wherever the guest left off,
+        // rather than making them re-pick a venue every time they reopen the
+        // page/refresh.
+        function restoreSelectedVenue() {
+            // Old QR codes/bookmarks pointed at /e/{slug} directly. Honor
+            // those by auto-selecting that venue, then flatten the address
+            // bar back down to the single root URL going forward - per spec,
+            // this site should always present as one guest URL.
+            const pathMatch = location.pathname.match(/^\/e\/([^/]+)/);
+            const saved = (pathMatch && pathMatch[1]) || localStorage.getItem(SELECTED_VENUE_KEY);
+            if (!saved) return;
+            EVENT_SLUG = saved;
+            localStorage.setItem(SELECTED_VENUE_KEY, saved);
+            updateSidebarCurrentVenueLabel(saved);
+            if (pathMatch) history.replaceState(null, '', '/');
+            // fetchSystemState() (already scheduled below) will clear this
+            // back out via clearSelectedVenue() if the venue no longer exists.
+        }
+
+        // --- Change Venue screen ---
+        function openVenueScreen() {
+            document.getElementById('venue-screen').classList.add('is-visible');
+            switchVenueTab(activeVenueTab);
+        }
+        function closeVenueScreen() {
+            document.getElementById('venue-screen').classList.remove('is-visible');
+        }
+
+        function switchVenueTab(tab) {
+            activeVenueTab = tab;
+            document.getElementById('venue-tab-list').classList.toggle('is-active', tab === 'list');
+            document.getElementById('venue-tab-map').classList.toggle('is-active', tab === 'map');
+            document.getElementById('venue-list-content').classList.toggle('is-active', tab === 'list');
+            document.getElementById('venue-map-content').classList.toggle('is-active', tab === 'map');
+
+            if (tab === 'list') {
+                loadVenueList();
+            } else {
+                // MapLibre needs to be created (or resized) only once its
+                // container is actually visible - creating it while the tab
+                // was display:none leaves it stuck at a zero-size canvas.
+                initVenueMapIfNeeded();
+                loadVenueMarkers();
+                if (venueMap) setTimeout(() => venueMap.resize(), 0);
+            }
+        }
+
+        async function loadVenueList() {
+            const statusEl = document.getElementById('venue-list-status');
+            const listContent = document.getElementById('venue-list-content');
+            try {
+                const res = await fetch('/api/venues');
+                const data = await res.json();
+                const venues = data.venues || [];
+                if (venues.length === 0) {
+                    listContent.innerHTML = '<p class="venue-empty-msg">No venues are live right now.</p>';
+                    return;
+                }
+                listContent.innerHTML = venues.map(v => `
+                    <div class="venue-list-item">
+                        <div>
+                            <div class="venue-list-item-name">${escapeHtml(v.eventName)}</div>
+                            ${v.venueName ? `<div class="venue-list-item-sub">${escapeHtml(v.venueName)}</div>` : ''}
+                        </div>
+                        <button class="venue-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select</button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                if (statusEl) statusEl.innerText = 'Could not load venues. Try again.';
+            }
+        }
+
+        function initVenueMapIfNeeded() {
+            if (venueMapInitialized) return;
+            venueMapInitialized = true;
+            venueMap = new maplibregl.Map({
+                container: 'venue-map',
+                style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
+                center: [0, 20],
+                zoom: 1.5
+            });
+            venueMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+            venueMap.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
+        }
+
+        let venueMapMarkers = [];
+        async function loadVenueMarkers() {
+            try {
+                const res = await fetch('/api/venues');
+                const data = await res.json();
+                const venues = (data.venues || []).filter(v => typeof v.latitude === 'number' && typeof v.longitude === 'number');
+                renderVenueMarkers(venues);
+            } catch (e) { /* leave whatever markers were already on the map */ }
+        }
+
+        function renderVenueMarkers(venues) {
+            if (!venueMap) return;
+            venueMapMarkers.forEach(m => m.remove());
+            venueMapMarkers = [];
+
+            venues.forEach(v => {
+                const el = document.createElement('div');
+                el.className = 'venue-map-marker';
+
+                const popupHtml = `
+                    <div class="venue-popup-box">
+                        <p class="venue-popup-name">${escapeHtml(v.eventName)}</p>
+                        ${v.venueName ? `<p class="venue-popup-sub">${escapeHtml(v.venueName)}</p>` : ''}
+                        <button class="venue-popup-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select Venue</button>
+                    </div>
+                `;
+                const popup = new maplibregl.Popup({ offset: 22, closeButton: true }).setHTML(popupHtml);
+
+                const marker = new maplibregl.Marker({ element: el })
+                    .setLngLat([v.longitude, v.latitude])
+                    .setPopup(popup)
+                    .addTo(venueMap);
+                venueMapMarkers.push(marker);
+            });
+        }
 
         // Toast notifications - non-blocking replacement for alert()
         let toastTimer = null;
@@ -911,10 +1287,47 @@
             document.getElementById('username-modal').classList.remove('is-visible');
         }
 
+        // Reopens the same modal used for the first-time name prompt, but
+        // prefilled with the current name - used from the sidebar's "Change
+        // Your Name" item so a guest can update it any time, not just once.
+        function openChangeNameModal() {
+            const input = document.getElementById('username-input');
+            input.value = guestUsername || '';
+            document.getElementById('username-modal').classList.add('is-visible');
+            input.focus();
+        }
+
+        // Shown in the queue area and as the search placeholder before any
+        // venue has been picked - kept in one place so both call sites (init
+        // and disconnectSpotify-adjacent resets) can't drift out of sync.
+        function renderNoVenueState() {
+            const nameHeader = document.getElementById('event-name-header');
+            if (nameHeader && nameHeader.innerText !== 'crowdDJ') {
+                nameHeader.innerText = 'crowdDJ';
+                document.title = 'crowdDJ';
+            }
+            const searchInput = document.getElementById('search-input');
+            if (searchInput) {
+                searchInput.disabled = true;
+                searchInput.value = '';
+                searchInput.placeholder = 'Pick a venue to start requesting songs...';
+            }
+            document.getElementById('list-title').innerText = 'Live Queue';
+            document.getElementById('main-display-list').innerHTML =
+                '<p class="empty-placeholder">No venue selected yet. Tap the menu (☰) above and choose <strong>Change Venue</strong> to get started.</p>';
+            const spotifyBtn = document.getElementById('connect-spotify-btn');
+            if (spotifyBtn) spotifyBtn.style.display = '';
+            updateCreditBadge(0);
+        }
+
         async function fetchSystemState() {
+            if (!hasVenueSelected()) { renderNoVenueState(); return; }
             try {
                 const res = await fetch(eventUrl('/data'));
-                if (!res.ok) return;
+                if (!res.ok) {
+                    if (res.status === 404) clearSelectedVenue("That venue isn't available anymore.");
+                    return;
+                }
                 const data = await res.json();
 
                 maxCredits = data.maxCredits;
@@ -964,14 +1377,14 @@
         }
 
         function setupLocalCredits() {
-            if (localStorage.getItem('userCredits') === null) {
-                localStorage.setItem('userCredits', maxCredits);
+            if (localStorage.getItem(creditsStorageKey()) === null) {
+                localStorage.setItem(creditsStorageKey(), maxCredits);
             }
-            availableCredits = parseInt(localStorage.getItem('userCredits'));
+            availableCredits = parseInt(localStorage.getItem(creditsStorageKey()));
 
             if (availableCredits > maxCredits) {
                 availableCredits = maxCredits;
-                localStorage.setItem('userCredits', availableCredits);
+                localStorage.setItem(creditsStorageKey(), availableCredits);
             }
 
             updateCreditBadge(availableCredits);
@@ -1024,7 +1437,7 @@
                     timeRemaining = currentServerDuration;
                     if (availableCredits < maxCredits) {
                         availableCredits++;
-                        localStorage.setItem('userCredits', availableCredits);
+                        localStorage.setItem(creditsStorageKey(), availableCredits);
                         if (numEl) numEl.innerText = availableCredits;
                     }
                 }
@@ -1129,6 +1542,7 @@
         }
 
         function executeSearch() {
+            if (!hasVenueSelected()) return;
             if (!systemRequestsAllowed || queueIsFull) return; // Prevent querying if system is locked down
 
             clearTimeout(searchTimeout);
@@ -1179,6 +1593,10 @@
         // Shared submission path used by both search results and the playlist browser,
         // so credits, explicit-locking, and error handling behave identically either way.
         async function submitTrackRequest(track) {
+            if (!hasVenueSelected()) {
+                showToast("Pick a venue first.", "error");
+                return false;
+            }
             if (!systemRequestsAllowed) {
                 showToast("Submissions are currently closed.", "error");
                 return false;
@@ -1200,7 +1618,7 @@
 
                 if (res.ok) {
                     availableCredits--;
-                    localStorage.setItem('userCredits', availableCredits);
+                    localStorage.setItem(creditsStorageKey(), availableCredits);
                     updateCreditBadge(availableCredits);
                     restartLocalCountdown();
                     await fetchSystemState();
@@ -1226,6 +1644,7 @@
             }
         }
 
+        restoreSelectedVenue();
         fetchSystemState();
         setInterval(fetchSystemState, 4000);
 
@@ -1266,6 +1685,8 @@
             const label = document.getElementById('connect-spotify-label');
             btn.classList.toggle('is-connected', connected);
             label.innerText = connected ? 'Connected' : 'Connect Spotify';
+            const sidebarLabel = document.getElementById('sidebar-spotify-label');
+            if (sidebarLabel) sidebarLabel.innerText = connected ? 'Spotify Connected' : 'Connect Spotify';
 
             const inlineBtn = document.getElementById('inline-playlists-btn');
             const searchBox = document.getElementById('search-input');
@@ -1284,6 +1705,10 @@
         async function handleSpotifyConnectClick() {
             if (guestSpotifyToken) {
                 disconnectSpotify();
+                return;
+            }
+            if (!hasVenueSelected()) {
+                showToast("Pick a venue first.", "error");
                 return;
             }
 
@@ -1416,6 +1841,10 @@
         }
 
         async function openMyRequestsModal() {
+            if (!hasVenueSelected()) {
+                showToast("Pick a venue first.", "error");
+                return;
+            }
             document.getElementById('my-requests-modal').classList.add('is-visible');
             const body = document.getElementById('my-requests-body');
             body.innerHTML = '<p class="modal-loading">Loading your requests…</p>';
@@ -1673,6 +2102,7 @@
         }
 
         async function pollNowPlaying() {
+            if (!hasVenueSelected()) { updateNowPlayingBar(null); return; }
             try {
                 const res = await fetch(eventUrl('/api/now-playing'));
                 if (!res.ok) return;
@@ -1683,6 +2113,8 @@
         pollNowPlaying();
         setInterval(pollNowPlaying, 4000);
     </script>
+
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
 </body>
 </html>
