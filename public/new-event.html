@@ -271,11 +271,10 @@
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
         const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // CartoDB's "Dark Matter" basemap instead of default OSM tiles - free,
-        // no API key, and far less visually busy: minimal labels, no POI
-        // icons cluttering the view, and it actually matches the site's dark
-        // theme instead of a bright white map jarring against it.
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        // CartoDB's "Positron" basemap - a clean, light style close to plain
+        // Google Maps (buildings and roads still visible, but without the
+        // dense POI icons/labels standard OSM tiles are covered in).
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
             maxZoom: 19,
             subdomains: 'abcd'
