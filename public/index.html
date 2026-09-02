@@ -799,6 +799,7 @@
         }
         .venue-list-item-name { font-weight: 700; font-size: 1rem; }
         .venue-list-item-sub { color: #a7a7a7; font-size: 0.8rem; margin-top: 2px; }
+        .venue-list-item-distance { color: var(--spotify-green); font-size: 0.75rem; font-weight: 700; margin-top: 4px; }
         .venue-select-btn {
             background-color: var(--spotify-green); color: white; border: none;
             padding: 9px 18px; border-radius: 50px; font-weight: 700; font-size: 0.85rem;
@@ -816,6 +817,15 @@
             width: 30px; height: 30px; border-radius: 50%;
             border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.5);
             cursor: pointer; background: var(--spotify-black) url('/assets/favicon.png') center/70% no-repeat;
+        }
+
+        /* The guest's own location - a plain blue dot (not clickable, no
+           venue icon) so it reads as "you are here" rather than another
+           venue pin. The pulse ring is purely decorative. */
+        .venue-map-user-marker {
+            width: 16px; height: 16px; border-radius: 50%;
+            background: #4285f4; border: 2px solid white;
+            box-shadow: 0 0 0 4px rgba(66, 133, 244, 0.35), 0 2px 6px rgba(0,0,0,0.5);
         }
 
         /* Popup shown when a marker is tapped - venue info on top, the
@@ -1061,6 +1071,43 @@
         let venueMapInitialized = false;
         let activeVenueTab = 'list';
 
+        // Guest's own coordinates, used to sort the venue list closest-first
+        // and to center the map on them. Requested once and cached - the
+        // browser's permission prompt only needs to appear a single time per
+        // page load, and a stale-by-a-few-minutes fix is plenty accurate for
+        // "which venue is nearby".
+        let userLocation = null;
+        let userLocationPromise = null;
+        function getUserLocation() {
+            if (userLocationPromise) return userLocationPromise;
+            userLocationPromise = new Promise(resolve => {
+                if (!navigator.geolocation) { resolve(null); return; }
+                navigator.geolocation.getCurrentPosition(
+                    pos => {
+                        userLocation = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+                        resolve(userLocation);
+                    },
+                    () => resolve(null), // denied, unavailable, or timed out - fall back gracefully
+                    { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+                );
+            });
+            return userLocationPromise;
+        }
+
+        function haversineDistanceKm(lat1, lon1, lat2, lon2) {
+            const toRad = d => d * Math.PI / 180;
+            const R = 6371;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function formatDistance(km) {
+            if (km < 1) return `${Math.round(km * 1000)} m away`;
+            return `${km < 10 ? km.toFixed(1) : Math.round(km)} km away`;
+        }
+
         function updateSidebarCurrentVenueLabel(name) {
             const el = document.getElementById('sidebar-current-venue-name');
             if (el) el.innerText = name || 'None selected';
@@ -1125,7 +1172,7 @@
             document.getElementById('venue-screen').classList.remove('is-visible');
         }
 
-        function switchVenueTab(tab) {
+        async function switchVenueTab(tab) {
             activeVenueTab = tab;
             document.getElementById('venue-tab-list').classList.toggle('is-active', tab === 'list');
             document.getElementById('venue-tab-map').classList.toggle('is-active', tab === 'map');
@@ -1138,7 +1185,7 @@
                 // MapLibre needs to be created (or resized) only once its
                 // container is actually visible - creating it while the tab
                 // was display:none leaves it stuck at a zero-size canvas.
-                initVenueMapIfNeeded();
+                await initVenueMapIfNeeded();
                 loadVenueMarkers();
                 if (venueMap) setTimeout(() => venueMap.resize(), 0);
             }
@@ -1148,18 +1195,36 @@
             const statusEl = document.getElementById('venue-list-status');
             const listContent = document.getElementById('venue-list-content');
             try {
-                const res = await fetch('/api/venues');
+                const [res, loc] = await Promise.all([fetch('/api/venues'), getUserLocation()]);
                 const data = await res.json();
-                const venues = data.venues || [];
+                let venues = data.venues || [];
                 if (venues.length === 0) {
                     listContent.innerHTML = '<p class="venue-empty-msg">No venues are live right now.</p>';
                     return;
+                }
+                // Closest-first once we know where the guest is. Venues
+                // without a pinned location (optional, set at creation from
+                // the map picker) can't be measured, so they sort to the
+                // bottom rather than at a misleading 0km.
+                if (loc) {
+                    venues = venues.map(v => ({
+                        ...v,
+                        distanceKm: (typeof v.latitude === 'number' && typeof v.longitude === 'number')
+                            ? haversineDistanceKm(loc.latitude, loc.longitude, v.latitude, v.longitude)
+                            : null
+                    })).sort((a, b) => {
+                        if (a.distanceKm === null && b.distanceKm === null) return 0;
+                        if (a.distanceKm === null) return 1;
+                        if (b.distanceKm === null) return -1;
+                        return a.distanceKm - b.distanceKm;
+                    });
                 }
                 listContent.innerHTML = venues.map(v => `
                     <div class="venue-list-item">
                         <div>
                             <div class="venue-list-item-name">${escapeHtml(v.eventName)}</div>
                             ${v.venueName ? `<div class="venue-list-item-sub">${escapeHtml(v.venueName)}</div>` : ''}
+                            ${typeof v.distanceKm === 'number' ? `<div class="venue-list-item-distance">${formatDistance(v.distanceKm)}</div>` : ''}
                         </div>
                         <button class="venue-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select</button>
                     </div>
@@ -1169,17 +1234,27 @@
             }
         }
 
-        function initVenueMapIfNeeded() {
+        async function initVenueMapIfNeeded() {
             if (venueMapInitialized) return;
             venueMapInitialized = true;
+            const loc = await getUserLocation();
             venueMap = new maplibregl.Map({
                 container: 'venue-map',
                 style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
-                center: [0, 20],
-                zoom: 1.5
+                // Zoomed into the guest's location when we have it (city/
+                // neighborhood level) instead of the whole-world default -
+                // that default is only a fallback for denied/unsupported
+                // geolocation.
+                center: loc ? [loc.longitude, loc.latitude] : [0, 20],
+                zoom: loc ? 12 : 1.5
             });
             venueMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
             venueMap.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
+            if (loc) {
+                const meEl = document.createElement('div');
+                meEl.className = 'venue-map-user-marker';
+                new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
+            }
         }
 
         let venueMapMarkers = [];
