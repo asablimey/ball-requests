@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
     <style>
         :root {
             --spotify-green: #1DB954;
@@ -39,8 +41,9 @@
         }
         .card h2 { font-size: 1.1rem; margin: 0 0 16px 0; }
 
-        .input-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+        .input-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; position: relative; }
         .input-group label { font-size: 0.8rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
+        .input-group label .optional-tag { text-transform: none; font-weight: 400; color: #666; letter-spacing: 0; }
         .input-group input {
             background-color: var(--card-bg);
             border: 1px solid #333;
@@ -90,6 +93,55 @@
             cursor: pointer;
         }
         .join-row button:hover { border-color: var(--spotify-green); }
+
+        /* --- Venue location picker --- */
+        .location-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 2px;
+            background: var(--card-bg);
+            border: 1px solid #333;
+            border-radius: 6px;
+            overflow: hidden;
+            z-index: 500;
+            max-height: 220px;
+            overflow-y: auto;
+            display: none;
+        }
+        .location-suggestions.visible { display: block; }
+        .location-suggestion-item {
+            padding: 10px 14px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-bottom: 1px solid #2f2f2f;
+        }
+        .location-suggestion-item:last-child { border-bottom: none; }
+        .location-suggestion-item:hover { background: #2f2f2f; }
+
+        .location-map {
+            height: 220px;
+            width: 100%;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #333;
+            /* Leaflet's default marker/panes assume its own stacking context;
+               keep the map itself below the suggestions dropdown above it. */
+            z-index: 1;
+        }
+        .location-clear-btn {
+            background: none;
+            border: none;
+            color: #a7a7a7;
+            font-size: 0.8rem;
+            text-decoration: underline;
+            cursor: pointer;
+            padding: 0;
+            margin-top: 6px;
+            align-self: flex-start;
+        }
+        .location-clear-btn:hover { color: white; }
     </style>
 </head>
 <body>
@@ -106,13 +158,23 @@
             <div class="input-group">
                 <label>Event URL</label>
                 <input type="text" id="input-slug" placeholder="friday-night-live" maxlength="40" autocapitalize="off" autocorrect="off">
-                <div class="url-preview">Guests will go to <strong id="url-preview-text">yoursite.com/e/sams-birthday</strong></div>
+                <div class="url-preview">Guests will go to <strong id="url-preview-text">yoursite.com/e/friday-night-live</strong></div>
                 <div class="availability" id="availability-msg"></div>
             </div>
             <div class="input-group">
                 <label>Admin Password</label>
                 <input type="password" id="input-password" placeholder="At least 4 characters">
             </div>
+
+            <div class="input-group">
+                <label>Venue Location <span class="optional-tag">(optional)</span></label>
+                <input type="text" id="input-location-search" placeholder="Search for an address or venue name" autocomplete="off">
+                <div class="location-suggestions" id="location-suggestions"></div>
+                <div id="location-map" class="location-map"></div>
+                <div class="url-preview" id="location-hint">Search to drop a pin, then drag it to the exact spot.</div>
+                <button type="button" class="location-clear-btn" id="location-clear-btn" style="display:none;" onclick="clearLocation()">Clear location</button>
+            </div>
+
             <button class="primary-btn" id="create-btn" onclick="submitNewEvent()">Create Event</button>
             <div class="error-msg" id="error-msg"></div>
         </div>
@@ -128,6 +190,7 @@
         </div>
     </div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const slugInput = document.getElementById('input-slug');
         const nameInput = document.getElementById('input-event-name');
@@ -189,6 +252,117 @@
             }
         }
 
+        // ============================================================
+        // Venue location picker - Leaflet + OpenStreetMap Nominatim.
+        // No API key/billing account needed. Search gets the admin close;
+        // the draggable marker lets them fine-tune the exact spot (a
+        // geocoded address often lands mid-building, not at the actual
+        // door guests will be standing near).
+        // ============================================================
+        const locationSearchInput = document.getElementById('input-location-search');
+        const suggestionsBox = document.getElementById('location-suggestions');
+        const clearLocationBtn = document.getElementById('location-clear-btn');
+        let searchDebounceTimer = null;
+        let selectedLat = null;
+        let selectedLng = null;
+        let selectedVenueName = '';
+
+        // Default view before anything is searched: zoomed-out world view
+        // rather than guessing a location, so nothing is silently
+        // pre-filled if the admin never touches this optional section.
+        const map = L.map('location-map', { scrollWheelZoom: false }).setView([20, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        let marker = null;
+
+        function placeMarker(lat, lng, panZoom = true) {
+            selectedLat = lat;
+            selectedLng = lng;
+            if (marker) {
+                marker.setLatLng([lat, lng]);
+            } else {
+                marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+                marker.on('dragend', () => {
+                    const pos = marker.getLatLng();
+                    selectedLat = pos.lat;
+                    selectedLng = pos.lng;
+                });
+            }
+            if (panZoom) map.setView([lat, lng], 16);
+            clearLocationBtn.style.display = 'inline-block';
+        }
+
+        function clearLocation() {
+            selectedLat = null;
+            selectedLng = null;
+            selectedVenueName = '';
+            locationSearchInput.value = '';
+            if (marker) {
+                map.removeLayer(marker);
+                marker = null;
+            }
+            map.setView([20, 0], 2);
+            clearLocationBtn.style.display = 'none';
+        }
+
+        function hideSuggestions() {
+            suggestionsBox.classList.remove('visible');
+            suggestionsBox.innerHTML = '';
+        }
+
+        async function searchLocation(query) {
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`, {
+                    headers: { 'Accept-Language': 'en' }
+                });
+                const results = await res.json();
+                renderSuggestions(results);
+            } catch (err) {
+                hideSuggestions();
+            }
+        }
+
+        function renderSuggestions(results) {
+            if (!results || results.length === 0) {
+                hideSuggestions();
+                return;
+            }
+            suggestionsBox.innerHTML = '';
+            results.forEach(r => {
+                const item = document.createElement('div');
+                item.className = 'location-suggestion-item';
+                item.textContent = r.display_name;
+                item.onclick = () => {
+                    selectedVenueName = r.display_name;
+                    locationSearchInput.value = r.display_name;
+                    placeMarker(parseFloat(r.lat), parseFloat(r.lon));
+                    hideSuggestions();
+                };
+                suggestionsBox.appendChild(item);
+            });
+            suggestionsBox.classList.add('visible');
+        }
+
+        locationSearchInput.addEventListener('input', () => {
+            clearTimeout(searchDebounceTimer);
+            const query = locationSearchInput.value.trim();
+            if (query.length < 3) { hideSuggestions(); return; }
+            // Debounced so every keystroke doesn't hit Nominatim - their
+            // usage policy expects light, non-hammering request rates.
+            searchDebounceTimer = setTimeout(() => searchLocation(query), 500);
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!suggestionsBox.contains(e.target) && e.target !== locationSearchInput) {
+                hideSuggestions();
+            }
+        });
+
+        // ============================================================
+
         async function submitNewEvent() {
             const slug = slugInput.value;
             const eventName = nameInput.value;
@@ -209,10 +383,18 @@
                 btn.textContent = 'Still working - waking up the server, this can take up to a minute...';
             }, 4000);
             try {
+                const body = { slug, eventName, adminPassword };
+                // Location is entirely optional - only sent if the admin
+                // actually placed a pin.
+                if (selectedLat !== null && selectedLng !== null) {
+                    body.latitude = selectedLat;
+                    body.longitude = selectedLng;
+                    body.venueName = selectedVenueName || locationSearchInput.value.trim();
+                }
                 const res = await fetch('/api/events', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ slug, eventName, adminPassword })
+                    body: JSON.stringify(body)
                 });
                 clearTimeout(slowNotice);
                 let data;
