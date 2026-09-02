@@ -214,6 +214,12 @@
 
         /* Compact "number over label" badge, e.g. a big "1" over small "CREDIT" -
            replaces the old full-width "Credits: X / Y" pill. */
+        /* Fixed square, matching .menu-btn's 40x40 footprint exactly - the box
+           used to size itself to whatever text was in the label (a 3-digit
+           countdown vs "CREDITS" vs "CREDIT"), so it visibly grew/shrank
+           every time the content changed. Locking both dimensions plus
+           nowrap+hidden overflow as a safety net means the box never moves,
+           regardless of what's inside it. */
         .credit-badge {
             background-color: #1c1c1c;
             border: 1px solid #2c2c2c;
@@ -222,23 +228,28 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            width: 40px;
             height: 40px;
-            padding: 0 12px;
+            flex-shrink: 0;
+            padding: 0 2px;
             gap: 1px;
             box-sizing: border-box;
+            overflow: hidden;
         }
         .credit-badge-number {
             font-size: 1.05rem;
             font-weight: 400;
             line-height: 1;
             color: white;
+            white-space: nowrap;
         }
         .credit-badge-label {
-            font-size: 0.5rem;
+            font-size: 0.42rem;
             font-weight: 700;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.1px;
             color: #a7a7a7;
             line-height: 1;
+            white-space: nowrap;
         }
 
         /* Spotify attribution now lives inline under the title (see
