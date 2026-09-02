@@ -32,11 +32,18 @@ const cache = new Map();
 
 // Fresh state for a brand new event - mirrors what used to be hardcoded
 // module-level globals in the single-tenant version of server.js.
-function blankEventState(slug, eventName, adminPasswordHash) {
+function blankEventState(slug, eventName, adminPasswordHash, venue) {
     return {
         slug,
         adminPasswordHash,
         createdAt: Date.now(),
+
+        // Optional venue pin, set at creation time from the map picker on
+        // new-event.html. All three are null together when the organizer
+        // skipped the location step - never partially set.
+        venueLatitude: venue && typeof venue.latitude === 'number' ? venue.latitude : null,
+        venueLongitude: venue && typeof venue.longitude === 'number' ? venue.longitude : null,
+        venueName: venue && typeof venue.venueName === 'string' ? venue.venueName.trim().slice(0, 120) : null,
 
         systemConfigs: {
             maxCredits: 3,
@@ -174,7 +181,7 @@ function evictIdleEvents() {
 }
 setInterval(evictIdleEvents, CACHE_SWEEP_INTERVAL_MS);
 
-async function createEvent(slug, eventName, adminPassword) {
+async function createEvent(slug, eventName, adminPassword, venue) {
     if (!isValidSlug(slug)) {
         return { error: 'Event URL can only use lowercase letters, numbers, and hyphens (2-40 characters).' };
     }
@@ -188,13 +195,29 @@ async function createEvent(slug, eventName, adminPassword) {
     // unbounded and unsanitized at creation time, letting an arbitrarily long
     // or markup-laden name get stored from the very first request.
     const safeEventName = typeof eventName === 'string' ? eventName.trim().slice(0, 60) : '';
+
+    // Venue location is entirely optional (new-event.html only sends it if the
+    // organizer actually dropped a pin). Validate shape here rather than trust
+    // the client - malformed/partial values are just dropped, not errored,
+    // since a bad location shouldn't block event creation.
+    let safeVenue = null;
+    if (venue && typeof venue.latitude === 'number' && typeof venue.longitude === 'number' &&
+        isFinite(venue.latitude) && isFinite(venue.longitude) &&
+        venue.latitude >= -90 && venue.latitude <= 90 && venue.longitude >= -180 && venue.longitude <= 180) {
+        safeVenue = {
+            latitude: venue.latitude,
+            longitude: venue.longitude,
+            venueName: typeof venue.venueName === 'string' ? venue.venueName.trim().slice(0, 120) : ''
+        };
+    }
+
     const adminPasswordHash = await hashPassword(adminPassword);
     // Re-check for a race: two creates for the same never-before-seen slug
     // could both pass the check above while their scrypt hash was pending.
     if (existsOnDisk(slug) || cache.has(slug)) {
         return { error: 'That event URL is already taken.' };
     }
-    const event = blankEventState(slug, safeEventName, adminPasswordHash);
+    const event = blankEventState(slug, safeEventName, adminPasswordHash, safeVenue);
     cache.set(slug, event);
     await writeToDiskNow(slug); // write immediately on creation, don't wait for debounce
     return { event };
@@ -235,6 +258,42 @@ function getLoadedEvents() {
     return [...cache.values()];
 }
 
+// Lightweight summary of every event currently on disk - "active" here just
+// means "exists" (there's no separate archive/expiry step yet, an event only
+// goes away via deleteEvent). Used by the guest-facing Change Venue screen
+// (Venue List + Map tabs), so this deliberately returns only what a guest is
+// allowed to see - no adminPasswordHash, no Spotify tokens, no queue/request
+// data - and reads straight from disk rather than routing through
+// getEvent()/cache, so listing every venue doesn't load every event's full
+// state into memory at once.
+function getActiveEventsSummary() {
+    let files;
+    try {
+        files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith('.json'));
+    } catch (err) {
+        console.error('[EVENTS] Failed to list event directory:', err.message);
+        return [];
+    }
+    const summaries = [];
+    for (const file of files) {
+        const slug = file.slice(0, -'.json'.length);
+        try {
+            const raw = fs.readFileSync(path.join(DATA_DIR, file), 'utf8');
+            const data = JSON.parse(raw);
+            summaries.push({
+                slug: data.slug || slug,
+                eventName: (data.systemConfigs && data.systemConfigs.eventName) || data.slug || slug,
+                venueName: data.venueName || null,
+                latitude: typeof data.venueLatitude === 'number' ? data.venueLatitude : null,
+                longitude: typeof data.venueLongitude === 'number' ? data.venueLongitude : null
+            });
+        } catch (err) {
+            console.error(`[EVENTS] Skipping unreadable event file "${file}":`, err.message);
+        }
+    }
+    return summaries;
+}
+
 // Permanently removes an event: cancels any pending debounced write (so it
 // can't resurrect the file a moment later), deletes the JSON file from disk,
 // and drops it from the in-memory cache. The slug becomes available again
@@ -265,5 +324,6 @@ module.exports = {
     scheduleSave,
     flushAllSaves,
     verifyPassword,
-    getLoadedEvents
+    getLoadedEvents,
+    getActiveEventsSummary
 };
