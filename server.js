@@ -494,18 +494,18 @@ app.post('/api/events', createEventLimiter, async (req, res) => {
 // List + Map tabs). Only ever returns what a guest is allowed to see (see
 // getActiveEventsSummary in eventStore.js) - never admin credentials, tokens,
 // or queue/request data for events the guest hasn't selected.
-app.get('/api/venues', (req, res) => {
-    res.json({ venues: events.getActiveEventsSummary() });
+app.get('/api/venues', async (req, res) => {
+    res.json({ venues: await events.getActiveEventsSummary() });
 });
 
 // Named ":candidateSlug" (not ":slug") deliberately - it must NOT trigger the
 // app.param('slug', ...) loader below, since the whole point of this route is
 // checking a slug that doesn't have an event yet. Sharing the param name would
 // make every available-but-unclaimed slug 404 before this handler even ran.
-app.get('/api/events/:candidateSlug/available', (req, res) => {
+app.get('/api/events/:candidateSlug/available', async (req, res) => {
     const slug = req.params.candidateSlug.trim().toLowerCase();
     if (!events.isValidSlug(slug)) return res.json({ available: false, reason: 'invalid' });
-    const exists = !!events.getEvent(slug);
+    const exists = !!(await events.getEvent(slug));
     res.json({ available: !exists });
 });
 
@@ -548,7 +548,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
     const { code, state, error } = req.query;
     if (error) return res.status(400).send(`Spotify login failed: ${error}`);
     const slug = typeof state === 'string' ? state.split(':')[0] : null;
-    const event = slug ? events.getEvent(slug) : null;
+    const event = slug ? await events.getEvent(slug) : null;
     if (!event || !state || state !== event.spotify.pendingLoginState) {
         return res.status(400).send('State mismatch - please restart the login from that event\'s admin dashboard.');
     }
@@ -593,11 +593,15 @@ app.get('/admin/spotify-callback', async (req, res) => {
 // Event-scoped routes: everything under /e/:slug/*
 // ============================================================
 
-app.param('slug', (req, res, next, slug) => {
-    const event = events.getEvent(slug);
-    if (!event) return res.status(404).send('Event not found. Double check the link, or create a new one at /new.');
-    req.event = event;
-    next();
+app.param('slug', async (req, res, next, slug) => {
+    try {
+        const event = await events.getEvent(slug);
+        if (!event) return res.status(404).send('Event not found. Double check the link, or create a new one at /new.');
+        req.event = event;
+        next();
+    } catch (err) {
+        next(err);
+    }
 });
 
 app.get('/e/:slug', voterIdentityMiddleware, (req, res) => {
