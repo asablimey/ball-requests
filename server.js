@@ -252,7 +252,16 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
             method,
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.status === 204 || res.status === 200) return { success: true };
+        if (res.status === 204 || res.status === 200) {
+            // The admin UI re-polls /api/now-playing ~300ms after a command
+            // to reflect the change quickly, but that endpoint only ever
+            // serves the cache - which otherwise wouldn't update until the
+            // next background sync tick (up to 4s away, worse with several
+            // events loaded). Refreshing it here means that quick re-poll
+            // actually shows the new state instead of the stale one.
+            await syncNowPlayingForEvent(event);
+            return { success: true };
+        }
         if (res.status === 404) return { success: false, error: 'No active device - open Spotify and play something first.' };
         if (res.status === 403) return { success: false, error: 'Forbidden - this usually means the account is not Spotify Premium.' };
         const body = await res.text();
@@ -1273,9 +1282,22 @@ async function syncNowPlayingForEvent(event) {
         // Full player state (not just /currently-playing) - this is the one call
         // that also returns device name/volume, shuffle_state, and repeat_state,
         // which the admin playback tab needs to show accurate button/slider state.
-        const res = await fetch('https://api.spotify.com/v1/me/player', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        //
+        // Fired together with the queue fetch below (Promise.all) rather than
+        // one after the other - these are independent reads, and awaiting them
+        // sequentially was roughly doubling the round-trip time of every sync
+        // tick for no reason.
+        const [res, queueRes] = await Promise.all([
+            fetch('https://api.spotify.com/v1/me/player', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            }),
+            fetch('https://api.spotify.com/v1/me/player/queue', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            }).catch(err => {
+                console.error(`[SPOTIFY SYNC] (${event.slug}) Upcoming queue fetch failed:`, err.message);
+                return null;
+            })
+        ]);
         if (res.status === 204 || res.status === 404) {
             event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
             return;
@@ -1285,21 +1307,14 @@ async function syncNowPlayingForEvent(event) {
         const item = data?.item;
 
         let upcoming = event.cachedNowPlaying.upcoming;
-        try {
-            const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (queueRes.ok) {
-                const queueData = await queueRes.json();
-                upcoming = (queueData.queue || []).slice(0, 40).map(t => ({
-                    id: t.id,
-                    title: t.name,
-                    artist: (t.artists || []).map(a => a.name).join(', '),
-                    artwork: t.album?.images?.[0]?.url || null
-                }));
-            }
-        } catch (err) {
-            console.error(`[SPOTIFY SYNC] (${event.slug}) Upcoming queue fetch failed:`, err.message);
+        if (queueRes && queueRes.ok) {
+            const queueData = await queueRes.json();
+            upcoming = (queueData.queue || []).slice(0, 40).map(t => ({
+                id: t.id,
+                title: t.name,
+                artist: (t.artists || []).map(a => a.name).join(', '),
+                artwork: t.album?.images?.[0]?.url || null
+            }));
         }
 
         event.cachedNowPlaying = {
@@ -1337,10 +1352,25 @@ async function syncNowPlayingForEvent(event) {
 // Only polls events currently loaded in memory (i.e. touched recently this
 // session), and only ones with a Spotify DJ connection actually set up -
 // no point waking up every event ever created on every tick.
+//
+// Runs every event's sync concurrently (Promise.allSettled) instead of one
+// at a time - with several events loaded (this cache never evicts, so it
+// only grows over a server's lifetime) a sequential loop meant one slow or
+// hung Spotify call held up the refresh for every other event too, and the
+// nominal "every 4s" cadence could stretch out to many multiples of that as
+// more events accumulated. isSyncing guards against a tick still running
+// when the next setInterval fire comes around, which would otherwise pile
+// up more and more concurrent requests over time rather than just skipping
+// that tick and catching up on the next one.
+let isSyncingAllEvents = false;
 async function syncAllLoadedEvents() {
-    const loaded = events.getLoadedEvents().filter(e => e.spotify.djRefreshToken);
-    for (const event of loaded) {
-        await syncNowPlayingForEvent(event);
+    if (isSyncingAllEvents) return;
+    isSyncingAllEvents = true;
+    try {
+        const loaded = events.getLoadedEvents().filter(e => e.spotify.djRefreshToken);
+        await Promise.allSettled(loaded.map(event => syncNowPlayingForEvent(event)));
+    } finally {
+        isSyncingAllEvents = false;
     }
 }
 setInterval(syncAllLoadedEvents, 4000);
