@@ -44,10 +44,10 @@
             justify-content: space-between;
             align-items: flex-start;
             border-bottom: 1px solid #282828;
-            padding-bottom: 18px;
-            margin-bottom: 28px;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
             flex-wrap: nowrap;
-            gap: 15px;
+            gap: 10px;
         }
 
         /* Long venue names (e.g. "WHS Senior Formal Dance Night") were
@@ -62,7 +62,7 @@
            .header, not inside this wrapping block. */
         h1 {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.15rem;
             font-weight: 700;
             line-height: 1.25;
             flex: 1 1 auto;
@@ -76,7 +76,7 @@
         }
 
         @media (max-width: 400px) {
-            h1 { font-size: 1.2rem; }
+            h1 { font-size: 1rem; }
         }
 
         /* Wraps the title + the attribution/credit lines now living underneath
@@ -151,17 +151,17 @@
            width instead, capping at 190px on larger screens. */
         .pill-btn {
             background-color: var(--panel-bg);
-            padding: 10px 16px;
+            padding: 7px 12px;
             border-radius: 50px;
             font-weight: 700;
             border: 1px solid #282828;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            font-size: 1rem;
+            font-size: 0.85rem;
             font-family: inherit;
             box-sizing: border-box;
-            width: min(190px, 44vw);
+            width: min(155px, 40vw);
             min-width: 0;
             text-align: center;
         }
@@ -200,24 +200,24 @@
         .credit-badge {
             background-color: #1c1c1c;
             border: 1px solid #2c2c2c;
-            border-radius: 12px;
-            padding: 8px 18px;
+            border-radius: 10px;
+            padding: 5px 12px;
             text-align: center;
-            min-width: 56px;
+            min-width: 44px;
             box-sizing: border-box;
         }
         .credit-badge-number {
-            font-size: 1.5rem;
+            font-size: 1.15rem;
             font-weight: 800;
             line-height: 1.1;
             color: white;
         }
         .credit-badge-label {
-            font-size: 0.62rem;
+            font-size: 0.56rem;
             font-weight: 700;
             letter-spacing: 0.5px;
             color: #a7a7a7;
-            margin-top: 2px;
+            margin-top: 1px;
         }
 
         /* Spotify attribution now lives inline under the title (see
@@ -598,7 +598,7 @@
         @media (max-width: 400px) {
             .song-row { padding: 10px; gap: 10px; }
             .btn-request { padding: 8px 14px; font-size: 0.8rem; }
-            .pill-btn { padding: 9px 14px; font-size: 0.9rem; width: 150px; }
+            .pill-btn { padding: 6px 10px; font-size: 0.78rem; width: 125px; }
         }
 
         /* Toast notifications - replace blocking alert() popups */
@@ -686,12 +686,14 @@
            viewport size or orientation, since flexbox reflows/shrinks the
            title (already ellipsis-truncated) to make room automatically,
            rather than a fixed-position element that has to be manually
-           kept clear of everything underneath it. */
+           kept clear of everything underneath it. Sized to match the
+           (now smaller) credit badge's height so the header row reads as
+           one consistent height end to end. */
         .menu-btn {
             flex-shrink: 0;
-            width: 56px;
-            height: 56px;
-            border-radius: 12px;
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
             background-color: #1c1c1c;
             border: 1px solid #2c2c2c;
             display: flex;
@@ -700,7 +702,7 @@
             cursor: pointer;
             padding: 0;
         }
-        .menu-btn svg { width: 20px; height: 20px; fill: white; }
+        .menu-btn svg { width: 18px; height: 18px; fill: white; }
         .menu-btn:hover { border-color: var(--spotify-green); }
 
         /* --- Sidebar (left-hand side) --- */
