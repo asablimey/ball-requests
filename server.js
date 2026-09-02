@@ -930,6 +930,7 @@ app.get('/e/:slug/data', (req, res) => {
         explicitBlockActive: event.systemConfigs.explicitBlockActive,
         radioEditsOnly: event.systemConfigs.radioEditsOnly,
         eventName: event.systemConfigs.eventName || '',
+        venueName: event.venueName || '',
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
@@ -950,6 +951,7 @@ app.get('/e/:slug/kiosk-data', (req, res) => {
         explicitBlockActive: event.systemConfigs.explicitBlockActive,
         radioEditsOnly: event.systemConfigs.radioEditsOnly,
         eventName: event.systemConfigs.eventName || '',
+        venueName: event.venueName || '',
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
@@ -971,6 +973,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         explicitBlockActive: event.systemConfigs.explicitBlockActive,
         radioEditsOnly: event.systemConfigs.radioEditsOnly,
         eventName: event.systemConfigs.eventName || '',
+        venueName: event.venueName || '',
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
@@ -1056,10 +1059,14 @@ app.get('/e/:slug/api/my-requests', voterIdentityMiddleware, (req, res) => {
 
 app.post('/e/:slug/api/admin/config', (req, res) => {
     const event = req.event;
-    const { maxCredits, countdownLength, eventName, maxQueueLength, genreFilter, decadeFilter } = req.body;
+    const { maxCredits, countdownLength, eventName, venueName, maxQueueLength, genreFilter, decadeFilter } = req.body;
     if (maxCredits !== undefined) event.systemConfigs.maxCredits = parseInt(maxCredits) || event.systemConfigs.maxCredits;
     if (countdownLength !== undefined) event.systemConfigs.countdownLength = parseInt(countdownLength) || event.systemConfigs.countdownLength;
     if (typeof eventName === 'string') event.systemConfigs.eventName = eventName.trim().slice(0, 60);
+    // Venue name is separate from the event name - e.g. eventName "Sarah's
+    // 30th Birthday" but venueName "The Blind Pig, Ann Arbor". Same 120-char
+    // cap as the one set at creation time from the new-event map picker.
+    if (typeof venueName === 'string') event.venueName = venueName.trim().slice(0, 120);
     if (maxQueueLength !== undefined) {
         const parsed = parseInt(maxQueueLength);
         if (parsed > 0) event.systemConfigs.maxQueueLength = parsed;
