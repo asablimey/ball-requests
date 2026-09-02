@@ -1749,17 +1749,26 @@ async function verifyPassword() {
         async function closeEvent() {
             if (!isAuthorized) return;
             // A plain confirm() is too easy to click through by habit for
-            // something this permanent - require typing the slug back.
-            const typed = prompt(`This permanently deletes "${EVENT_SLUG}" - queue, history, settings, everything. This can't be undone.\n\nType the event URL (${EVENT_SLUG}) to confirm:`);
-            if (typed !== EVENT_SLUG) {
-                if (typed !== null) showToast('Typed text didn\'t match - event was not closed.', 'error');
+            // something this permanent - require re-entering the admin
+            // password. Sent as the actual auth header below (not compared
+            // client-side against the stored `adminPassword`), so the server
+            // does the real check via requireAdminAuth/verifyPassword - a
+            // stale or tampered client-side variable can't fake this.
+            const typed = prompt(`This permanently deletes "${EVENT_SLUG}" - queue, history, settings, everything. This can't be undone.\n\nEnter the admin password to confirm:`);
+            if (typed === null) return; // cancelled
+            if (typed === '') {
+                showToast('Password required - event was not closed.', 'error');
                 return;
             }
             try {
                 const res = await fetch(eventUrl('/api/admin'), {
                     method: 'DELETE',
-                    headers: adminHeaders()
+                    headers: { 'x-admin-password': typed }
                 });
+                if (res.status === 401) {
+                    showToast('Incorrect password - event was not closed.', 'error');
+                    return;
+                }
                 if (!res.ok) {
                     showToast('Could not close the event. Try again.', 'error');
                     return;
