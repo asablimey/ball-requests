@@ -903,12 +903,20 @@
 
                         <div class="settings-card">
                             <div class="settings-section-label">System Rules</div>
-                            <div class="event-name-box" style="margin-bottom: 20px;">
-                                <div class="input-group" style="width: 100%;">
+                            <div class="event-name-box" style="margin-bottom: 20px; display: flex; gap: 16px; flex-wrap: wrap;">
+                                <div class="input-group" style="flex: 1 1 200px;">
                                     <label>Event Name</label>
                                     <input type="text" id="input-event-name" placeholder="crowdDJ" maxlength="60" style="width: 100%;">
                                 </div>
+                                <div class="input-group" style="flex: 1 1 200px;">
+                                    <label>Venue Name</label>
+                                    <input type="text" id="input-venue-name" placeholder="e.g. The Blind Pig, Ann Arbor" maxlength="120" style="width: 100%;">
+                                </div>
                             </div>
+                            <p class="settings-card-hint" style="margin-top: -12px; margin-bottom: 20px;">
+                                Event Name is the headline guests see (e.g. "Sarah's 30th Birthday"). Venue Name is usually
+                                where it's happening, shown underneath in smaller text - leave it blank to hide it.
+                            </p>
                             <div class="config-dashboard">
                                 <div class="input-group">
                                     <label>Max Credit Bank</label>
@@ -1596,6 +1604,9 @@ async function verifyPassword() {
                 if(document.activeElement !== document.getElementById('input-event-name')) {
                     document.getElementById('input-event-name').value = data.eventName || '';
                 }
+                if(document.activeElement !== document.getElementById('input-venue-name')) {
+                    document.getElementById('input-venue-name').value = data.venueName || '';
+                }
                 if(document.activeElement !== document.getElementById('input-max-credits')) {
                     document.getElementById('input-max-credits').value = data.maxCredits;
                 }
@@ -1713,12 +1724,13 @@ async function verifyPassword() {
             const maxVal = document.getElementById('input-max-credits').value;
             const downVal = document.getElementById('input-countdown').value;
             const eventNameVal = document.getElementById('input-event-name').value;
+            const venueNameVal = document.getElementById('input-venue-name').value;
             const maxQueueVal = document.getElementById('input-max-queue').value;
 
             const res = await fetch(eventUrl('/api/admin/config'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal, maxQueueLength: maxQueueVal })
+                body: JSON.stringify({ maxCredits: maxVal, countdownLength: downVal, eventName: eventNameVal, venueName: venueNameVal, maxQueueLength: maxQueueVal })
             });
             if(res.ok) showToast("System parameters updated successfully.", "success");
             updateDashboard();
