@@ -83,6 +83,19 @@
             h1 { font-size: 1.2rem; }
         }
 
+        /* Venue name, shown under the event title in much smaller/muted
+           text. Hidden entirely (via inline display:none, toggled in JS)
+           when no venue name is set, so it doesn't leave an empty gap. */
+        .venue-subtitle {
+            margin: 2px 0 0;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #a7a7a7;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         /* Wraps the title + the attribution/credit lines now living underneath
            it, while staying the flexible left-hand item in .header next to the
            credits box on the right. */
@@ -891,6 +904,7 @@
             </button>
             <div class="header-title-block">
                 <h1 id="event-name-header">crowdDJ</h1>
+                <p id="venue-name-subtitle" class="venue-subtitle" style="display: none;"></p>
             </div>
             <div class="credits-container">
                 <div class="top-pill-row">
@@ -1320,6 +1334,11 @@
                 nameHeader.innerText = 'crowdDJ';
                 document.title = 'crowdDJ';
             }
+            const venueSubtitle = document.getElementById('venue-name-subtitle');
+            if (venueSubtitle) {
+                venueSubtitle.innerText = '';
+                venueSubtitle.style.display = 'none';
+            }
             const searchInput = document.getElementById('search-input');
             if (searchInput) {
                 searchInput.disabled = true;
@@ -1364,6 +1383,13 @@
                     nameHeader.innerText = newName;
                     document.title = newName;
                 }
+
+                const venueSubtitle = document.getElementById('venue-name-subtitle');
+                const newVenueName = (data.venueName && data.venueName.trim() !== '') ? data.venueName.trim() : '';
+                if (venueSubtitle.innerText !== newVenueName) {
+                    venueSubtitle.innerText = newVenueName;
+                }
+                venueSubtitle.style.display = newVenueName ? '' : 'none';
 
                 setupLocalCredits();
                 manageCountdownVisibility();
