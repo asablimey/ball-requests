@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 
     <style>
         :root {
@@ -190,7 +190,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script>
         const slugInput = document.getElementById('input-slug');
         const nameInput = document.getElementById('input-event-name');
@@ -271,12 +271,11 @@
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
         const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // Esri's "World Street Map" tiles - free, no API key required (unlike
-        // Carto's basemaps, which now gate everything behind a key). Closest
-        // free option to a plain Google Maps look: clean roads, building
-        // outlines, place labels, without OSM's cluttered POI icons.
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, &copy; OpenStreetMap contributors, and the GIS User Community',
+        // Standard OpenStreetMap tiles - the default, most universal free
+        // map source. No API key, no paid tier, no watermark - just the
+        // small required text attribution every free map provider has.
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 19
         }).addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
