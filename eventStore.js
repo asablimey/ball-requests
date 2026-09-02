@@ -16,8 +16,16 @@ const scryptAsync = promisify(crypto.scrypt);
 //   1. Create a database at https://console.upstash.com (Redis, free tier)
 //   2. Copy the "UPSTASH_REDIS_REST_URL" and "UPSTASH_REDIS_REST_TOKEN"
 //   3. Add them as environment variables in Render's dashboard
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// .trim() guards against leading/trailing whitespace; replacing any
+// embedded whitespace/newline characters guards against a token that got
+// split across lines by a dashboard's paste handling - either case produces
+// the same "is not a legal HTTP header value" crash from node-fetch since
+// HTTP header values can't contain raw whitespace/control characters.
+function sanitizeEnvValue(v) {
+    return (v || '').replace(/\s+/g, '').trim();
+}
+const UPSTASH_URL = sanitizeEnvValue(process.env.UPSTASH_REDIS_REST_URL);
+const UPSTASH_TOKEN = sanitizeEnvValue(process.env.UPSTASH_REDIS_REST_TOKEN);
 
 if (!UPSTASH_URL || !UPSTASH_TOKEN) {
     console.error('[EVENTS] Missing UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN env vars.');
@@ -39,6 +47,9 @@ function eventKey(slug) {
 // Using the pipeline-free single-command form here since event payloads can
 // be large (SET body as JSON) and this keeps each call self-contained.
 async function redis(command) {
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+        throw new Error('Upstash not configured (missing/invalid env vars)');
+    }
     const res = await fetch(UPSTASH_URL, {
         method: 'POST',
         headers: {
@@ -160,8 +171,13 @@ const cache = new Map();
 // getEvent() calls for a live event don't need a network round-trip just to
 // check existence - the cache being populated already implies existence.
 async function existsRemotely(slug) {
-    const raw = await redisGet(eventKey(slug));
-    return raw != null;
+    try {
+        const raw = await redisGet(eventKey(slug));
+        return raw != null;
+    } catch (err) {
+        console.error(`[EVENTS] existsRemotely("${slug}") failed:`, err.message);
+        return false;
+    }
 }
 
 async function loadFromRedis(slug) {
