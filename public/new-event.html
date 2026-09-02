@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <style>
         :root {
@@ -190,7 +190,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const slugInput = document.getElementById('input-slug');
         const nameInput = document.getElementById('input-event-name');
@@ -270,15 +270,22 @@
         // Default view before anything is searched: zoomed-out world view
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
-        const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // Standard OpenStreetMap tiles - the default, most universal free
-        // map source. No API key, no paid tier, no watermark - just the
-        // small required text attribution every free map provider has.
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            maxZoom: 19
-        }).addTo(map);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        // Default view before anything is searched: zoomed-out world view
+        // rather than guessing a location, so nothing is silently
+        // pre-filled if the admin never touches this optional section.
+        const map = new maplibregl.Map({
+            container: 'location-map',
+            // OpenFreeMap's "Bright" style - free, no API key, no watermark
+            // beyond the small required attribution line, and rendered as
+            // modern vector tiles (crisp at any zoom) rather than blurry
+            // raster images. Light cream/white base with green parks.
+            style: 'https://tiles.openfreemap.org/styles/bright',
+            center: [0, 20],
+            zoom: 1,
+            attributionControl: { compact: true }
+        });
+        map.scrollZoom.disable();
+        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 
         let marker = null;
 
@@ -286,16 +293,18 @@
             selectedLat = lat;
             selectedLng = lng;
             if (marker) {
-                marker.setLatLng([lat, lng]);
+                marker.setLngLat([lng, lat]);
             } else {
-                marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+                marker = new maplibregl.Marker({ draggable: true, color: '#1DB954' })
+                    .setLngLat([lng, lat])
+                    .addTo(map);
                 marker.on('dragend', () => {
-                    const pos = marker.getLatLng();
+                    const pos = marker.getLngLat();
                     selectedLat = pos.lat;
                     selectedLng = pos.lng;
                 });
             }
-            if (panZoom) map.setView([lat, lng], 16);
+            if (panZoom) map.flyTo({ center: [lng, lat], zoom: 16 });
             clearLocationBtn.style.display = 'inline-block';
         }
 
@@ -305,10 +314,10 @@
             selectedVenueName = '';
             locationSearchInput.value = '';
             if (marker) {
-                map.removeLayer(marker);
+                marker.remove();
                 marker = null;
             }
-            map.setView([20, 0], 2);
+            map.flyTo({ center: [0, 20], zoom: 1 });
             clearLocationBtn.style.display = 'none';
         }
 
