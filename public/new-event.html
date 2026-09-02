@@ -271,13 +271,13 @@
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
         const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // CartoDB's "Positron" basemap - a clean, light style close to plain
-        // Google Maps (buildings and roads still visible, but without the
-        // dense POI icons/labels standard OSM tiles are covered in).
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-            maxZoom: 19,
-            subdomains: 'abcd'
+        // Esri's "World Street Map" tiles - free, no API key required (unlike
+        // Carto's basemaps, which now gate everything behind a key). Closest
+        // free option to a plain Google Maps look: clean roads, building
+        // outlines, place labels, without OSM's cluttered POI icons.
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, &copy; OpenStreetMap contributors, and the GIS User Community',
+            maxZoom: 19
         }).addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
