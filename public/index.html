@@ -285,20 +285,6 @@
         }
         .section-title-row .section-title { margin-bottom: 0; }
 
-        .my-requests-btn {
-            background-color: transparent;
-            color: #a7a7a7;
-            border: 1px solid #333;
-            padding: 7px 16px;
-            border-radius: 50px;
-            font-weight: 700;
-            font-size: 0.8rem;
-            font-family: inherit;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: all 0.15s ease;
-        }
-        .my-requests-btn:hover { color: white; border-color: #555; }
 
         .my-request-row {
             display: flex;
@@ -689,11 +675,11 @@
            kept clear of everything underneath it. */
         .menu-btn {
             flex-shrink: 0;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background-color: var(--panel-bg);
-            border: 1px solid #333;
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            background-color: #1c1c1c;
+            border: 1px solid #2c2c2c;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -907,7 +893,6 @@
 
         <div class="section-title-row">
             <div class="section-title" id="list-title">Live Queue</div>
-            <button type="button" class="my-requests-btn" onclick="openMyRequestsModal()">My Requests</button>
         </div>
         <div id="main-display-list"></div>
 
