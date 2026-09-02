@@ -480,11 +480,22 @@ function markTrackPlayedByIndex(event, trackIndex) {
 // The person picks a slug + admin password here; this is the only route that
 // doesn't require an existing event to already exist.
 app.post('/api/events', createEventLimiter, async (req, res) => {
-    const { slug, eventName, adminPassword } = req.body || {};
+    const { slug, eventName, adminPassword, latitude, longitude, venueName } = req.body || {};
     if (typeof slug !== 'string') return res.status(400).json({ error: 'Missing event URL.' });
-    const result = await events.createEvent(slug.trim().toLowerCase(), eventName, adminPassword);
+    const venue = (typeof latitude === 'number' && typeof longitude === 'number')
+        ? { latitude, longitude, venueName }
+        : null;
+    const result = await events.createEvent(slug.trim().toLowerCase(), eventName, adminPassword, venue);
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ success: true, slug: result.event.slug });
+});
+
+// Public (no auth) - powers the guest-facing "Change Venue" screen (Venue
+// List + Map tabs). Only ever returns what a guest is allowed to see (see
+// getActiveEventsSummary in eventStore.js) - never admin credentials, tokens,
+// or queue/request data for events the guest hasn't selected.
+app.get('/api/venues', (req, res) => {
+    res.json({ venues: events.getActiveEventsSummary() });
 });
 
 // Named ":candidateSlug" (not ":slug") deliberately - it must NOT trigger the
@@ -1340,8 +1351,22 @@ app.get(['/admin', '/kiosk'], (req, res) => {
     res.redirect('/new');
 });
 
-app.get('*', (req, res) => {
+// Event creation now lives at its own explicit path - the bare root is the
+// guest page (see below), not this. voterIdentityMiddleware isn't relevant
+// here since there's no :slug yet to scope a cookie to.
+app.get('/new', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'new-event.html'));
+});
+
+// The single guest URL. With no event chosen yet, index.html renders itself
+// in a "no venue selected" state (empty queue, disabled search) and the
+// guest picks a venue from the sidebar's Change Venue screen without ever
+// navigating away from this path. Every other unmatched path also falls
+// back here rather than to new-event.html, per the "always go to the guest
+// page" requirement - only /new and /admin /kiosk (redirected above) lead to
+// anything else.
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Flush any debounced-but-not-yet-written event saves on shutdown.
