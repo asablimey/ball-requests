@@ -52,16 +52,6 @@
             gap: 15px;
         }
 
-        /* Wraps the title + the venue subtitle underneath it, while staying
-           the flexible left-hand item in .header next to the credits box on
-           the right. */
-        .header-title-block {
-            display: flex;
-            flex-direction: column;
-            flex: 1 1 auto;
-            min-width: 0;
-        }
-
         /* min-width: 0 + ellipsis lets the title shrink/truncate on narrow
            screens instead of wrapping onto a new line - that wrap was what
            pushed the credits box down below the title. Truncating keeps the
@@ -71,20 +61,8 @@
             font-size: 1.8rem;
             font-weight: 600;
             font-family: 'Khula', sans-serif;
+            flex: 1 1 auto;
             min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        /* Venue name, shown under the event title in much smaller/muted
-           text. Hidden entirely (via inline display:none, toggled in JS)
-           when no venue name is set, so it doesn't leave an empty gap. */
-        .venue-subtitle {
-            margin: 2px 0 0;
-            font-size: 0.8rem;
-            font-weight: 500;
-            color: #a7a7a7;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -167,23 +145,28 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            width: 40px;
             height: 40px;
-            padding: 0 12px;
+            flex-shrink: 0;
+            padding: 0 2px;
             gap: 1px;
             box-sizing: border-box;
+            overflow: hidden;
         }
         .credit-badge-number {
             font-size: 1.05rem;
             font-weight: 400;
             line-height: 1;
             color: white;
+            white-space: nowrap;
         }
         .credit-badge-label {
-            font-size: 0.5rem;
+            font-size: 0.42rem;
             font-weight: 700;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.1px;
             color: #a7a7a7;
             line-height: 1;
+            white-space: nowrap;
         }
 
         .search-bar-wrapper {
@@ -680,10 +663,7 @@
 
     <div class="container">
         <div class="header">
-            <div class="header-title-block">
-                <h1 id="event-name-header">crowdDJ</h1>
-                <p id="venue-name-subtitle" class="venue-subtitle" style="display: none;"></p>
-            </div>
+            <h1 id="event-name-header">crowdDJ</h1>
             <div class="credits-container">
                 <div class="top-pill-row">
                     <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
@@ -845,13 +825,6 @@
                     // Tab title stays "Kiosk" here (unlike the guest page) so it's
                     // easy to spot this tab among others on the kiosk device.
                 }
-
-                const venueSubtitle = document.getElementById('venue-name-subtitle');
-                const newVenueName = (data.venueName && data.venueName.trim() !== '') ? data.venueName.trim() : '';
-                if (venueSubtitle.innerText !== newVenueName) {
-                    venueSubtitle.innerText = newVenueName;
-                }
-                venueSubtitle.style.display = newVenueName ? '' : 'none';
 
                 setupLocalCredits();
                 manageCountdownVisibility();
