@@ -1110,7 +1110,7 @@
             if (!saved) return;
             EVENT_SLUG = saved;
             localStorage.setItem(SELECTED_VENUE_KEY, saved);
-            updateSidebarCurrentVenueLabel(saved);
+            updateSidebarCurrentVenueLabel('Loading…');
             if (pathMatch) history.replaceState(null, '', '/');
             // fetchSystemState() (already scheduled below) will clear this
             // back out via clearSelectedVenue() if the venue no longer exists.
@@ -1383,6 +1383,13 @@
                     nameHeader.innerText = newName;
                     document.title = newName;
                 }
+                // Keeps the sidebar's "Current venue" label in sync with the
+                // real event name too - restoreSelectedVenue() only has the
+                // slug to show at first (from localStorage/URL, before this
+                // fetch resolves), and selectVenue() may be called with a
+                // stale name from an older /venue-list fetch. This is the
+                // one place both eventually get corrected.
+                updateSidebarCurrentVenueLabel(newName);
 
                 const venueSubtitle = document.getElementById('venue-name-subtitle');
                 const newVenueName = (data.venueName && data.venueName.trim() !== '') ? data.venueName.trim() : '';
