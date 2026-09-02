@@ -2051,9 +2051,10 @@ async function verifyPassword() {
         }
 
         // Fire-and-forget-ish: sends the command, then immediately re-polls
-        // now-playing so the UI reflects the new state without waiting for
-        // the next 4s tick. Errors surface as a toast rather than silently
-        // failing, since "nothing happened" otherwise looks like a bug.
+        // now-playing so the UI reflects the new state. No artificial delay
+        // needed here anymore - the server now refreshes its cache as part
+        // of handling the command, so it's already current by the time this
+        // response comes back.
         async function playbackCommand(action, body) {
             try {
                 const res = await fetch(eventUrl(`/api/admin/playback/${action}`), {
@@ -2066,7 +2067,7 @@ async function verifyPassword() {
                     showToast(data.error || 'Playback command failed.');
                     return false;
                 }
-                setTimeout(pollNowPlaying, 300);
+                pollNowPlaying();
                 return true;
             } catch (e) {
                 showToast('Could not reach the server.');
