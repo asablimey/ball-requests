@@ -50,19 +50,33 @@
             gap: 15px;
         }
 
-        /* min-width: 0 + ellipsis lets the title shrink/truncate on narrow
-           screens instead of wrapping onto a new line - that wrap was what
-           pushed the credits box down below the title. Truncating keeps the
-           credits box pinned in the header row, top-right, at every width. */
+        /* Long venue names (e.g. "WHS Senior Formal Dance Night") were
+           getting hard-truncated to a handful of characters on phone-width
+           screens - the fixed-size credits box + hamburger button on either
+           side only leave ~180-200px for the title at that width, nowhere
+           near enough for one line at 1.8rem/800. Wrapping to up to 2 lines
+           (clamped, with an ellipsis only past that) plus a lighter weight
+           and a narrow-screen size step down keeps names actually readable
+           instead of cut off after a few letters, while the credits box
+           still can't get pushed out of place - it's a sibling flex item in
+           .header, not inside this wrapping block. */
         h1 {
             margin: 0;
-            font-size: 1.8rem;
-            font-weight: 800;
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1.25;
             flex: 1 1 auto;
             min-width: 0;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             overflow: hidden;
             text-overflow: ellipsis;
-            white-space: nowrap;
+            overflow-wrap: break-word;
+        }
+
+        @media (max-width: 400px) {
+            h1 { font-size: 1.2rem; }
         }
 
         /* Wraps the title + the attribution/credit lines now living underneath
