@@ -142,6 +142,26 @@
             align-self: flex-start;
         }
         .location-clear-btn:hover { color: white; }
+
+        /* Plain floating attribution text, no box/badge - matches how
+           Google Maps itself shows required credit: quiet grey text
+           with no background, border, or pill shape sitting on the map. */
+        .leaflet-control-attribution {
+            background: none !important;
+            box-shadow: none !important;
+            color: rgba(255, 255, 255, 0.55) !important;
+            font-size: 0.6rem !important;
+            padding: 0 4px !important;
+            text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+        }
+        .leaflet-control-attribution a { color: rgba(255, 255, 255, 0.7) !important; }
+
+        /* Mutes default OSM's more saturated orange highways/blue water
+           toward a calmer cream/green/grey, closer to the Google Maps
+           look, without needing a custom-hosted tile style. */
+        .location-map .leaflet-tile-pane {
+            filter: saturate(65%) brightness(1.04) contrast(0.97);
+        }
     </style>
 </head>
 <body>
@@ -271,17 +291,17 @@
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
         const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // CyclOSM tiles, hosted by OpenStreetMap France - free, no API key,
-        // no watermark beyond the small required attribution line. Chosen
-        // over OpenFreeMap's vector tiles (MapLibre + Cloudflare) because
-        // that combination has a documented, unresolved bug where the style
-        // silently fails to load and leaves a blank box - plain raster tiles
-        // from an established host are far more reliable. Also has the
-        // green-parks/cream-streets palette without any custom styling.
-        L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors, Tiles style by <a href="https://www.cyclosm.org">CyclOSM</a>',
-            maxZoom: 20,
-            subdomains: 'abc'
+        // Plain OpenStreetMap tiles - the only free option whose required
+        // attribution is JUST "OpenStreetMap contributors", with no
+        // second vendor name riding alongside it (CARTO/Stadia/MapTiler
+        // all add their own brand to the credit line). Default OSM colors
+        // run a bit more saturated (orange highways, blue water) than
+        // Google's palette, so a CSS filter on the tile layer (below)
+        // mutes that toward the cream/green/grey look without needing a
+        // custom-hosted style.
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
         }).addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
