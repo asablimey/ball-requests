@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 
     <style>
         :root {
@@ -146,7 +146,7 @@
         /* Plain floating attribution text, no box/badge - matches how
            Google Maps itself shows required credit: quiet grey text
            with no background, border, or pill shape sitting on the map. */
-        .leaflet-control-attribution {
+        .maplibregl-ctrl-attrib {
             background: none !important;
             box-shadow: none !important;
             color: rgba(255, 255, 255, 0.55) !important;
@@ -154,14 +154,9 @@
             padding: 0 4px !important;
             text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
         }
-        .leaflet-control-attribution a { color: rgba(255, 255, 255, 0.7) !important; }
-
-        /* Mutes default OSM's more saturated orange highways/blue water
-           toward a calmer cream/green/grey, closer to the Google Maps
-           look, without needing a custom-hosted tile style. */
-        .location-map .leaflet-tile-pane {
-            filter: saturate(65%) brightness(1.04) contrast(0.97);
-        }
+        .maplibregl-ctrl-attrib a { color: rgba(255, 255, 255, 0.7) !important; }
+        .maplibregl-ctrl-attrib-button { display: none !important; }
+        .maplibregl-canvas { border-radius: 8px; }
     </style>
 </head>
 <body>
@@ -210,7 +205,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script>
         const slugInput = document.getElementById('input-slug');
         const nameInput = document.getElementById('input-event-name');
@@ -273,11 +268,12 @@
         }
 
         // ============================================================
-        // Venue location picker - Leaflet + OpenStreetMap Nominatim.
-        // No API key/billing account needed. Search gets the admin close;
-        // the draggable marker lets them fine-tune the exact spot (a
-        // geocoded address often lands mid-building, not at the actual
-        // door guests will be standing near).
+        // Venue location picker - MapLibre GL + your custom MapTiler
+        // style + OpenStreetMap Nominatim for search.
+        //
+        // Search gets the admin close; the draggable marker lets them
+        // fine-tune the exact spot (a geocoded address often lands
+        // mid-building, not at the actual door guests will stand near).
         // ============================================================
         const locationSearchInput = document.getElementById('input-location-search');
         const suggestionsBox = document.getElementById('location-suggestions');
@@ -290,20 +286,16 @@
         // Default view before anything is searched: zoomed-out world view
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
-        const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
-        // Plain OpenStreetMap tiles - the only free option whose required
-        // attribution is JUST "OpenStreetMap contributors", with no
-        // second vendor name riding alongside it (CARTO/Stadia/MapTiler
-        // all add their own brand to the credit line). Default OSM colors
-        // run a bit more saturated (orange highways, blue water) than
-        // Google's palette, so a CSS filter on the tile layer (below)
-        // mutes that toward the cream/green/grey look without needing a
-        // custom-hosted style.
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19
-        }).addTo(map);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        const map = new maplibregl.Map({
+            container: 'location-map',
+            style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
+            center: [0, 20],
+            zoom: 1.5,
+            scrollZoom: false,
+            attributionControl: false
+        });
+        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+        map.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
 
         let marker = null;
 
@@ -311,16 +303,18 @@
             selectedLat = lat;
             selectedLng = lng;
             if (marker) {
-                marker.setLatLng([lat, lng]);
+                marker.setLngLat([lng, lat]);
             } else {
-                marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+                marker = new maplibregl.Marker({ draggable: true, color: '#e91429' })
+                    .setLngLat([lng, lat])
+                    .addTo(map);
                 marker.on('dragend', () => {
-                    const pos = marker.getLatLng();
+                    const pos = marker.getLngLat();
                     selectedLat = pos.lat;
                     selectedLng = pos.lng;
                 });
             }
-            if (panZoom) map.setView([lat, lng], 16);
+            if (panZoom) map.flyTo({ center: [lng, lat], zoom: 16 });
             clearLocationBtn.style.display = 'inline-block';
         }
 
@@ -330,10 +324,10 @@
             selectedVenueName = '';
             locationSearchInput.value = '';
             if (marker) {
-                map.removeLayer(marker);
+                marker.remove();
                 marker = null;
             }
-            map.setView([20, 0], 2);
+            map.flyTo({ center: [0, 20], zoom: 1.5 });
             clearLocationBtn.style.display = 'none';
         }
 
