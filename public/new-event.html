@@ -270,22 +270,20 @@
         // Default view before anything is searched: zoomed-out world view
         // rather than guessing a location, so nothing is silently
         // pre-filled if the admin never touches this optional section.
-        // Default view before anything is searched: zoomed-out world view
-        // rather than guessing a location, so nothing is silently
-        // pre-filled if the admin never touches this optional section.
-        const map = new maplibregl.Map({
-            container: 'location-map',
-            // OpenFreeMap's "Bright" style - free, no API key, no watermark
-            // beyond the small required attribution line, and rendered as
-            // modern vector tiles (crisp at any zoom) rather than blurry
-            // raster images. Light cream/white base with green parks.
-            style: 'https://tiles.openfreemap.org/styles/bright',
-            center: [0, 20],
-            zoom: 1,
-            attributionControl: { compact: true }
-        });
-        map.scrollZoom.disable();
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+        const map = L.map('location-map', { scrollWheelZoom: false, zoomControl: false }).setView([20, 0], 2);
+        // CyclOSM tiles, hosted by OpenStreetMap France - free, no API key,
+        // no watermark beyond the small required attribution line. Chosen
+        // over OpenFreeMap's vector tiles (MapLibre + Cloudflare) because
+        // that combination has a documented, unresolved bug where the style
+        // silently fails to load and leaves a blank box - plain raster tiles
+        // from an established host are far more reliable. Also has the
+        // green-parks/cream-streets palette without any custom styling.
+        L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors, Tiles style by <a href="https://www.cyclosm.org">CyclOSM</a>',
+            maxZoom: 20,
+            subdomains: 'abc'
+        }).addTo(map);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
 
         let marker = null;
 
@@ -293,18 +291,16 @@
             selectedLat = lat;
             selectedLng = lng;
             if (marker) {
-                marker.setLngLat([lng, lat]);
+                marker.setLatLng([lat, lng]);
             } else {
-                marker = new maplibregl.Marker({ draggable: true, color: '#1DB954' })
-                    .setLngLat([lng, lat])
-                    .addTo(map);
+                marker = L.marker([lat, lng], { draggable: true }).addTo(map);
                 marker.on('dragend', () => {
-                    const pos = marker.getLngLat();
+                    const pos = marker.getLatLng();
                     selectedLat = pos.lat;
                     selectedLng = pos.lng;
                 });
             }
-            if (panZoom) map.flyTo({ center: [lng, lat], zoom: 16 });
+            if (panZoom) map.setView([lat, lng], 16);
             clearLocationBtn.style.display = 'inline-block';
         }
 
@@ -314,10 +310,10 @@
             selectedVenueName = '';
             locationSearchInput.value = '';
             if (marker) {
-                marker.remove();
+                map.removeLayer(marker);
                 marker = null;
             }
-            map.flyTo({ center: [0, 20], zoom: 1 });
+            map.setView([20, 0], 2);
             clearLocationBtn.style.display = 'none';
         }
 
