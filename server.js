@@ -506,13 +506,36 @@ function markTrackPlayedByIndex(event, trackIndex) {
 
 // The person picks a slug + admin password here; this is the only route that
 // doesn't require an existing event to already exist.
+// Guests no longer type or get given a custom URL - they find events
+// through the venue list/map - so the slug is now purely an internal
+// identifier, generated from the event name instead of chosen by the
+// organizer. Falls back to "event" if the name has no usable characters
+// (e.g. an emoji-only name), and appends a short random suffix on a
+// collision instead of failing the whole request.
+function slugifyEventName(str) {
+    return (typeof str === 'string' ? str : '')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 30); // leaves room for the "-xxxxxx" suffix below, under the 40-char slug cap
+}
+
 app.post('/api/events', createEventLimiter, async (req, res) => {
-    const { slug, eventName, adminPassword, latitude, longitude, venueName } = req.body || {};
-    if (typeof slug !== 'string') return res.status(400).json({ error: 'Missing event URL.' });
+    const { eventName, adminPassword, latitude, longitude, venueName } = req.body || {};
     const venue = (typeof latitude === 'number' && typeof longitude === 'number')
         ? { latitude, longitude, venueName }
         : null;
-    const result = await events.createEvent(slug.trim().toLowerCase(), eventName, adminPassword, venue);
+
+    const base = slugifyEventName(eventName) || 'event';
+    let result;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const candidateSlug = attempt === 0 ? base : `${base}-${crypto.randomBytes(3).toString('hex')}`;
+        result = await events.createEvent(candidateSlug, eventName, adminPassword, venue);
+        if (!result.error || result.error !== 'That event URL is already taken.') break;
+    }
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ success: true, slug: result.event.slug });
 });
