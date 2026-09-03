@@ -171,10 +171,8 @@
                 <input type="text" id="input-event-name" placeholder="Friday Night Live" maxlength="60">
             </div>
             <div class="input-group">
-                <label>Event URL</label>
-                <input type="text" id="input-slug" placeholder="friday-night-live" maxlength="40" autocapitalize="off" autocorrect="off">
-                <div class="url-preview">Guests will go to <strong id="url-preview-text">yoursite.com/e/friday-night-live</strong></div>
-                <div class="availability" id="availability-msg"></div>
+                <label>Venue Name</label>
+                <input type="text" id="input-venue-name" placeholder="Ivy Nightclub" maxlength="120">
             </div>
             <div class="input-group">
                 <label>Admin Password</label>
@@ -207,13 +205,14 @@
 
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script>
-        const slugInput = document.getElementById('input-slug');
         const nameInput = document.getElementById('input-event-name');
-        const previewText = document.getElementById('url-preview-text');
-        const availabilityMsg = document.getElementById('availability-msg');
-        let slugManuallyEdited = false;
-        let availabilityCheckTimer = null;
+        const venueNameInput = document.getElementById('input-venue-name');
 
+        // Only used client-side now to build a friendly working title for
+        // the "Already have an event?" join box below - the actual event
+        // slug is generated server-side from the event name, since guests
+        // find events through the venue list/map now rather than typing or
+        // being given a custom URL.
         function slugify(str) {
             return str.toLowerCase()
                 .trim()
@@ -222,49 +221,6 @@
                 .replace(/-+/g, '-')
                 .replace(/^-|-$/g, '')
                 .slice(0, 40);
-        }
-
-        nameInput.addEventListener('input', () => {
-            if (!slugManuallyEdited) {
-                slugInput.value = slugify(nameInput.value);
-                updatePreviewAndCheck();
-            }
-        });
-
-        slugInput.addEventListener('input', () => {
-            slugManuallyEdited = true;
-            slugInput.value = slugify(slugInput.value);
-            updatePreviewAndCheck();
-        });
-
-        function updatePreviewAndCheck() {
-            const slug = slugInput.value || '…';
-            previewText.textContent = `${location.host}/e/${slug}`;
-            clearTimeout(availabilityCheckTimer);
-            if (!slugInput.value) { availabilityMsg.textContent = ''; return; }
-            availabilityMsg.textContent = 'Checking...';
-            availabilityMsg.className = 'availability';
-            availabilityCheckTimer = setTimeout(checkAvailability, 400);
-        }
-
-        async function checkAvailability() {
-            const slug = slugInput.value;
-            if (!slug) return;
-            try {
-                const res = await fetch(`/api/events/${encodeURIComponent(slug)}/available`);
-                const data = await res.json();
-                if (data.available) {
-                    availabilityMsg.textContent = '✓ Available';
-                    availabilityMsg.className = 'availability ok';
-                } else {
-                    availabilityMsg.textContent = data.reason === 'invalid'
-                        ? 'Only lowercase letters, numbers, and hyphens.'
-                        : '✗ Already taken';
-                    availabilityMsg.className = 'availability taken';
-                }
-            } catch (err) {
-                availabilityMsg.textContent = '';
-            }
         }
 
         // ============================================================
@@ -283,14 +239,16 @@
         let selectedLng = null;
         let selectedVenueName = '';
 
-        // Default view before anything is searched: zoomed-out world view
-        // rather than guessing a location, so nothing is silently
-        // pre-filled if the admin never touches this optional section.
+        // Default view before anything is searched: New Zealand, zoomed to
+        // show the whole country - most events created here are local, so
+        // this saves almost everyone a manual pan/zoom before they can even
+        // start searching. Searching (or an address autofilling) flies the
+        // map to the actual result regardless.
         const map = new maplibregl.Map({
             container: 'location-map',
             style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
-            center: [0, 20],
-            zoom: 1.5,
+            center: [172.8, -41.2],
+            zoom: 4.6,
             scrollZoom: false,
             attributionControl: false
         });
@@ -327,7 +285,7 @@
                 marker.remove();
                 marker = null;
             }
-            map.flyTo({ center: [0, 20], zoom: 1.5 });
+            map.flyTo({ center: [172.8, -41.2], zoom: 4.6 });
             clearLocationBtn.style.display = 'none';
         }
 
@@ -361,6 +319,12 @@
                 item.onclick = () => {
                     selectedVenueName = r.display_name;
                     locationSearchInput.value = r.display_name;
+                    // Auto-fill Venue Name from the search result only if the
+                    // admin hasn't already typed their own - never clobber a
+                    // manual entry.
+                    if (!venueNameInput.value.trim()) {
+                        venueNameInput.value = r.display_name.split(',')[0];
+                    }
                     placeMarker(parseFloat(r.lat), parseFloat(r.lon));
                     hideSuggestions();
                 };
@@ -387,14 +351,13 @@
         // ============================================================
 
         async function submitNewEvent() {
-            const slug = slugInput.value;
             const eventName = nameInput.value;
             const adminPassword = document.getElementById('input-password').value;
             const errorMsg = document.getElementById('error-msg');
             const btn = document.getElementById('create-btn');
             errorMsg.style.display = 'none';
 
-            if (!slug) { errorMsg.textContent = 'Pick an event URL.'; errorMsg.style.display = 'block'; return; }
+            if (!eventName.trim()) { errorMsg.textContent = 'Give your event a name.'; errorMsg.style.display = 'block'; return; }
             if (!adminPassword || adminPassword.length < 4) { errorMsg.textContent = 'Admin password must be at least 4 characters.'; errorMsg.style.display = 'block'; return; }
 
             btn.disabled = true;
@@ -406,13 +369,17 @@
                 btn.textContent = 'Still working - waking up the server, this can take up to a minute...';
             }, 4000);
             try {
-                const body = { slug, eventName, adminPassword };
+                // No slug in the request body anymore - the server generates
+                // one from the event name, since it's now purely an internal
+                // identifier rather than something guests type or get given.
+                const body = { eventName, adminPassword };
+                const venueName = venueNameInput.value.trim() || selectedVenueName;
                 // Location is entirely optional - only sent if the admin
                 // actually placed a pin.
                 if (selectedLat !== null && selectedLng !== null) {
                     body.latitude = selectedLat;
                     body.longitude = selectedLng;
-                    body.venueName = selectedVenueName || locationSearchInput.value.trim();
+                    body.venueName = venueName;
                 }
                 const res = await fetch('/api/events', {
                     method: 'POST',
