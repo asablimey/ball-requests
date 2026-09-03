@@ -207,7 +207,7 @@ function extractSpotifyPlaylistId(input) {
 // auto-generated queue without starting new context playback.
 async function switchDjPlaylist(event, playlistUri) {
     const token = await getDjAccessToken(event);
-    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
+    if (!token) return { success: false, error: 'Admin Spotify account is not connected yet.' };
 
     const playlistId = extractSpotifyPlaylistId(playlistUri);
     if (!playlistId) return { success: false, error: 'Could not parse a playlist ID from that link.' };
@@ -246,7 +246,7 @@ async function switchDjPlaylist(event, playlistUri) {
 // of only the "start context playback" call.
 async function spotifyPlayerCommand(event, method, playerPath, query = '') {
     const token = await getDjAccessToken(event);
-    if (!token) return { success: false, error: 'DJ Spotify account is not connected yet.' };
+    if (!token) return { success: false, error: 'Admin Spotify account is not connected yet.' };
     try {
         const res = await fetch(`https://api.spotify.com/v1/me/player${playerPath}${query}`, {
             method,
@@ -779,10 +779,14 @@ app.get('/e/:slug/api/search', async (req, res) => {
         if (event.systemConfigs.genreFilter && event.systemConfigs.genreFilter.length > 0 && tracks.length > 0) {
             const artistIds = [...new Set(tracks.map(t => t._primaryArtistId).filter(Boolean))];
             const genresByArtist = await getArtistGenres(artistIds);
-            const allowedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+            // genreFilter is a block-list here (the genres the admin picked
+            // as ones they DON'T want played), not an allow-list - so a
+            // track is kept unless its artist matches one of the blocked
+            // keywords.
+            const blockedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
             tracks = tracks.filter(track => {
                 const artistGenres = genresByArtist.get(track._primaryArtistId) || [];
-                return artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
+                return !artistGenres.some(g => blockedKeywords.some(keyword => g.includes(keyword)));
             });
         }
 
@@ -871,7 +875,7 @@ function buildRequestHandler(isKiosk) {
         }
 
         if (event.systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
-            return res.status(403).json({ error: "Explicit content is currently restricted by the DJ." });
+            return res.status(403).json({ error: "Explicit content is currently restricted by the admin." });
         }
 
         if (event.systemConfigs.radioEditsOnly && isExtendedOrClubMix(verifiedTrack.name)) {
@@ -887,10 +891,11 @@ function buildRequestHandler(isKiosk) {
         if (event.systemConfigs.genreFilter && event.systemConfigs.genreFilter.length > 0) {
             const genresByArtist = await getArtistGenres(primaryArtistId ? [primaryArtistId] : []);
             const artistGenres = genresByArtist.get(primaryArtistId) || [];
-            const allowedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
-            const matches = artistGenres.some(g => allowedKeywords.some(keyword => g.includes(keyword)));
-            if (!matches) {
-                return res.status(403).json({ error: "That song's genre isn't part of tonight's theme." });
+            // Block-list, same as the search-time check above.
+            const blockedKeywords = event.systemConfigs.genreFilter.flatMap(key => GENRE_CATEGORIES[key] || []);
+            const isBlocked = artistGenres.some(g => blockedKeywords.some(keyword => g.includes(keyword)));
+            if (isBlocked) {
+                return res.status(403).json({ error: "That song's genre has been blocked for tonight." });
             }
         }
 
@@ -1001,6 +1006,8 @@ app.get('/e/:slug/data', (req, res) => {
         radioEditsOnly: event.systemConfigs.radioEditsOnly,
         eventName: event.systemConfigs.eventName || '',
         venueName: event.venueName || '',
+        venueLatitude: event.venueLatitude,
+        venueLongitude: event.venueLongitude,
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
