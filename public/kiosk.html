@@ -145,25 +145,25 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-width: 48px;
-            height: 46px;
+            width: 40px;
+            height: 40px;
             flex-shrink: 0;
-            padding: 4px 10px;
-            gap: 2px;
+            padding: 0 2px;
+            gap: 1px;
             box-sizing: border-box;
             overflow: hidden;
         }
         .credit-badge-number {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             font-weight: 400;
             line-height: 1;
             color: white;
             white-space: nowrap;
         }
         .credit-badge-label {
-            font-size: 0.48rem;
+            font-size: 0.42rem;
             font-weight: 700;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.1px;
             color: #a7a7a7;
             line-height: 1;
             white-space: nowrap;
@@ -839,7 +839,7 @@
                     searchInput.value = "";
                     searchInput.placeholder = queueIsFull
                         ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
-                        : "Song submissions are currently paused by the DJ.";
+                        : "Song submissions are currently paused by the admin.";
                     document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
                 } else {
@@ -952,7 +952,7 @@
             const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
 
             if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
+                setQueueDisplayHtml(display, '<p class="empty-placeholder">No songs requested yet. Be the first!</p>');
                 return;
             }
 
@@ -1007,7 +1007,20 @@
                 </div>
             `).join('');
 
-            display.innerHTML = guestRowsHtml + spotifyRowsHtml;
+            setQueueDisplayHtml(display, guestRowsHtml + spotifyRowsHtml);
+        }
+
+        // Rebuilding #main-display-list's innerHTML unconditionally on every
+        // 4-second poll (whether or not the queue actually changed) was
+        // tearing down and recreating every row - images, buttons, all of
+        // it - which is what caused the periodic flicker/glitch on this
+        // screen. Only touching the DOM when the markup actually differs
+        // fixes that.
+        let lastRenderedQueueHtml = null;
+        function setQueueDisplayHtml(display, html) {
+            if (html === lastRenderedQueueHtml) return;
+            lastRenderedQueueHtml = html;
+            display.innerHTML = html;
         }
 
         async function castVote(id, type) {
