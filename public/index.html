@@ -106,8 +106,8 @@
             min-width: 0;
         }
 
-        /* Now used inside .page-footer at the bottom of the page (in normal
-           flow, not fixed), rather than under the venue title. */
+        /* Now used inside .sidebar-footer at the bottom of the sidebar menu,
+           rather than under the venue title or in the main page flow. */
         .spotify-attribution-inline {
             display: flex;
             align-items: center;
@@ -133,17 +133,6 @@
             cursor: pointer;
         }
         .site-credit a:hover { color: #888; }
-
-        .page-footer {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
-            text-align: center;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #282828;
-        }
 
         .credits-container {
             display: flex;
@@ -228,25 +217,25 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-width: 48px;
-            height: 46px;
+            width: 40px;
+            height: 40px;
             flex-shrink: 0;
-            padding: 4px 10px;
-            gap: 2px;
+            padding: 0 2px;
+            gap: 1px;
             box-sizing: border-box;
             overflow: hidden;
         }
         .credit-badge-number {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             font-weight: 400;
             line-height: 1;
             color: white;
             white-space: nowrap;
         }
         .credit-badge-label {
-            font-size: 0.48rem;
+            font-size: 0.42rem;
             font-weight: 700;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.1px;
             color: #a7a7a7;
             line-height: 1;
             white-space: nowrap;
@@ -781,6 +770,23 @@
            keeps them hidden in the "no venue selected" state. */
         #sidebar-spotify-item, #sidebar-playlist-item { display: none; }
 
+        /* Pinned to the bottom of the sidebar via margin-top: auto - the
+           sidebar-panel is a flex column, so this sits flush at the bottom
+           when the item list is short, and simply follows after the last
+           item (still at the bottom of the scroll) once it's long enough
+           to need scrolling. Was previously a fixed page-footer in the main
+           page flow; moved in here per request. */
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 18px 20px;
+            border-top: 1px solid #282828;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            text-align: center;
+        }
+
         /* --- Change Venue screen (Venue List / Map) --- */
         .venue-screen {
             position: fixed; inset: 0; background: var(--spotify-black);
@@ -801,7 +807,7 @@
             cursor: pointer; border-bottom: 2px solid transparent;
         }
         .venue-tab.is-active { color: var(--spotify-green); border-bottom-color: var(--spotify-green); }
-        .venue-tab-content { flex: 1; overflow-y: auto; display: none; }
+        .venue-tab-content { flex: 1; overflow-y: auto; display: none; position: relative; }
         .venue-tab-content.is-active { display: block; }
 
         .venue-list-item {
@@ -820,6 +826,20 @@
 
         #venue-map { width: 100%; height: 100%; }
         .maplibregl-ctrl-attrib a { color: rgba(255,255,255,0.7) !important; }
+
+        /* "Zoom to my location" - sits top-right over the map, out of the
+           way of MapLibre's own zoom/attribution controls in the bottom
+           corners. */
+        .venue-map-locate-btn {
+            position: absolute; top: 12px; right: 12px; z-index: 5;
+            width: 34px; height: 34px; border-radius: 4px; border: none;
+            background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; padding: 0;
+        }
+        .venue-map-locate-btn:hover { background: #f2f2f2; }
+        .venue-map-locate-btn:disabled { opacity: 0.6; cursor: default; }
+        .venue-map-locate-btn svg { width: 20px; height: 20px; fill: #333; }
 
         /* Small round marker icon on the venue map - same icon as the
            browser tab favicon, per spec. Plain <img>, not a MapLibre default
@@ -896,6 +916,13 @@
             <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
             <span>Leave Venue</span>
         </button>
+        <div class="sidebar-footer">
+            <div class="spotify-attribution-inline">
+                <span>Powered by</span>
+                <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
+            </div>
+            <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
+        </div>
     </div>
 
     <!-- CHANGE VENUE SCREEN -->
@@ -915,6 +942,9 @@
         </div>
         <div class="venue-tab-content" id="venue-map-content">
             <div id="venue-map"></div>
+            <button type="button" class="venue-map-locate-btn" id="venue-map-locate-btn" onclick="zoomToMyLocation()" title="Zoom to my location" aria-label="Zoom to my location">
+                <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 3A9.001 9.001 0 0 0 13 3.06V1h-2v2.06A9.001 9.001 0 0 0 3.06 11H1v2h2.06A9.001 9.001 0 0 0 11 20.94V23h2v-2.06A9.001 9.001 0 0 0 20.94 13H23v-2h-2.06zM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"/></svg>
+            </button>
         </div>
     </div>
 
@@ -952,17 +982,6 @@
             <div class="section-title" id="list-title">Live Queue</div>
         </div>
         <div id="main-display-list"></div>
-
-        <!-- Sits in normal page flow (not fixed), so it naturally moves down
-             as search results or the queue list grow/shrink, rather than
-             overlapping content or staying pinned in one spot. -->
-        <div class="page-footer">
-            <div class="spotify-attribution-inline">
-                <span>Powered by</span>
-                <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
-            </div>
-            <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
-        </div>
     </div>
 
     <!-- MY REQUESTS MODAL -->
@@ -982,7 +1001,7 @@
     <div class="modal-overlay" id="username-modal">
         <div class="username-modal-box">
             <h3>What's your name?</h3>
-            <p>So the DJ knows who requested each song. Only the DJ can see this.</p>
+            <p>So the admin knows who requested each song. Only the admin can see this.</p>
             <input type="text" id="username-input" class="username-input" placeholder="Your name" maxlength="30" onkeydown="if(event.key === 'Enter') saveUsername()">
             <button class="username-save-btn" onclick="saveUsername()">Continue</button>
         </div>
@@ -1003,9 +1022,9 @@
 
                 <h4>What we collect</h4>
                 <ul>
-                    <li><strong>The name you type in</strong> when you make your first request. It's shown to the DJ/admin so they know who requested each song - that's the only reason it's collected.</li>
+                    <li><strong>The name you type in</strong> when you make your first request. It's shown to the admin so they know who requested each song - that's the only reason it's collected.</li>
                     <li><strong>A random anonymous ID</strong>, generated in your browser and stored locally on your device, used only to stop the same device from voting on a song more than once. It isn't linked to your name or any personal info.</li>
-                    <li><strong>Your song requests and votes themselves</strong> (title, artist, timestamp), so the queue can function and the DJ can see request history for the event.</li>
+                    <li><strong>Your song requests and votes themselves</strong> (title, artist, timestamp), so the queue can function and the admin can see request history for the event.</li>
                 </ul>
 
                 <h4>If you use "Connect Spotify"</h4>
@@ -1099,7 +1118,7 @@
                         resolve(userLocation);
                     },
                     () => resolve(null), // denied, unavailable, or timed out - fall back gracefully
-                    { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 5 * 60 * 1000 }
                 );
             });
             return userLocationPromise;
@@ -1135,6 +1154,7 @@
             // comes back from creditsStorageKey() inside fetchSystemState.
             lastGuestQueue = [];
             spotifyUpcomingQueue = [];
+            stopGeofenceWatch();
             fetchSystemState();
             pollNowPlaying();
         }
@@ -1146,6 +1166,7 @@
             EVENT_SLUG = '';
             localStorage.removeItem(SELECTED_VENUE_KEY);
             updateSidebarCurrentVenueLabel(null);
+            stopGeofenceWatch();
             renderNoVenueState();
             if (reason) showToast(reason, "error");
         }
@@ -1245,6 +1266,14 @@
             }
         }
 
+        // Same New Zealand default view used on the event-creation page's
+        // location picker - most events/venues here are local, so this is a
+        // more useful starting view than the guest's own position (which
+        // could be a while from any venue, or unavailable/denied).
+        const NZ_MAP_CENTER = [172.8, -41.2];
+        const NZ_MAP_ZOOM = 4.6;
+        let venueMapUserMarker = null;
+
         async function initVenueMapIfNeeded() {
             if (venueMapInitialized) return;
             venueMapInitialized = true;
@@ -1252,20 +1281,53 @@
             venueMap = new maplibregl.Map({
                 container: 'venue-map',
                 style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
-                // Zoomed into the guest's location when we have it (city/
-                // neighborhood level) instead of the whole-world default -
-                // that default is only a fallback for denied/unsupported
-                // geolocation.
-                center: loc ? [loc.longitude, loc.latitude] : [0, 20],
-                zoom: loc ? 12 : 1.5
+                // Always opens centred on New Zealand, regardless of where
+                // the guest actually is - the "locate me" button below is
+                // how they zoom to their own position instead.
+                center: NZ_MAP_CENTER,
+                zoom: NZ_MAP_ZOOM
             });
             venueMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
             venueMap.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
             if (loc) {
                 const meEl = document.createElement('div');
                 meEl.className = 'venue-map-user-marker';
-                new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
+                venueMapUserMarker = new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
             }
+        }
+
+        // "Locate me" button on the venue map - flies to the guest's own
+        // position and zooms in close, rather than leaving them to hunt for
+        // themselves on the New Zealand-wide default view.
+        async function zoomToMyLocation() {
+            if (!venueMap) return;
+            const btn = document.getElementById('venue-map-locate-btn');
+            if (btn) btn.disabled = true;
+            // Bypasses the cached getUserLocation() promise - the guest is
+            // explicitly asking for a fresh, current fix right now, not
+            // whatever was cached (possibly minutes old) on page load.
+            const loc = await new Promise(resolve => {
+                if (!navigator.geolocation) { resolve(null); return; }
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                );
+            });
+            if (btn) btn.disabled = false;
+            if (!loc) {
+                showToast("Couldn't get your location. Check location permissions and try again.", "error");
+                return;
+            }
+            userLocation = loc;
+            if (venueMapUserMarker) {
+                venueMapUserMarker.setLngLat([loc.longitude, loc.latitude]);
+            } else {
+                const meEl = document.createElement('div');
+                meEl.className = 'venue-map-user-marker';
+                venueMapUserMarker = new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
+            }
+            venueMap.flyTo({ center: [loc.longitude, loc.latitude], zoom: 14 });
         }
 
         let venueMapMarkers = [];
@@ -1375,6 +1437,44 @@
         let lastGuestQueue = [];
         let spotifyUpcomingQueue = [];
 
+        // --- 300m geofence (mirrors the server's own REQUEST_RADIUS_METERS
+        // check on /api/request) - this just gives an upfront, always-on
+        // "you're too far away" state on the search bar itself, instead of
+        // only finding out via an error toast after trying to submit. Only
+        // active once we know the venue's pinned coordinates (from /data)
+        // and the venue actually has one set.
+        const GEOFENCE_RADIUS_KM = 0.3;
+        let venueGeoLat = null;
+        let venueGeoLon = null;
+        let geofenceWatchId = null;
+        let outOfGeofenceRange = false;
+
+        function startGeofenceWatch() {
+            if (geofenceWatchId !== null || !navigator.geolocation) return;
+            geofenceWatchId = navigator.geolocation.watchPosition(
+                pos => {
+                    const distKm = haversineDistanceKm(pos.coords.latitude, pos.coords.longitude, venueGeoLat, venueGeoLon);
+                    const nowOutOfRange = distKm > GEOFENCE_RADIUS_KM;
+                    if (nowOutOfRange !== outOfGeofenceRange) {
+                        outOfGeofenceRange = nowOutOfRange;
+                        fetchSystemState();
+                    }
+                },
+                () => { /* denied/unavailable - don't block guests who can't share location */ },
+                { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 }
+            );
+        }
+
+        function stopGeofenceWatch() {
+            if (geofenceWatchId !== null && navigator.geolocation) {
+                navigator.geolocation.clearWatch(geofenceWatchId);
+            }
+            geofenceWatchId = null;
+            venueGeoLat = null;
+            venueGeoLon = null;
+            outOfGeofenceRange = false;
+        }
+
         if (!localStorage.getItem('voterSignatureToken')) {
             localStorage.setItem('voterSignatureToken', 'voter_' + Math.random().toString(36).substr(2, 9));
         }
@@ -1455,6 +1555,18 @@
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
 
+                // Only venues the organizer actually pinned a location for
+                // (at creation) get the geofence check - unpinned venues
+                // have no coordinates to measure against, same as the
+                // server-side check this mirrors.
+                if (typeof data.venueLatitude === 'number' && typeof data.venueLongitude === 'number') {
+                    venueGeoLat = data.venueLatitude;
+                    venueGeoLon = data.venueLongitude;
+                    startGeofenceWatch();
+                } else {
+                    stopGeofenceWatch();
+                }
+
                 const spotifyBtn = document.getElementById('connect-spotify-btn');
                 const spotifyEnabled = data.spotifyConnectEnabled !== false;
                 if (spotifyBtn) spotifyBtn.style.display = spotifyEnabled ? '' : 'none';
@@ -1491,13 +1603,15 @@
                 // the DJ manually pausing them, or the queue length cap auto-closing
                 // once it hits the configured max - each gets its own message.
                 const searchInput = document.getElementById('search-input');
-                const effectivelyOpen = systemRequestsAllowed && !queueIsFull;
+                const effectivelyOpen = systemRequestsAllowed && !queueIsFull && !outOfGeofenceRange;
                 if (!effectivelyOpen) {
                     searchInput.disabled = true;
                     searchInput.value = "";
-                    searchInput.placeholder = queueIsFull
+                    searchInput.placeholder = outOfGeofenceRange
+                        ? "You are no longer at this location"
+                        : queueIsFull
                         ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
-                        : "Song submissions are currently paused by the DJ.";
+                        : "Song submissions are currently paused by the admin.";
                     document.getElementById('list-title').innerText = "Live Queue";
                     renderQueue(data.queue);
                 } else {
@@ -1610,7 +1724,7 @@
             const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
 
             if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
-                display.innerHTML = '<p class="empty-placeholder">No songs requested yet. Be the first!</p>';
+                setQueueDisplayHtml(display, '<p class="empty-placeholder">No songs requested yet. Be the first!</p>');
                 return;
             }
 
@@ -1665,7 +1779,21 @@
                 </div>
             `).join('');
 
-            display.innerHTML = guestRowsHtml + spotifyRowsHtml;
+            setQueueDisplayHtml(display, guestRowsHtml + spotifyRowsHtml);
+        }
+
+        // This poll runs every 4 seconds (fetchSystemState/pollNowPlaying)
+        // and, most of the time, nothing about the queue has actually
+        // changed. Rebuilding #main-display-list's innerHTML unconditionally
+        // on every poll was tearing down and recreating every row (images,
+        // buttons, everything) even when nothing was different, which is
+        // what caused the periodic flicker/glitch guests were seeing. Only
+        // touching the DOM when the markup actually differs fixes that.
+        let lastRenderedQueueHtml = null;
+        function setQueueDisplayHtml(display, html) {
+            if (html === lastRenderedQueueHtml) return;
+            lastRenderedQueueHtml = html;
+            display.innerHTML = html;
         }
 
         async function castVote(id, type) {
