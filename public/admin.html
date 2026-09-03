@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
-    <title>DJ Dashboard</title>
+    <title>Admin Dashboard</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="DJ Admin">
+    <meta name="apple-mobile-web-app-title" content="Admin Dashboard">
 
     <style>
         :root {
@@ -751,7 +751,7 @@
 
     <div id="admin-lock-screen">
         <div class="lock-container">
-            <h2>Enter DJ Password</h2>
+            <h2>Enter Admin Password</h2>
             <input type="password" id="password-input" class="lock-input" placeholder="••••••••" onkeydown="if(event.key === 'Enter') verifyPassword()">
             <button class="lock-btn" onclick="verifyPassword()">Unlock Dashboard</button>
             <div id="lock-error-msg" class="lock-error">Incorrect password. Access denied.</div>
@@ -834,7 +834,7 @@
                 </div>
             </div>
             <div id="playback-disconnected-view" class="playback-disconnected">
-                Connect the DJ Spotify account under <strong>Settings → Spotify</strong> to control playback from here.
+                Connect the admin Spotify account under <strong>Settings → Spotify</strong> to control playback from here.
             </div>
         </div>
     </div>
@@ -965,7 +965,7 @@
                         <div class="settings-card">
                             <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
                             <div class="filter-panel">
-                                <p class="filter-hint">Pick genres/decades to restrict what guests can search and request. Leave everything unchecked to allow anything.</p>
+                                <p class="filter-hint">Genres: pick any you DON'T want played tonight - guests won't be able to search or request them. Decades: pick any to restrict guests to only those decades. Leave everything unchecked to allow anything.</p>
                                 <div class="filter-group-label">Genres</div>
                                 <div class="filter-chip-row" id="genre-filter-chips"></div>
                                 <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
@@ -1012,7 +1012,7 @@
                         <div class="settings-card">
                             <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
-                                Independent settings for a DJ-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
+                                Independent settings for an admin-attended kiosk device - separate on/off, Spotify button, and credit rules from regular guests. Each physical kiosk still gets its own credit bank, same as any guest's phone.
                             </p>
                             <div class="control-bar" style="margin-bottom: 20px;">
                                 <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
@@ -1535,7 +1535,7 @@ async function verifyPassword() {
             const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
 
             if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
-                queueList.innerHTML = '<p class="empty-placeholder">Queue empty. Waiting for student requests...</p>';
+                queueList.innerHTML = '<p class="empty-placeholder">Queue empty.</p>';
                 return;
             }
 
