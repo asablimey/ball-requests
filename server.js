@@ -328,6 +328,24 @@ let spotifyAccessToken = "";
 const MIN_VOTE_INTERVAL_MS = 400;
 const MIN_REQUEST_INTERVAL_MS = 1500;
 
+// How close a guest's device has to be to the event's pinned venue location
+// to be allowed to actually add a song - browsing/viewing the queue is never
+// gated, only the request itself. Loose enough to allow for GPS drift and a
+// venue that spans a building/parking lot, tight enough that someone across
+// town can't request. Events created without a venue pin (venueLatitude/
+// venueLongitude are both null - see new-event.html's optional map picker)
+// have nothing to check distance against, so they're never gated by this.
+const REQUEST_RADIUS_METERS = 300;
+
+function haversineMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = deg => deg * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function getOrCreateVoterCreditState(event, voterId, maxCredits) {
     let state = event.voterCreditState[voterId];
     if (!state) {
@@ -773,6 +791,26 @@ function buildRequestHandler(isKiosk) {
         if (isQueueFull(event)) return res.status(403).json({ error: `Queue is full (max ${event.systemConfigs.maxQueueLength} songs) - wait for it to drain.` });
         if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
         const voterId = req.serverVoterId;
+
+        // Kiosk requests skip this - a kiosk is a fixed device physically at
+        // the venue by definition. Only the guest's own phone (isKiosk ===
+        // false) needs to prove it's actually near the pinned venue location,
+        // and only if the organizer actually pinned one at creation.
+        if (!isKiosk && typeof event.venueLatitude === 'number' && typeof event.venueLongitude === 'number') {
+            const lat = parseFloat(req.body.lat);
+            const lng = parseFloat(req.body.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                return res.status(403).json({ error: "Location needed to request a song here.", locationRequired: true });
+            }
+            const distanceMeters = haversineMeters(lat, lng, event.venueLatitude, event.venueLongitude);
+            if (distanceMeters > REQUEST_RADIUS_METERS) {
+                return res.status(403).json({
+                    error: `You're too far from the venue to request a song here (${Math.round(distanceMeters / 1000 * 10) / 10}km away).`,
+                    locationTooFar: true,
+                    distanceMeters: Math.round(distanceMeters)
+                });
+            }
+        }
 
         const lastRequestAt = event.voterLastRequestAt[voterId] || 0;
         if (Date.now() - lastRequestAt < MIN_REQUEST_INTERVAL_MS) {
