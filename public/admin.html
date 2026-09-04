@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -780,6 +781,7 @@
         <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
         <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
         <button id="tab-btn-stats" class="tab-button" onclick="switchTab('stats')">Stats</button>
+        <button id="tab-btn-scheduler" class="tab-button" onclick="openScheduler()" title="Opens the playout scheduler in a new tab">Scheduler ↗</button>
     </div>
 
     <div id="tab-panel-playback" class="tab-content">
@@ -1104,6 +1106,11 @@
         // goes through eventUrl() so it hits the right event's data.
         const EVENT_SLUG = location.pathname.split('/')[2] || '';
         function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+        function openScheduler() {
+            const pendingUrl = `${location.origin}${eventUrl('/api/scheduler/pending')}`;
+            const schedulerUrl = `${eventUrl('/scheduler')}?crowdEndpoint=${encodeURIComponent(pendingUrl)}`;
+            window.open(schedulerUrl, '_blank');
+        }
 
         // Toast notifications - non-blocking replacement for alert()
         let toastTimer = null;
