@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <title>Master Admin</title>
+
+    <style>
+        :root {
+            --spotify-green: #1DB954;
+            --spotify-black: #121212;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+            --red-action: #e91429;
+        }
+        html { overflow-x: hidden; }
+        body {
+            background-color: var(--spotify-black);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 25px;
+            box-sizing: border-box;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+        * { box-sizing: border-box; }
+
+        #lock-screen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: var(--spotify-black);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 9999; padding: 20px;
+        }
+        .lock-container {
+            background-color: var(--panel-bg); border: 1px solid #282828;
+            padding: 40px; border-radius: 16px; text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5); max-width: 340px; width: 100%;
+        }
+        .lock-container h2 { margin: 0 0 8px; font-size: 1.5rem; }
+        .lock-container p { color: #a7a7a7; font-size: 0.85rem; margin: 0 0 20px; line-height: 1.4; }
+        .lock-input {
+            width: 100%; background-color: var(--card-bg); border: 1px solid #333;
+            padding: 12px; color: white; border-radius: 8px; font-size: 1rem;
+            outline: none; text-align: center; margin-bottom: 15px;
+        }
+        .lock-input:focus { border-color: var(--spotify-green); }
+        .lock-btn {
+            background-color: var(--spotify-green); color: white; border: none;
+            padding: 12px 24px; border-radius: 50px; font-weight: 700; cursor: pointer;
+            width: 100%; font-size: 1rem;
+        }
+        .lock-btn:hover { filter: brightness(1.1); }
+        .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 12px; display: none; }
+
+        #dashboard { display: none; max-width: 720px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap; border-bottom: 1px solid #282828; padding-bottom: 20px; margin-bottom: 20px; }
+        h1 { margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.5px; }
+        .subtitle { color: #a7a7a7; font-size: 0.85rem; margin-top: 4px; }
+        .refresh-btn {
+            background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
+        }
+        .refresh-btn:hover { border-color: #555; }
+
+        .event-card {
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 12px;
+            padding: 18px 20px; margin-bottom: 14px; display: flex; justify-content: space-between;
+            align-items: center; gap: 16px; flex-wrap: wrap;
+        }
+        .event-info { min-width: 0; flex: 1; }
+        .event-name { font-size: 1.05rem; font-weight: 700; }
+        .event-meta { color: #a7a7a7; font-size: 0.8rem; margin-top: 4px; line-height: 1.5; }
+        .event-meta code { background: var(--card-bg); padding: 2px 6px; border-radius: 4px; font-size: 0.78rem; }
+        .badge {
+            display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.4px; padding: 2px 8px; border-radius: 20px; margin-left: 6px;
+        }
+        .badge.open { background: rgba(29,185,84,0.18); color: var(--spotify-green); }
+        .badge.closed { background: rgba(255,255,255,0.08); color: #a7a7a7; }
+
+        .card-actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn { border: none; border-radius: 8px; padding: 10px 16px; font-size: 0.85rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+        .btn-admin { background: var(--card-bg); border: 1px solid #333; color: white; }
+        .btn-admin:hover { border-color: #555; }
+        .btn-close { background: var(--red-action); color: white; }
+        .btn-close:hover { filter: brightness(1.1); }
+        .btn-close:disabled { opacity: 0.5; cursor: default; }
+
+        .empty-state { text-align: center; color: #a7a7a7; padding: 60px 20px; font-size: 0.95rem; }
+        .toast {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 12px 20px; border-radius: 8px; font-size: 0.9rem; opacity: 0;
+            transition: opacity 0.2s ease; pointer-events: none; z-index: 10000;
+        }
+        .toast.show { opacity: 1; }
+        .toast.error { border-color: var(--red-action); }
+    </style>
+</head>
+<body>
+
+    <div id="lock-screen">
+        <div class="lock-container">
+            <h2>Master Admin</h2>
+            <p>This is separate from any single event's password. It's the server-wide key that can open or close <em>any</em> event.</p>
+            <input type="password" id="password-input" class="lock-input" placeholder="Master password" autocomplete="off">
+            <button class="lock-btn" onclick="verifyMasterLogin()">Unlock</button>
+            <div class="lock-error" id="lock-error-msg">Incorrect password.</div>
+        </div>
+    </div>
+
+    <div id="dashboard">
+        <div class="header">
+            <div>
+                <h1>All Events</h1>
+                <div class="subtitle" id="event-count-label">Loading...</div>
+            </div>
+            <button class="refresh-btn" onclick="loadEvents()">↻ Refresh</button>
+        </div>
+        <div id="events-list"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let masterPassword = '';
+
+        function showToast(message, kind) {
+            const el = document.getElementById('toast');
+            el.textContent = message;
+            el.className = 'toast show' + (kind === 'error' ? ' error' : '');
+            setTimeout(() => { el.className = 'toast'; }, 3000);
+        }
+
+        async function verifyMasterLogin() {
+            const input = document.getElementById('password-input');
+            const errorMsg = document.getElementById('lock-error-msg');
+            const attempt = input.value;
+
+            try {
+                const res = await fetch('/api/master/events', { headers: { 'x-admin-password': attempt } });
+                if (res.ok) {
+                    masterPassword = attempt;
+                    document.getElementById('lock-screen').style.display = 'none';
+                    document.getElementById('dashboard').style.display = 'block';
+                    const data = await res.json();
+                    renderEvents(data.events || []);
+                    return;
+                }
+            } catch (e) { /* fall through to error state below */ }
+
+            errorMsg.style.display = 'block';
+            input.value = '';
+            input.focus();
+        }
+
+        document.getElementById('password-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') verifyMasterLogin();
+        });
+
+        async function loadEvents() {
+            document.getElementById('event-count-label').textContent = 'Loading...';
+            try {
+                const res = await fetch('/api/master/events', { headers: { 'x-admin-password': masterPassword } });
+                if (!res.ok) {
+                    showToast('Could not load events - the master password may have changed.', 'error');
+                    return;
+                }
+                const data = await res.json();
+                renderEvents(data.events || []);
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function formatDate(ms) {
+            if (typeof ms !== 'number') return 'Unknown date';
+            try {
+                return new Date(ms).toLocaleString(undefined, {
+                    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                });
+            } catch (e) { return 'Unknown date'; }
+        }
+
+        function renderEvents(list) {
+            const container = document.getElementById('events-list');
+            const countLabel = document.getElementById('event-count-label');
+            countLabel.textContent = list.length === 1 ? '1 event' : `${list.length} events`;
+
+            if (list.length === 0) {
+                container.innerHTML = '<div class="empty-state">No events exist right now.</div>';
+                return;
+            }
+
+            container.innerHTML = list.map(ev => {
+                const slug = escapeHtml(ev.slug);
+                const name = escapeHtml(ev.eventName || ev.slug);
+                const venue = ev.venueName ? ` &middot; ${escapeHtml(ev.venueName)}` : '';
+                const statusBadge = ev.requestsAllowed
+                    ? '<span class="badge open">Requests open</span>'
+                    : '<span class="badge closed">Requests off</span>';
+                return `
+                    <div class="event-card" id="card-${slug}">
+                        <div class="event-info">
+                            <div class="event-name">${name}${statusBadge}</div>
+                            <div class="event-meta">
+                                <code>/e/${slug}</code>${venue}<br>
+                                Created ${formatDate(ev.createdAt)}
+                            </div>
+                        </div>
+                        <div class="card-actions">
+                            <a class="btn btn-admin" href="/e/${slug}/admin" target="_blank" rel="noopener">Open Admin</a>
+                            <button class="btn btn-close" onclick="closeEvent('${slug}', '${name.replace(/'/g, "\\'")}')">Close</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function closeEvent(slug, eventName) {
+            const confirmed = confirm(`Permanently close "${eventName}" (/e/${slug})?\n\nThis deletes its queue, history, settings, and Spotify connection. This can't be undone, and the URL becomes free for anyone to reuse.`);
+            if (!confirmed) return;
+
+            const card = document.getElementById(`card-${slug}`);
+            const closeBtn = card ? card.querySelector('.btn-close') : null;
+            if (closeBtn) { closeBtn.disabled = true; closeBtn.textContent = 'Closing...'; }
+
+            try {
+                const res = await fetch(`/e/${slug}/api/admin`, {
+                    method: 'DELETE',
+                    headers: { 'x-admin-password': masterPassword }
+                });
+                if (res.ok) {
+                    showToast(`Closed "${eventName}".`);
+                    if (card) card.remove();
+                    const remaining = document.querySelectorAll('.event-card').length;
+                    document.getElementById('event-count-label').textContent = remaining === 1 ? '1 event' : `${remaining} events`;
+                    if (remaining === 0) {
+                        document.getElementById('events-list').innerHTML = '<div class="empty-state">No events exist right now.</div>';
+                    }
+                } else {
+                    showToast('Could not close the event. Try again.', 'error');
+                    if (closeBtn) { closeBtn.disabled = false; closeBtn.textContent = 'Close'; }
+                }
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+                if (closeBtn) { closeBtn.disabled = false; closeBtn.textContent = 'Close'; }
+            }
+        }
+    </script>
+</body>
+</html>
