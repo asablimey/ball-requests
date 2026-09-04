@@ -334,6 +334,14 @@ let spotifyAccessToken = "";
 const MIN_VOTE_INTERVAL_MS = 400;
 const MIN_REQUEST_INTERVAL_MS = 1500;
 
+// A song that just left the active queue (played OR dropped) can't be
+// requested again until this many OTHER songs have also departed in
+// between. Unlike the per-voter rate limits above, this is global and
+// per-song - it doesn't matter who's asking or how long it's been in
+// minutes, only how many other songs have come and gone. Applies for the
+// rest of the event, with no override - see isSongOnCooldown below.
+const SONG_REQUEST_GAP = 20;
+
 // How close a guest's device has to be to the event's pinned venue location
 // to be allowed to actually add a song - browsing/viewing the queue is never
 // gated, only the request itself. Loose enough to allow for GPS drift and a
@@ -383,7 +391,15 @@ function markRequestLogStatus(event, trackId, newStatus) {
 }
 
 function logDepartedTrack(event, track, outcome) {
+    // Tick the gap counter and stamp this track's id with the count it left
+    // on, regardless of outcome - a drop counts the same as a play for
+    // spacing purposes. See SONG_REQUEST_GAP.
+    event.songDepartureCounter = (event.songDepartureCounter || 0) + 1;
+    if (!event.songLastDeparture) event.songLastDeparture = {};
+    event.songLastDeparture[track.id] = event.songDepartureCounter;
+
     event.queueHistoryLog.push({
+        id: track.id,
         title: track.title,
         artist: track.artist,
         artwork: track.artwork,
@@ -397,6 +413,15 @@ function logDepartedTrack(event, track, outcome) {
     });
     // Keep this from growing forever across a long-running event.
     if (event.queueHistoryLog.length > 3000) event.queueHistoryLog = event.queueHistoryLog.slice(-3000);
+}
+
+// True if this track departed the queue too recently (fewer than
+// SONG_REQUEST_GAP other departures ago) to be requested again. A track
+// that has never departed (or never existed) is never on cooldown.
+function isSongOnCooldown(event, trackId) {
+    const lastDeparture = event.songLastDeparture && event.songLastDeparture[trackId];
+    if (lastDeparture === undefined) return false;
+    return (event.songDepartureCounter - lastDeparture) < SONG_REQUEST_GAP;
 }
 
 // Used only where user-supplied data (eventName) gets interpolated directly
@@ -825,6 +850,11 @@ app.get('/e/:slug/api/search', async (req, res) => {
             tracks = tracks.filter(track => !isExtendedOrClubMix(track.name));
         }
 
+        // Same rule the request endpoint enforces (see SONG_REQUEST_GAP) -
+        // filtered out of search too, so a guest never sees a song only to
+        // have it rejected the moment they try to actually request it.
+        tracks = tracks.filter(track => !isSongOnCooldown(event, track.id));
+
         if (event.systemConfigs.decadeFilter && event.systemConfigs.decadeFilter.length > 0) {
             tracks = tracks.filter(track => {
                 if (!track._releaseYear) return false;
@@ -929,6 +959,10 @@ function buildRequestHandler(isKiosk) {
             primaryArtistId = t.artists?.[0]?.id || null;
         } catch (err) {
             return res.status(500).json({ error: "Could not verify track with Spotify." });
+        }
+
+        if (isSongOnCooldown(event, verifiedTrack.id)) {
+            return res.status(403).json({ error: "That song was just played - it needs to sit out a while before it can be requested again." });
         }
 
         if (event.systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
