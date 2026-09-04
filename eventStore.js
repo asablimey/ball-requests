@@ -139,6 +139,17 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         requestLog: [],
         queueHistoryLog: [],
 
+        // Powers the "N-song gap" rule (see SONG_REQUEST_GAP in server.js): every
+        // time a track leaves the active queue (played OR dropped), this counter
+        // ticks up by one and the track's id is stamped with the count it left
+        // on. A later request for that same id is blocked until the counter has
+        // advanced far enough past that stamp - i.e. until enough *other* songs
+        // have come and gone in between. Persists for the life of the event
+        // (never reset, never trimmed), unlike queueHistoryLog which caps at
+        // 3000 entries - this is a tiny id->number map, not a growing log.
+        songDepartureCounter: 0,
+        songLastDeparture: {}, // trackId -> songDepartureCounter value at departure
+
         // Plain objects instead of Maps so this round-trips through
         // JSON.stringify/parse with no extra conversion step.
         voterCreditState: {},   // voterId -> { available, lastRefill }
