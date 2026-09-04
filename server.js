@@ -412,6 +412,15 @@ function formatDuration(ms) {
     return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
+// Inverse of formatDuration, for the scheduler's pending-requests feed below -
+// activeQueue only ever kept the display string, not the raw ms.
+function parseDurationToMs(durationStr) {
+    if (!durationStr || typeof durationStr !== 'string') return 180000;
+    const parts = durationStr.split(':').map(Number);
+    if (parts.length !== 2 || parts.some(Number.isNaN)) return 180000;
+    return (parts[0] * 60 + parts[1]) * 1000;
+}
+
 // Detects extended/club/dub/DJ-style mixes by the descriptor Spotify usually
 // puts in the track title, e.g. "Song Name - Extended Mix" or "(Club Mix)".
 // Deliberately does NOT flag "radio edit"/"radio mix"/"radio version" or plain
@@ -662,6 +671,9 @@ app.get('/e/:slug/admin', (req, res) => {
 });
 app.get('/e/:slug/kiosk', voterIdentityMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
+});
+app.get('/e/:slug/scheduler', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'scheduler.html'));
 });
 
 // Real, server-side admin auth - gates every /e/:slug/api/admin/* route below.
@@ -1017,6 +1029,21 @@ app.get('/e/:slug/data', (req, res) => {
         queue: buildSortedQueue(event),
         history: event.playedHistory
     });
+});
+
+// Read-only feed for the playout scheduler's Crowd DJ Requests importer -
+// same underlying queue as /data, reshaped into the {id, name, artist,
+// duration_ms} fields it expects, with the raw ms duration recovered since
+// activeQueue only ever kept the "m:ss" display string.
+app.get('/e/:slug/api/scheduler/pending', (req, res) => {
+    const event = req.event;
+    res.json(event.activeQueue.map(t => ({
+        id: t.id,
+        spotifyId: t.id,
+        name: t.title,
+        artist: t.artist,
+        duration_ms: parseDurationToMs(t.duration)
+    })));
 });
 
 app.get('/e/:slug/kiosk-data', (req, res) => {
