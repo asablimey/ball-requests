@@ -385,6 +385,44 @@ async function getActiveEventsSummary() {
     return summaries;
 }
 
+// Master-admin-only listing: same event set as getActiveEventsSummary above,
+// but this one is never exposed to guests (see the /api/master/events route
+// in server.js, gated on the master password only), so it's fine to include
+// a bit more operational context - createdAt, whether requests are open -
+// to help a DJ recognize which of several stale/forgotten events is which.
+// Still never includes adminPasswordHash or Spotify tokens: the master
+// password already grants full control over any single event via the
+// existing per-slug admin routes, so there's no reason for this list itself
+// to carry secrets over the wire too.
+async function getAllEventsForMaster() {
+    let slugs;
+    try {
+        slugs = await redisIndexMembers();
+    } catch (err) {
+        console.error('[EVENTS] Failed to read event index:', err.message);
+        return [];
+    }
+    const summaries = [];
+    await Promise.all(slugs.map(async (slug) => {
+        try {
+            const raw = await redisGet(eventKey(slug));
+            if (raw == null) return; // index entry pointing at a deleted event; skip
+            const data = JSON.parse(raw);
+            summaries.push({
+                slug: data.slug || slug,
+                eventName: (data.systemConfigs && data.systemConfigs.eventName) || data.slug || slug,
+                venueName: data.venueName || null,
+                createdAt: typeof data.createdAt === 'number' ? data.createdAt : null,
+                requestsAllowed: !!(data.systemConfigs && data.systemConfigs.requestsAllowed)
+            });
+        } catch (err) {
+            console.error(`[EVENTS] Skipping unreadable event "${slug}" in master list:`, err.message);
+        }
+    }));
+    summaries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); // newest first
+    return summaries;
+}
+
 // Permanently removes an event: cancels any pending debounced write (so it
 // can't resurrect the entry a moment later), deletes it from Redis, removes
 // it from the slug index, and drops it from the in-memory cache. The slug
@@ -415,5 +453,6 @@ module.exports = {
     flushAllSaves,
     verifyPassword,
     getLoadedEvents,
-    getActiveEventsSummary
+    getActiveEventsSummary,
+    getAllEventsForMaster
 };
