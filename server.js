@@ -697,6 +697,41 @@ async function requireAdminAuth(req, res, next) {
 }
 app.use('/e/:slug/api/admin', adminAuthLimiter, requireAdminAuth);
 
+// Master-only, not scoped to any one event: lists every event that exists
+// (slug, name, venue, created date) so a DJ who's lost track of an event's
+// slug or forgotten its individual password can find it and close it
+// without hunting through old links. There's no :slug on this route for the
+// usual requireAdminAuth/adminAuthLimiter pairing to attach to (those are
+// registered on '/e/:slug/api/admin' specifically), so this checks the
+// master password directly and gets its own rate limiter on the same terms.
+const masterAuthLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Too many failed attempts. Try again later.' }
+});
+app.get('/api/master/events', masterAuthLimiter, async (req, res) => {
+    if (!verifyMasterPassword(req.headers['x-admin-password'])) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    try {
+        const list = await events.getAllEventsForMaster();
+        res.json({ events: list });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not load events.' });
+    }
+});
+
+// Serves the master dashboard itself. The page is just a static shell behind
+// its own password lock (same pattern as admin.html) - nothing here is
+// served without the correct master password, so there's no auth need on
+// this particular route.
+app.get('/master', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'master.html'));
+});
+
 // Mints a short-lived, single-use ticket that stands in for the admin
 // password on the full-page redirect used by /e/:slug/admin/spotify-login
 // below. Protected by the requireAdminAuth middleware just registered above,
