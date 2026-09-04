@@ -1320,7 +1320,7 @@ async function verifyPassword() {
             const dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
             if (!dataUrl) { showToast('QR code not ready yet.', 'error'); return; }
 
-            const eventName = document.getElementById('event-name-header')?.innerText || 'Request a Song';
+            const eventName = document.getElementById('input-event-name')?.value?.trim() || 'Request a Song';
             const win = window.open('', '_blank');
             if (!win) { showToast('Pop-up blocked - allow pop-ups to print.', 'error'); return; }
             win.document.write(`
