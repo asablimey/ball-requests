@@ -97,6 +97,12 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
+// Optional master admin password (set as ADMIN_PASSWORD in Render's env vars).
+// Lets you get into ANY event's admin page - and close it - without knowing
+// that event's individual password. If it's not set, this feature is simply
+// off and every event falls back to needing its own password, same as before.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
 // --- DJ Spotify Queue Relay ---
 // Separate from the client-credentials token below (which only reads the public
 // catalog for search) and separate from guests' own read-only PKCE login. This is
@@ -664,9 +670,25 @@ app.get('/e/:slug/kiosk', voterIdentityMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
 });
 
+// Constant-time compare against the master password. Hashing both sides
+// first (instead of comparing the raw strings/buffers directly) means a
+// length mismatch can't short-circuit the comparison and leak timing info,
+// and it lets us bail out cleanly when ADMIN_PASSWORD isn't set at all.
+function verifyMasterPassword(provided) {
+    if (!ADMIN_PASSWORD || typeof provided !== 'string') return false;
+    const a = crypto.createHash('sha256').update(provided).digest();
+    const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+    return crypto.timingSafeEqual(a, b);
+}
+
 // Real, server-side admin auth - gates every /e/:slug/api/admin/* route below.
+// Accepts either that event's own password, or the master password above -
+// either one is enough to manage (and close) any event.
 async function requireAdminAuth(req, res, next) {
     const provided = req.headers['x-admin-password'];
+    if (verifyMasterPassword(provided)) {
+        return next();
+    }
     const ok = await events.verifyPassword(provided, req.event.adminPasswordHash);
     if (!ok) {
         return res.status(401).json({ error: 'Unauthorized.' });
