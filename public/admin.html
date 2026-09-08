@@ -141,6 +141,32 @@
             box-sizing: border-box;
         }
 
+        .join-row { display: flex; gap: 10px; }
+        .join-row input[type="text"] {
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            padding: 10px 14px;
+            color: white;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            flex: 1;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        .settings-card-hint { color: #a7a7a7; font-size: 0.82rem; line-height: 1.4; }
+        .search-result-row {
+            display: flex; align-items: center; gap: 12px;
+            padding: 8px 0; border-bottom: 1px solid #282828;
+        }
+        .search-result-row:last-child { border-bottom: none; }
+        .search-result-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+        .search-result-text { flex: 1; min-width: 0; }
+        .search-result-title { font-weight: 700; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .search-result-artist { font-size: 0.8rem; color: #a7a7a7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .btn-add-track { background-color: var(--spotify-green); color: white; border: none; border-radius: 8px; padding: 8px 14px; font-size: 0.8rem; font-weight: 700; cursor: pointer; flex-shrink: 0; }
+        .btn-add-track:hover { filter: brightness(1.1); }
+        .btn-add-track:disabled { opacity: 0.6; cursor: default; }
+
         .save-config-btn {
             background-color: white;
             color: black;
@@ -569,10 +595,32 @@
         
         .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
         .btn:hover { filter: brightness(1.1); }
-        .btn-top { background-color: var(--blue-action); }
         .btn-played { background-color: var(--spotify-green); }
         .btn-remove { background-color: #3e3e3e; }
         .btn-remove:hover { background-color: var(--red-action); }
+        .btn-block { background-color: transparent; border: 1px solid var(--red-action); color: var(--red-action); padding: 8px 12px; font-size: 0.78rem; }
+        .btn-block:hover { background-color: var(--red-action); color: white; }
+        .btn-unblock { background-color: transparent; border: 1px solid #444; color: #ccc; padding: 8px 12px; font-size: 0.78rem; }
+        .btn-unblock:hover { border-color: var(--spotify-green); color: var(--spotify-green); }
+
+        /* Drag handle that replaces the old "Top" button - borderless, sits
+           flush at the far right of the row, grabs on press. */
+        .drag-handle {
+            background: none;
+            border: none;
+            color: #666;
+            padding: 6px 4px;
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            touch-action: none;
+            flex-shrink: 0;
+        }
+        .drag-handle:hover { color: #ccc; }
+        .drag-handle svg { width: 20px; height: 20px; pointer-events: none; }
+        .song-row.dragging { opacity: 0.5; }
+        .song-row.drag-over-top { border-top: 2px solid var(--spotify-green); }
+        .song-row.drag-over-bottom { border-bottom: 2px solid var(--spotify-green); }
 
         .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
@@ -842,6 +890,17 @@
     <div id="tab-panel-queue" class="tab-content active-content">
         <div class="panel">
             <h2>Current Queue</h2>
+
+            <div class="settings-card" style="margin-bottom: 20px;">
+                <div class="settings-section-label">Add a Song</div>
+                <p class="settings-card-hint" style="margin-top: 0;">Drop a track straight into the queue - skips credits, filters, and the queue cap. Good for a verbal request or seeding the queue before doors open.</p>
+                <div class="join-row" style="margin-bottom: 10px;">
+                    <input type="text" id="admin-search-input" placeholder="Search for a song or artist" oninput="onAdminSearchInput()">
+                    <input type="text" id="admin-search-label" placeholder="Requested by (optional)" maxlength="30" style="flex: 0 0 180px;">
+                </div>
+                <div id="admin-search-results"></div>
+            </div>
+
             <div id="queue-list"></div>
         </div>
     </div>
@@ -936,6 +995,14 @@
                                 <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
                             </div>
                         </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Duplicate as Template</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">Carries over your credit/countdown/filter/kiosk rules to a brand-new event - not the name, password, venue, or tonight's queue and history.</p>
+                            <div class="control-bar">
+                                <button class="save-config-btn" onclick="duplicateAsTemplate()">📋 Duplicate as Template for a New Event</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="settings-category-access" class="settings-category-panel">
@@ -972,6 +1039,12 @@
                                 <div class="filter-chip-row" id="decade-filter-chips"></div>
                                 <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
                             </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Blocked Guests</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">Block a guest's device from the Stats tab's "Recent Requests" list. A blocked guest can't request or vote for the rest of this event.</p>
+                            <div id="blocked-guests-list" class="stat-box-body"></div>
                         </div>
                     </div>
 
@@ -1094,6 +1167,12 @@
             <details class="stat-box">
                 <summary>📜 All Requests</summary>
                 <div id="stat-all-requests" class="stat-box-body"></div>
+            </details>
+
+            <details class="stat-box">
+                <summary>🚫 Recent Requests (block a guest)</summary>
+                <p class="settings-card-hint" style="margin: 0 0 10px 0;">Blocking stops that guest's device from requesting or voting for the rest of this event. Manage blocked guests under Settings → Access &amp; Guests.</p>
+                <div id="stat-recent-requests" class="stat-box-body"></div>
             </details>
         </div>
     </div>
@@ -1246,6 +1325,80 @@ async function verifyPassword() {
         // is never forgotten on a new fetch.
         function adminHeaders(extra) {
             return Object.assign({ 'x-admin-password': adminPassword }, extra || {});
+        }
+
+        async function duplicateAsTemplate() {
+            try {
+                const res = await fetch(eventUrl('/api/admin/export-template'), { headers: adminHeaders() });
+                if (!res.ok) { showToast('Could not export settings.', 'error'); return; }
+                const template = await res.json();
+                sessionStorage.setItem('crowddj_template', JSON.stringify(template));
+                window.location.href = '/new';
+            } catch (err) {
+                showToast('Could not reach the server.', 'error');
+            }
+        }
+
+        // Debounced search for the "Add a Song" panel - fires ~350ms after
+        // typing stops so we're not hitting Spotify on every keystroke.
+        let adminSearchDebounce = null;
+        function onAdminSearchInput() {
+            clearTimeout(adminSearchDebounce);
+            const query = document.getElementById('admin-search-input').value.trim();
+            const resultsEl = document.getElementById('admin-search-results');
+            if (!query) { resultsEl.innerHTML = ''; return; }
+            adminSearchDebounce = setTimeout(() => runAdminSearch(query), 350);
+        }
+
+        async function runAdminSearch(query) {
+            const resultsEl = document.getElementById('admin-search-results');
+            try {
+                const res = await fetch(eventUrl(`/api/admin/search?q=${encodeURIComponent(query)}`), {
+                    headers: adminHeaders()
+                });
+                const data = await res.json();
+                const tracks = data.tracks || [];
+                resultsEl.innerHTML = tracks.length === 0
+                    ? '<p class="empty-placeholder">No results.</p>'
+                    : tracks.map(t => `
+                        <div class="search-result-row">
+                            <img src="${safeImageUrl(t.artwork)}">
+                            <div class="search-result-text">
+                                <div class="search-result-title">${escapeHtml(t.name)}${t.explicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+                                <div class="search-result-artist">${escapeHtml(t.artist)}</div>
+                            </div>
+                            <button class="btn-add-track" onclick="addTrackToQueue('${t.id}', this)">+ Add</button>
+                        </div>`).join('');
+            } catch (err) {
+                resultsEl.innerHTML = '<p class="empty-placeholder">Search unavailable right now.</p>';
+            }
+        }
+
+        async function addTrackToQueue(trackId, btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = 'Adding...';
+            const label = document.getElementById('admin-search-label').value.trim();
+            try {
+                const res = await fetch(eventUrl('/api/admin/add-track'), {
+                    method: 'POST',
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ trackId, label })
+                });
+                if (res.ok) {
+                    showToast('Added to the queue.', 'success');
+                    document.getElementById('admin-search-input').value = '';
+                    document.getElementById('admin-search-results').innerHTML = '';
+                    updateDashboard();
+                } else {
+                    showToast('Could not add that track.', 'error');
+                    btnEl.disabled = false;
+                    btnEl.textContent = '+ Add';
+                }
+            } catch (err) {
+                showToast('Could not reach the server.', 'error');
+                btnEl.disabled = false;
+                btnEl.textContent = '+ Add';
+            }
         }
 
         // Guest link is just origin + /e/:slug - the plain guest page, not
@@ -1526,8 +1679,13 @@ async function verifyPassword() {
         // otherwise show up twice.
         let lastGuestQueue = [];
         let spotifyUpcomingQueue = [];
+        // True for the duration of a drag - renderQueueList() no-ops while
+        // true so a background poll tick can't rebuild the list (and lose
+        // the in-progress drag) out from under the DJ's finger/cursor.
+        let isDraggingQueue = false;
 
         function renderQueueList() {
+            if (isDraggingQueue) return;
             const queueList = document.getElementById('queue-list');
             if (!queueList) return;
 
@@ -1540,7 +1698,7 @@ async function verifyPassword() {
             }
 
             const guestRowsHtml = lastGuestQueue.map(song => `
-                <div class="song-row">
+                <div class="song-row" data-track-id="${song.id}">
                     <div class="song-details">
                         <img src="${safeImageUrl(song.artwork)}">
                         <div class="text-container">
@@ -1566,9 +1724,15 @@ async function verifyPassword() {
                                 <span class="vote-display-count">${song.downs || 0}</span>
                             </div>
                         </div>
-                        <button class="btn btn-top" onclick="triggerAction('${song.id}', 'top')">▲ Top</button>
                         <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
                         <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
+                        <button class="drag-handle" type="button" title="Drag to reorder" aria-label="Drag to reorder" onpointerdown="startQueueDrag(event, this)">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="4" y="6" width="16" height="2.2" rx="1"></rect>
+                                <rect x="4" y="11" width="16" height="2.2" rx="1"></rect>
+                                <rect x="4" y="16" width="16" height="2.2" rx="1"></rect>
+                            </svg>
+                        </button>
                     </div>
                 </div>
             `).join('');
@@ -1590,7 +1754,68 @@ async function verifyPassword() {
                 </div>
             `).join('');
 
-            queueList.innerHTML = guestRowsHtml + spotifyRowsHtml;
+            queueList.innerHTML = `<div id="guest-queue-rows">${guestRowsHtml}</div>` + spotifyRowsHtml;
+        }
+
+        // Pointer-based drag reorder for the Live Queue (replaces the old
+        // "Top" button's fake-upvote trick with an actual manual position).
+        // Uses pointer capture on the handle itself so move/up events keep
+        // firing on it regardless of what's under the cursor/finger as the
+        // row moves - works the same for mouse and touch with no separate
+        // touch-event handling needed.
+        function startQueueDrag(evt, handleEl) {
+            if (!isAuthorized) return;
+            evt.preventDefault();
+            const rowEl = handleEl.closest('.song-row');
+            const container = document.getElementById('guest-queue-rows');
+            if (!rowEl || !container) return;
+
+            isDraggingQueue = true;
+            rowEl.classList.add('dragging');
+            handleEl.setPointerCapture(evt.pointerId);
+
+            function onMove(e) {
+                const rows = [...container.querySelectorAll('.song-row')].filter(r => r !== rowEl);
+                let placed = false;
+                for (const r of rows) {
+                    const rect = r.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    if (e.clientY < mid) {
+                        container.insertBefore(rowEl, r);
+                        placed = true;
+                        break;
+                    }
+                }
+                if (!placed) container.appendChild(rowEl);
+            }
+
+            async function onUp(e) {
+                handleEl.releasePointerCapture(evt.pointerId);
+                handleEl.removeEventListener('pointermove', onMove);
+                handleEl.removeEventListener('pointerup', onUp);
+                handleEl.removeEventListener('pointercancel', onUp);
+                rowEl.classList.remove('dragging');
+                isDraggingQueue = false;
+
+                const orderedIds = [...container.querySelectorAll('.song-row')].map(r => r.dataset.trackId);
+                // Keep the local snapshot in sync with the drop order so the
+                // row doesn't flash back to its old spot before the next poll.
+                const byId = new Map(lastGuestQueue.map(s => [s.id, s]));
+                lastGuestQueue = orderedIds.map(id => byId.get(id)).filter(Boolean);
+
+                if (!isAuthorized) return;
+                try {
+                    await fetch(eventUrl('/api/admin/reorder'), {
+                        method: 'POST',
+                        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ orderedIds })
+                    });
+                } catch (err) { console.log('Reorder failed.'); }
+            }
+
+            handleEl.addEventListener('pointermove', onMove);
+            handleEl.addEventListener('pointerup', onUp);
+            handleEl.addEventListener('pointercancel', onUp);
         }
 
         async function updateDashboard() {
@@ -1696,6 +1921,9 @@ async function verifyPassword() {
                 const queueList = document.getElementById('queue-list');
                 lastGuestQueue = data.queue || [];
                 renderQueueList();
+
+                lastBlockedVoters = data.blockedVoters || [];
+                renderBlockedGuests();
 
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
@@ -1906,7 +2134,68 @@ async function verifyPassword() {
                                 ${badge}
                             </div>`);
                     }).join('');
+
+                const recentEl = document.getElementById('stat-recent-requests');
+                recentEl.innerHTML = data.recentRequests.length === 0
+                    ? '<p class="empty-placeholder">No requests yet.</p>'
+                    : data.recentRequests.map(r => statSongRow(r, `
+                        <div class="stat-row-text" style="text-align:right; flex:0;">
+                            <div class="stat-row-title">${escapeHtml(r.username)}</div>
+                        </div>
+                        ${r.blocked
+                            ? '<span class="outcome-badge dropped" style="margin-left:4px;">Blocked</span>'
+                            : `<button class="btn btn-block" onclick="blockGuest('${r.voterId}', '${escapeHtml(r.username).replace(/'/g, "\\'")}')">Block</button>`}
+                    `)).join('');
             } catch (e) { console.log('Stats load failed.'); }
+        }
+
+        async function blockGuest(voterId, label) {
+            if (!isAuthorized) return;
+            if (!confirm(`Block "${label}" from requesting or voting for the rest of this event?`)) return;
+            try {
+                await fetch(eventUrl('/api/admin/block-voter'), {
+                    method: 'POST',
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ voterId, label })
+                });
+                showToast(`Blocked "${label}".`, 'success');
+                loadStats();
+                renderBlockedGuests();
+            } catch (err) {
+                showToast('Could not block that guest.', 'error');
+            }
+        }
+
+        async function unblockGuest(voterId) {
+            if (!isAuthorized) return;
+            try {
+                await fetch(eventUrl('/api/admin/unblock-voter'), {
+                    method: 'POST',
+                    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ voterId })
+                });
+                renderBlockedGuests();
+            } catch (err) {
+                showToast('Could not unblock that guest.', 'error');
+            }
+        }
+
+        // Populated from /api/admin/data (see updateDashboard) rather than a
+        // separate fetch - that endpoint already polls every 3s and already
+        // carries the event's blockedVoters list.
+        let lastBlockedVoters = [];
+        function renderBlockedGuests() {
+            const el = document.getElementById('blocked-guests-list');
+            if (!el) return;
+            el.innerHTML = lastBlockedVoters.length === 0
+                ? '<p class="empty-placeholder">No one is blocked.</p>'
+                : lastBlockedVoters.map(b => `
+                    <div class="stat-row">
+                        <div class="stat-row-text">
+                            <div class="stat-row-title">${escapeHtml(b.label)}</div>
+                        </div>
+                        <button class="btn btn-unblock" onclick="unblockGuest('${b.voterId}')">Unblock</button>
+                    </div>`).join('');
         }
 
         function toggleFullscreen() {
@@ -2042,6 +2331,27 @@ async function verifyPassword() {
         let isDraggingVolume = false;
         let playbackDurationMs = 0;
 
+        // Play/pause, shuffle, repeat, and volume are all deterministic local
+        // toggles - we know exactly what they should look like the instant
+        // the DJ clicks, without waiting on Spotify at all. Each optimistic
+        // change is "locked in" for a few seconds so a background poll that
+        // lands before Spotify's own state has actually caught up doesn't
+        // visually snap the button back to its old state and then forward
+        // again once the real change shows up - that flicker is as
+        // confusing as the delay itself. Skip/seek aren't included here
+        // since we don't know the resulting state (next track, new
+        // position) without asking Spotify anyway.
+        const optimisticLocks = { isPlaying: null, shuffleState: null, repeatState: null, volumePercent: null };
+        function setOptimisticLock(key, value) {
+            optimisticLocks[key] = { value, until: Date.now() + 3000 };
+        }
+        function optimisticValue(key, serverValue) {
+            const lock = optimisticLocks[key];
+            if (lock && Date.now() < lock.until) return lock.value;
+            optimisticLocks[key] = null;
+            return serverValue;
+        }
+
         function formatMsToClock(ms) {
             if (!ms && ms !== 0) return '0:00';
             const totalSeconds = Math.floor(ms / 1000);
@@ -2077,13 +2387,20 @@ async function verifyPassword() {
 
         function togglePlayPause() {
             const isPlaying = document.getElementById('playback-pause-icon').style.display !== 'none';
-            playbackCommand(isPlaying ? 'pause' : 'play');
+            const next = !isPlaying;
+            document.getElementById('playback-play-icon').style.display = next ? 'none' : '';
+            document.getElementById('playback-pause-icon').style.display = next ? '' : 'none';
+            setOptimisticLock('isPlaying', next);
+            playbackCommand(next ? 'play' : 'pause');
         }
 
         function togglePlaybackShuffle() {
             const btn = document.getElementById('playback-shuffle-btn');
             const currentlyOn = btn.classList.contains('toggled-on');
-            playbackCommand('shuffle', { enabled: !currentlyOn });
+            const next = !currentlyOn;
+            btn.classList.toggle('toggled-on', next);
+            setOptimisticLock('shuffleState', next);
+            playbackCommand('shuffle', { enabled: next });
         }
 
         const REPEAT_CYCLE = ['off', 'context', 'track'];
@@ -2091,6 +2408,9 @@ async function verifyPassword() {
             const btn = document.getElementById('playback-repeat-btn');
             const current = btn.dataset.repeatState || 'off';
             const next = REPEAT_CYCLE[(REPEAT_CYCLE.indexOf(current) + 1) % REPEAT_CYCLE.length];
+            btn.dataset.repeatState = next;
+            btn.classList.toggle('toggled-on', next !== 'off');
+            setOptimisticLock('repeatState', next);
             playbackCommand('repeat', { mode: next });
         }
 
@@ -2098,7 +2418,9 @@ async function verifyPassword() {
             document.getElementById('playback-volume-label').textContent = el.value + '%';
         }
         function onVolumeSliderChange(el) {
-            playbackCommand('volume', { volumePercent: parseInt(el.value) });
+            const vol = parseInt(el.value);
+            setOptimisticLock('volumePercent', vol);
+            playbackCommand('volume', { volumePercent: vol });
         }
 
         function onSeekSliderChange(el) {
@@ -2150,8 +2472,9 @@ async function verifyPassword() {
             }
             document.getElementById('playback-device').textContent = data.deviceName ? `Playing on ${data.deviceName}` : '';
 
-            document.getElementById('playback-play-icon').style.display = data.isPlaying ? 'none' : '';
-            document.getElementById('playback-pause-icon').style.display = data.isPlaying ? '' : 'none';
+            const isPlaying = optimisticValue('isPlaying', !!data.isPlaying);
+            document.getElementById('playback-play-icon').style.display = isPlaying ? 'none' : '';
+            document.getElementById('playback-pause-icon').style.display = isPlaying ? '' : 'none';
 
             playbackDurationMs = data.durationMs || 0;
             document.getElementById('playback-duration').textContent = formatMsToClock(playbackDurationMs);
@@ -2161,15 +2484,18 @@ async function verifyPassword() {
                 seekEl.value = playbackDurationMs ? Math.round(((data.progressMs || 0) / playbackDurationMs) * 1000) : 0;
             }
 
-            if (!isDraggingVolume && typeof data.volumePercent === 'number') {
-                document.getElementById('playback-volume').value = data.volumePercent;
-                document.getElementById('playback-volume-label').textContent = data.volumePercent + '%';
+            const volumePercent = optimisticValue('volumePercent', data.volumePercent);
+            if (!isDraggingVolume && typeof volumePercent === 'number') {
+                document.getElementById('playback-volume').value = volumePercent;
+                document.getElementById('playback-volume-label').textContent = volumePercent + '%';
             }
 
-            document.getElementById('playback-shuffle-btn').classList.toggle('toggled-on', !!data.shuffleState);
+            const shuffleState = optimisticValue('shuffleState', !!data.shuffleState);
+            document.getElementById('playback-shuffle-btn').classList.toggle('toggled-on', shuffleState);
             const repeatBtn = document.getElementById('playback-repeat-btn');
-            repeatBtn.dataset.repeatState = data.repeatState || 'off';
-            repeatBtn.classList.toggle('toggled-on', (data.repeatState || 'off') !== 'off');
+            const repeatState = optimisticValue('repeatState', data.repeatState || 'off');
+            repeatBtn.dataset.repeatState = repeatState;
+            repeatBtn.classList.toggle('toggled-on', repeatState !== 'off');
 
             renderPlaybackUpcoming(data.upcoming);
         }
