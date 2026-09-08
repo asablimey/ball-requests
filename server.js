@@ -245,6 +245,10 @@ async function switchDjPlaylist(event, playlistUri) {
     }
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Shared by every transport-control route below (play/pause/next/previous/
 // volume/shuffle/repeat) - same token lookup and same 404 (no active
 // device)/403 (not Premium) handling switchDjPlaylist already uses, just
@@ -259,12 +263,17 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.status === 204 || res.status === 200) {
-            // The admin UI re-polls /api/now-playing ~300ms after a command
-            // to reflect the change quickly, but that endpoint only ever
-            // serves the cache - which otherwise wouldn't update until the
-            // next background sync tick (up to 4s away, worse with several
-            // events loaded). Refreshing it here means that quick re-poll
-            // actually shows the new state instead of the stale one.
+            // Spotify accepting the command (204) doesn't mean GET /me/player
+            // reflects it yet - Spotify Connect's own state propagation
+            // commonly lags 0.5-1.5s behind the command being accepted,
+            // regardless of how fast we ask. Re-syncing instantly just reads
+            // the pre-command state back into our cache, which is worse than
+            // not syncing at all - the admin UI shows the button flip, then
+            // immediately shows it flip back, then has to wait for the next
+            // 4s background tick to catch the real change. A short wait here
+            // means the sync this request already does is actually current
+            // by the time it lands, instead of a guaranteed-stale read.
+            await sleep(500);
             await syncNowPlayingForEvent(event);
             return { success: true };
         }
@@ -277,6 +286,13 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
         console.error(`[SPOTIFY PLAYER] (${event.slug}) ${method} ${playerPath} request failed:`, err.message);
         return { success: false, error: 'Request to Spotify failed.' };
     }
+}
+
+// Manual queue position, independent of vote count - see the admin reorder
+// route below. New tracks always land at the end of the DJ's manual order;
+// dragging in the admin UI is what actually moves them from there.
+function nextQueueOrder(event) {
+    return event.activeQueue.reduce((max, t) => Math.max(max, t.order || 0), 0) + 1;
 }
 
 function isQueueFull(event) {
@@ -358,6 +374,14 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
     const dLng = toRad(lng2 - lng1);
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// True if this voterId has been blocked by the DJ (see the admin
+// block-voter/unblock-voter routes). Checked at the top of both the
+// request and vote handlers - a blocked guest can still browse the queue,
+// just not add to it or vote on it.
+function isVoterBlocked(event, voterId) {
+    return !!(event.blockedVoters && event.blockedVoters[voterId]);
 }
 
 function getOrCreateVoterCreditState(event, voterId, maxCredits) {
@@ -508,8 +532,14 @@ function buildSortedQueueForAdmin(event) {
         downs: t.downvoters?.length || 0,
         upvoters: t.upvoters || [],
         downvoters: t.downvoters || [],
-        requesters: t.requesters || []
-    })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+        requesters: t.requesters || [],
+        order: t.order || 0
+        // Sorted by the DJ's own manual order (see the admin reorder route),
+        // NOT by votes - votes are shown as a signal, but the admin's Live
+        // Queue is drag-reordered directly rather than vote-ranked. The
+        // guest-facing queue (buildSortedQueue above) is unaffected and
+        // still sorts by net votes.
+    })).sort((a, b) => (a.order || 0) - (b.order || 0));
 }
 
 // Shared by the admin "Played" button and the auto-sync poller below - moves a
@@ -555,7 +585,7 @@ function slugifyEventName(str) {
 }
 
 app.post('/api/events', createEventLimiter, async (req, res) => {
-    const { eventName, adminPassword, latitude, longitude, venueName } = req.body || {};
+    const { eventName, adminPassword, latitude, longitude, venueName, templateConfig } = req.body || {};
     const venue = (typeof latitude === 'number' && typeof longitude === 'number')
         ? { latitude, longitude, venueName }
         : null;
@@ -564,7 +594,7 @@ app.post('/api/events', createEventLimiter, async (req, res) => {
     let result;
     for (let attempt = 0; attempt < 5; attempt++) {
         const candidateSlug = attempt === 0 ? base : `${base}-${crypto.randomBytes(3).toString('hex')}`;
-        result = await events.createEvent(candidateSlug, eventName, adminPassword, venue);
+        result = await events.createEvent(candidateSlug, eventName, adminPassword, venue, templateConfig);
         if (!result.error || result.error !== 'That event URL is already taken.') break;
     }
     if (result.error) return res.status(400).json({ error: result.error });
@@ -749,6 +779,20 @@ app.get('/api/master/events', masterAuthLimiter, async (req, res) => {
     }
 });
 
+// Generates a brand new admin password for an event the master password
+// holder is helping recover access to - everything else about the event
+// (queue, history, Spotify connection, settings) is left untouched. The new
+// password is returned once in the response; it's never stored in plain
+// text or logged, only its hash (see resetEventPassword in eventStore.js).
+app.post('/api/master/events/:slug/reset-password', masterAuthLimiter, async (req, res) => {
+    if (!verifyMasterPassword(req.headers['x-admin-password'])) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    const result = await events.resetEventPassword(req.params.slug);
+    if (result.error) return res.status(404).json({ error: result.error });
+    res.json({ success: true, newPassword: result.newPassword });
+});
+
 // Serves the master dashboard itself. The page is just a static shell behind
 // its own password lock (same pattern as admin.html) - nothing here is
 // served without the correct master password, so there's no auth need on
@@ -906,6 +950,10 @@ function buildRequestHandler(isKiosk) {
         if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
         const voterId = req.serverVoterId;
 
+        if (isVoterBlocked(event, voterId)) {
+            return res.status(403).json({ error: "You've been blocked from requesting songs at this event." });
+        }
+
         // Kiosk requests skip this - a kiosk is a fixed device physically at
         // the venue by definition. Only the guest's own phone (isKiosk ===
         // false) needs to prove it's actually near the pinned venue location,
@@ -1020,7 +1068,8 @@ function buildRequestHandler(isKiosk) {
                 duration: verifiedTrack.duration,
                 upvoters: [],
                 downvoters: [],
-                requesters: [requesterName]
+                requesters: [requesterName],
+                order: nextQueueOrder(event)
             });
             if (event.systemConfigs.spotifyAutoQueueEnabled) {
                 queueTrackOnSpotify(event, trackId);
@@ -1034,6 +1083,7 @@ function buildRequestHandler(isKiosk) {
             artwork: verifiedTrack.artwork,
             explicit: verifiedTrack.explicit,
             voterId,
+            username: requesterName,
             status: 'queued',
             requestedAt: Date.now()
         });
@@ -1051,6 +1101,10 @@ app.post('/e/:slug/api/vote', voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     const { id, type } = req.body;
     const voterId = req.serverVoterId;
+
+    if (isVoterBlocked(event, voterId)) {
+        return res.status(403).json({ error: "You've been blocked from voting at this event." });
+    }
 
     const lastVoteAt = event.voterLastVoteAt[voterId] || 0;
     if (Date.now() - lastVoteAt < MIN_VOTE_INTERVAL_MS) {
@@ -1153,7 +1207,12 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         kiosk: event.kioskConfigs,
         queue: buildSortedQueueForAdmin(event),
-        history: event.playedHistory
+        history: event.playedHistory,
+        blockedVoters: Object.entries(event.blockedVoters || {}).map(([voterId, info]) => ({
+            voterId,
+            label: info.label,
+            blockedAt: info.blockedAt
+        })).sort((a, b) => b.blockedAt - a.blockedAt)
     });
 });
 
@@ -1201,7 +1260,26 @@ app.get('/e/:slug/api/admin/stats', (req, res) => {
         .slice(0, 5)
         .map(e => ({ title: e.title, artist: e.artist, artwork: e.artwork, count: e.downs }));
 
-    res.json({ allRequests, topRequesters, totals, topLiked, topDisliked });
+    // Individual, per-request entries (not aggregated like allRequests above)
+    // carrying voterId - this is what the admin "Recent Requests" list uses
+    // to offer a Block button next to a specific guest. Excludes tracks the
+    // DJ added manually (voterId 'admin-added') since there's no guest there
+    // to block. Capped at 50 - this is a moderation tool, not a full log.
+    const recentRequests = [...event.requestLog]
+        .filter(r => r.voterId !== 'admin-added')
+        .sort((a, b) => b.requestedAt - a.requestedAt)
+        .slice(0, 50)
+        .map(r => ({
+            voterId: r.voterId,
+            username: r.username || 'Anonymous',
+            title: r.title,
+            artist: r.artist,
+            artwork: r.artwork,
+            requestedAt: r.requestedAt,
+            blocked: !!(event.blockedVoters && event.blockedVoters[r.voterId])
+        }));
+
+    res.json({ allRequests, topRequesters, totals, topLiked, topDisliked, recentRequests });
 });
 
 app.get('/e/:slug/api/my-requests', voterIdentityMiddleware, (req, res) => {
@@ -1388,6 +1466,161 @@ app.post('/e/:slug/api/admin/kiosk/config', (req, res) => {
     res.json({ success: true });
 });
 
+// Blocks a specific guest (by voterId, from a row in the admin Stats
+// "Recent Requests" list) from requesting or voting for the rest of this
+// event. `label` is just the name they were requesting under at the time -
+// stored purely so the "Blocked Guests" list in admin.html is legible,
+// never used for matching.
+app.post('/e/:slug/api/admin/block-voter', (req, res) => {
+    const event = req.event;
+    const { voterId, label } = req.body;
+    if (typeof voterId !== 'string' || !voterId) return res.status(400).json({ error: 'Missing voterId.' });
+    event.blockedVoters[voterId] = {
+        label: typeof label === 'string' && label.trim() ? label.trim().slice(0, 30) : 'Guest',
+        blockedAt: Date.now()
+    };
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/unblock-voter', (req, res) => {
+    const event = req.event;
+    const { voterId } = req.body;
+    if (typeof voterId === 'string') delete event.blockedVoters[voterId];
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Admin-only search, used by the "Add a Song" panel in the Live Queue tab.
+// Deliberately much simpler than the public /api/search: one page of 10
+// results, no explicit/radio-edit/decade/genre/cooldown filtering - those
+// rules are for guests, not for the DJ manually placing a track.
+app.get('/e/:slug/api/admin/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [] });
+    if (!spotifyAccessToken) await getSpotifyToken();
+    try {
+        const searchRes = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        if (!searchRes.ok) return res.status(502).json({ error: 'Spotify search temporarily unavailable.' });
+        const data = await searchRes.json();
+        const tracks = (data.tracks?.items || []).map(track => ({
+            id: track.id,
+            name: track.name,
+            artist: (track.artists || []).map(a => a.name).join(', '),
+            artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            explicit: track.explicit || false,
+            duration: formatDuration(track.duration_ms)
+        }));
+        res.json({ tracks });
+    } catch (err) {
+        console.error('[ADMIN SEARCH] Failed:', err.message);
+        res.status(500).json({ error: 'Search feature unavailable' });
+    }
+});
+
+// Manually drops a track straight into the live queue, bypassing every
+// guest-side gate (credits, cooldown, queue cap, filters, geofence) - this
+// is the DJ overriding, not a guest requesting. `label` becomes the
+// "requested by" name shown on the card (defaults to "DJ Added").
+app.post('/e/:slug/api/admin/add-track', async (req, res) => {
+    const event = req.event;
+    const { trackId, label } = req.body;
+    if (!trackId || !/^[A-Za-z0-9]{22}$/.test(trackId)) {
+        return res.status(400).json({ error: 'Invalid track ID.' });
+    }
+    if (!spotifyAccessToken) await getSpotifyToken();
+    let t;
+    try {
+        const lookupRes = await fetch(`https://api.spotify.com/v1/tracks/${encodeURIComponent(trackId)}`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        if (!lookupRes.ok) return res.status(400).json({ error: 'Track not found on Spotify.' });
+        t = await lookupRes.json();
+        if (!t || !t.id) return res.status(400).json({ error: 'Track not found on Spotify.' });
+    } catch (err) {
+        return res.status(500).json({ error: 'Could not verify track with Spotify.' });
+    }
+
+    const verifiedTrack = {
+        id: t.id,
+        name: t.name,
+        artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
+        artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+        explicit: t.explicit || false,
+        duration: formatDuration(t.duration_ms || 0)
+    };
+    const requesterName = (typeof label === 'string' && label.trim() !== '') ? label.trim().slice(0, 30) : 'DJ Added';
+
+    const existingTrack = event.activeQueue.find(tr => tr.id === verifiedTrack.id);
+    if (existingTrack) {
+        if (!existingTrack.requesters) existingTrack.requesters = [];
+        existingTrack.requesters.push(requesterName);
+    } else {
+        event.activeQueue.push({
+            id: verifiedTrack.id,
+            title: verifiedTrack.name,
+            artist: verifiedTrack.artist,
+            artwork: verifiedTrack.artwork,
+            explicit: verifiedTrack.explicit,
+            duration: verifiedTrack.duration,
+            upvoters: [],
+            downvoters: [],
+            requesters: [requesterName],
+            order: nextQueueOrder(event)
+        });
+        if (event.systemConfigs.spotifyAutoQueueEnabled) {
+            queueTrackOnSpotify(event, verifiedTrack.id);
+        }
+    }
+
+    event.requestLog.push({
+        trackId: verifiedTrack.id,
+        title: verifiedTrack.name,
+        artist: verifiedTrack.artist,
+        artwork: verifiedTrack.artwork,
+        explicit: verifiedTrack.explicit,
+        voterId: 'admin-added',
+        username: requesterName,
+        status: 'queued',
+        requestedAt: Date.now()
+    });
+    if (event.requestLog.length > 2000) event.requestLog = event.requestLog.slice(-2000);
+
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Exports this event's "rules" (credit/countdown/filter/kiosk settings) as a
+// small JSON blob for the "Duplicate as Template" button on admin.html.
+// Deliberately excludes eventName, venue, password, queue/history/stats,
+// and anything Spotify - a template is just the settings, not a clone.
+app.get('/e/:slug/api/admin/export-template', (req, res) => {
+    const sc = req.event.systemConfigs;
+    const kc = req.event.kioskConfigs;
+    res.json({
+        systemConfigs: {
+            maxCredits: sc.maxCredits,
+            countdownLength: sc.countdownLength,
+            explicitBlockActive: sc.explicitBlockActive,
+            radioEditsOnly: sc.radioEditsOnly,
+            queueCapEnabled: sc.queueCapEnabled,
+            maxQueueLength: sc.maxQueueLength,
+            genreFilter: sc.genreFilter || [],
+            decadeFilter: sc.decadeFilter || [],
+            guestSpotifyConnectEnabled: sc.guestSpotifyConnectEnabled,
+            spotifyAutoQueueEnabled: sc.spotifyAutoQueueEnabled
+        },
+        kioskConfigs: {
+            maxCredits: kc.maxCredits,
+            countdownLength: kc.countdownLength,
+            spotifyConnectEnabled: kc.spotifyConnectEnabled,
+            displayOnlyMode: kc.displayOnlyMode
+        }
+    });
+});
+
 app.post('/e/:slug/api/admin/action', (req, res) => {
     const event = req.event;
     const { id, action } = req.body;
@@ -1405,13 +1638,7 @@ app.post('/e/:slug/api/admin/action', (req, res) => {
 
     const trackIndex = event.activeQueue.findIndex(t => t.id === id);
     if (trackIndex !== -1) {
-        if (action === 'top') {
-            const track = event.activeQueue[trackIndex];
-            const sorted = buildSortedQueue(event);
-            const highestNet = sorted.length > 0 ? (sorted[0].ups - sorted[0].downs) : 0;
-            track.downvoters = [];
-            track.upvoters = Array(highestNet + 1).fill('forced-admin-boost');
-        } else if (action === 'played') {
+        if (action === 'played') {
             markTrackPlayedByIndex(event, trackIndex);
         } else if (action === 'remove') {
             const [track] = event.activeQueue.splice(trackIndex, 1);
@@ -1419,6 +1646,27 @@ app.post('/e/:slug/api/admin/action', (req, res) => {
             logDepartedTrack(event, track, 'dropped');
         }
     }
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Replaces the old "Top" button's fake-upvote trick with a real manual
+// position - the DJ drags a track in the Live Queue (via the handle icon)
+// and the admin UI sends the queue's new full id order here every time a
+// drag settles. Re-assigning `order` (1, 2, 3...) for every id in the given
+// list, in the order given, rather than trying to compute a single track's
+// new index - simplest way to stay correct even if two admins are looking
+// at slightly different snapshots, and it self-heals if any ids are
+// missing/stale (they're just ignored).
+app.post('/e/:slug/api/admin/reorder', (req, res) => {
+    const event = req.event;
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'orderedIds must be an array.' });
+    let position = 1;
+    orderedIds.forEach(id => {
+        const track = event.activeQueue.find(t => t.id === id);
+        if (track) track.order = position++;
+    });
     events.scheduleSave(event.slug);
     res.json({ success: true });
 });
