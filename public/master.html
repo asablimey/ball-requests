@@ -219,11 +219,32 @@
                         </div>
                         <div class="card-actions">
                             <a class="btn btn-admin" href="/e/${slug}/admin" target="_blank" rel="noopener">Open Admin</a>
+                            <button class="btn btn-admin" onclick="resetPassword('${slug}', '${name.replace(/'/g, "\\'")}')">Reset Password</button>
                             <button class="btn btn-close" onclick="closeEvent('${slug}', '${name.replace(/'/g, "\\'")}')">Close</button>
                         </div>
                     </div>
                 `;
             }).join('');
+        }
+
+        async function resetPassword(slug, eventName) {
+            const confirmed = confirm(`Generate a brand new admin password for "${eventName}" (/e/${slug})?\n\nThis doesn't touch its queue, history, settings, or Spotify connection - only the password guests' DJ uses to log in to their own admin page. The old password stops working immediately.`);
+            if (!confirmed) return;
+
+            try {
+                const res = await fetch(`/api/master/events/${slug}/reset-password`, {
+                    method: 'POST',
+                    headers: { 'x-admin-password': masterPassword }
+                });
+                const data = await res.json();
+                if (res.ok && data.newPassword) {
+                    alert(`New admin password for "${eventName}":\n\n${data.newPassword}\n\nCopy this now - it won't be shown again. Pass it along to the DJ.`);
+                } else {
+                    showToast(data.error || 'Could not reset that password.', 'error');
+                }
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
         }
 
         async function closeEvent(slug, eventName) {
