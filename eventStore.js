@@ -156,6 +156,12 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         voterLastVoteAt: {},    // voterId -> timestamp
         voterLastRequestAt: {}, // voterId -> timestamp
 
+        // voterId -> { label, blockedAt }. A blocked guest's requests/votes
+        // are rejected server-side (see requireNotBlocked in server.js) -
+        // the label is just whatever name they were last seen requesting
+        // under, purely so the admin dashboard can show who this is.
+        blockedVoters: {},
+
         spotify: {
             djRefreshToken: null,
             djAccessToken: null,
@@ -281,7 +287,38 @@ function evictIdleEvents() {
 }
 setInterval(evictIdleEvents, CACHE_SWEEP_INTERVAL_MS);
 
-async function createEvent(slug, eventName, adminPassword, venue) {
+// Copies over a whitelisted, type-checked subset of another event's
+// systemConfigs/kioskConfigs onto a freshly-created blank event - powers
+// "duplicate this event as a template" from admin.html (see
+// GET /e/:slug/api/admin/export-template in server.js). Deliberately never
+// touches eventName, venue, requestsAllowed, genre/decade keyword validity
+// (that list lives in server.js), or anything Spotify/queue/history-related -
+// a template is just "the rules", not a clone of the live event.
+function applyTemplateConfig(event, templateConfig) {
+    if (!templateConfig || typeof templateConfig !== 'object') return;
+    const sys = templateConfig.systemConfigs;
+    if (sys && typeof sys === 'object') {
+        if (Number.isFinite(parseInt(sys.maxCredits))) event.systemConfigs.maxCredits = parseInt(sys.maxCredits);
+        if (Number.isFinite(parseInt(sys.countdownLength))) event.systemConfigs.countdownLength = parseInt(sys.countdownLength);
+        if (typeof sys.explicitBlockActive === 'boolean') event.systemConfigs.explicitBlockActive = sys.explicitBlockActive;
+        if (typeof sys.radioEditsOnly === 'boolean') event.systemConfigs.radioEditsOnly = sys.radioEditsOnly;
+        if (typeof sys.queueCapEnabled === 'boolean') event.systemConfigs.queueCapEnabled = sys.queueCapEnabled;
+        if (Number.isFinite(parseInt(sys.maxQueueLength)) && parseInt(sys.maxQueueLength) > 0) event.systemConfigs.maxQueueLength = parseInt(sys.maxQueueLength);
+        if (Array.isArray(sys.genreFilter)) event.systemConfigs.genreFilter = sys.genreFilter.filter(g => typeof g === 'string').slice(0, 20);
+        if (Array.isArray(sys.decadeFilter)) event.systemConfigs.decadeFilter = sys.decadeFilter.map(y => parseInt(y)).filter(y => Number.isInteger(y));
+        if (typeof sys.guestSpotifyConnectEnabled === 'boolean') event.systemConfigs.guestSpotifyConnectEnabled = sys.guestSpotifyConnectEnabled;
+        if (typeof sys.spotifyAutoQueueEnabled === 'boolean') event.systemConfigs.spotifyAutoQueueEnabled = sys.spotifyAutoQueueEnabled;
+    }
+    const kiosk = templateConfig.kioskConfigs;
+    if (kiosk && typeof kiosk === 'object') {
+        if (Number.isFinite(parseInt(kiosk.maxCredits))) event.kioskConfigs.maxCredits = parseInt(kiosk.maxCredits);
+        if (Number.isFinite(parseInt(kiosk.countdownLength))) event.kioskConfigs.countdownLength = parseInt(kiosk.countdownLength);
+        if (typeof kiosk.spotifyConnectEnabled === 'boolean') event.kioskConfigs.spotifyConnectEnabled = kiosk.spotifyConnectEnabled;
+        if (typeof kiosk.displayOnlyMode === 'boolean') event.kioskConfigs.displayOnlyMode = kiosk.displayOnlyMode;
+    }
+}
+
+async function createEvent(slug, eventName, adminPassword, venue, templateConfig) {
     if (!isValidSlug(slug)) {
         return { error: 'Event URL can only use lowercase letters, numbers, and hyphens (2-40 characters).' };
     }
@@ -318,6 +355,7 @@ async function createEvent(slug, eventName, adminPassword, venue) {
         return { error: 'That event URL is already taken.' };
     }
     const event = blankEventState(slug, safeEventName, adminPasswordHash, safeVenue);
+    applyTemplateConfig(event, templateConfig);
     cache.set(slug, event);
     lastAccess.set(slug, Date.now());
     await writeToRedisNow(slug); // write immediately on creation, don't wait for debounce
@@ -351,6 +389,21 @@ async function verifyPassword(password, storedHash) {
     const b = Buffer.from(candidate, 'hex');
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
+}
+
+// Master-panel-only: overwrites an event's admin password hash with a
+// freshly generated one, without touching anything else - queue, history,
+// Spotify connection, settings all survive untouched. Used when a DJ has
+// lost their event's individual password; the master password itself
+// already lets them manage the event, but not see or change what the
+// per-event password actually is (it's only ever stored hashed).
+async function resetEventPassword(slug) {
+    const event = await getEvent(slug);
+    if (!event) return { error: 'Event not found.' };
+    const newPassword = crypto.randomBytes(4).toString('hex'); // 8 hex chars, easy to read/type back
+    event.adminPasswordHash = await hashPassword(newPassword);
+    await writeToRedisNow(slug); // immediate, like createEvent - don't leave this on the debounce timer
+    return { newPassword };
 }
 
 // Only iterates events currently held in memory - used by the Spotify polling
@@ -460,6 +513,7 @@ module.exports = {
     getEvent,
     createEvent,
     deleteEvent,
+    resetEventPassword,
     scheduleSave,
     flushAllSaves,
     verifyPassword,
