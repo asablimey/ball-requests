@@ -166,6 +166,9 @@
 
         <div class="card">
             <h2>Start a new event</h2>
+            <div id="template-banner" style="display:none; background: var(--card-bg); border: 1px solid #333; border-radius: 6px; padding: 10px 14px; font-size: 0.82rem; color: var(--spotify-green); margin-bottom: 16px;">
+                📋 Using the credit/countdown/filter/kiosk settings from your other event.
+            </div>
             <div class="input-group">
                 <label>Event Name</label>
                 <input type="text" id="input-event-name" placeholder="Friday Night Live" maxlength="60">
@@ -207,6 +210,20 @@
     <script>
         const nameInput = document.getElementById('input-event-name');
         const venueNameInput = document.getElementById('input-venue-name');
+
+        // One-time handoff from admin.html's "Duplicate as Template" button
+        // (see duplicateAsTemplate() there) - consumed immediately so a
+        // page refresh here doesn't keep re-applying it.
+        let pendingTemplateConfig = null;
+        (function loadPendingTemplate() {
+            const raw = sessionStorage.getItem('crowddj_template');
+            if (!raw) return;
+            sessionStorage.removeItem('crowddj_template');
+            try {
+                pendingTemplateConfig = JSON.parse(raw);
+                document.getElementById('template-banner').style.display = 'block';
+            } catch (err) { pendingTemplateConfig = null; }
+        })();
 
         // Only used client-side now to build a friendly working title for
         // the "Already have an event?" join box below - the actual event
@@ -373,6 +390,7 @@
                 // one from the event name, since it's now purely an internal
                 // identifier rather than something guests type or get given.
                 const body = { eventName, adminPassword };
+                if (pendingTemplateConfig) body.templateConfig = pendingTemplateConfig;
                 const venueName = venueNameInput.value.trim() || selectedVenueName;
                 // Location is entirely optional - only sent if the admin
                 // actually placed a pin.
