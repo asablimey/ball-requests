@@ -170,6 +170,13 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         },
 
         lastSyncedNowPlayingId: null,
+
+        // Which track (if any) has already been pushed one-ahead into
+        // Spotify's real playback queue - see pushNextTrackToSpotifyIfNeeded
+        // in server.js. Cleared back to null once that track leaves
+        // activeQueue (i.e. it started playing), so the next check knows to
+        // stage whatever's now on top.
+        pushedNextTrackId: null,
         cachedNowPlaying: {
             connected: false, isPlaying: false, trackId: null, title: null,
             artist: null, artwork: null, progressMs: 0, durationMs: 0,
