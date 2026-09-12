@@ -786,6 +786,7 @@
         let systemRequestsAllowed = true; // Local tracker for global toggling
         let explicitBlockActive = false;
         let queueIsFull = false; // Auto-close from the DJ's queue length cap, distinct from a manual close
+        let isBlockedGuest = false; // This kiosk device specifically blocked via the admin Blocked tab
         let lastGuestQueue = [];
         let spotifyUpcomingQueue = [];
 
@@ -808,6 +809,7 @@
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
+                isBlockedGuest = data.blocked || false;
 
                 // "Display-Only Mode" (set from Admin > Kiosk Page settings): strips
                 // this down to a full-screen, read-only Live Queue board - no search,
@@ -833,11 +835,13 @@
                 // the DJ manually pausing them, or the queue length cap auto-closing
                 // once it hits the configured max - each gets its own message.
                 const searchInput = document.getElementById('search-input');
-                const effectivelyOpen = systemRequestsAllowed && !queueIsFull;
+                const effectivelyOpen = systemRequestsAllowed && !queueIsFull && !isBlockedGuest;
                 if (!effectivelyOpen) {
                     searchInput.disabled = true;
                     searchInput.value = "";
-                    searchInput.placeholder = queueIsFull
+                    searchInput.placeholder = isBlockedGuest
+                        ? "Requests unavailable now"
+                        : queueIsFull
                         ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
                         : "Song submissions are currently paused by the admin.";
                     document.getElementById('list-title').innerText = "Live Queue";
