@@ -676,9 +676,13 @@ function slugifyEventName(str) {
 
 app.post('/api/events', createEventLimiter, async (req, res) => {
     const { eventName, adminPassword, latitude, longitude, venueName, templateConfig } = req.body || {};
-    const venue = (typeof latitude === 'number' && typeof longitude === 'number')
-        ? { latitude, longitude, venueName }
-        : null;
+    // A venue location is now required at creation time - a client-side
+    // check enforces this in new-event.html, but that's bypassable via a
+    // direct API call, so it's re-checked here too.
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+        return res.status(400).json({ error: 'A venue location is required to create an event.' });
+    }
+    const venue = { latitude, longitude, venueName };
 
     const base = slugifyEventName(eventName) || 'event';
     let result;
@@ -1086,6 +1090,16 @@ function buildRequestHandler(isKiosk) {
         if (!track || !track.id) return res.status(400).json({ error: "Missing track ID." });
         const voterId = req.serverVoterId;
 
+        // A kiosk is a fixed device with a hardcoded identity (android_kiosk) -
+        // there's no per-guest name to collect there. Every other guest must
+        // have entered a name client-side before this route is ever reachable;
+        // this is the server-side backstop for that requirement (the client
+        // check alone is trivially bypassable via a direct API call).
+        const requesterNameRaw = typeof username === 'string' ? username.trim() : '';
+        if (!isKiosk && requesterNameRaw === '') {
+            return res.status(400).json({ error: "A name is required to request a song." });
+        }
+
         if (isVoterBlocked(event, voterId)) {
             return res.status(403).json({ error: "You've been blocked from requesting songs at this event." });
         }
@@ -1188,9 +1202,11 @@ function buildRequestHandler(isKiosk) {
         }
         creditState.available -= 1;
 
-        const requesterName = (typeof username === 'string' && username.trim() !== '')
-            ? username.trim().slice(0, 30)
-            : 'Anonymous';
+        // Kiosk still falls back to 'Anonymous' if somehow blank (its identity
+        // is always fixed to android_kiosk client-side, so this is just a
+        // defensive default) - every other guest already had to pass the
+        // non-empty check above, so requesterNameRaw is guaranteed non-blank here.
+        const requesterName = requesterNameRaw !== '' ? requesterNameRaw.slice(0, 30) : 'Anonymous';
 
         // Blocked tab guest directory - records/refreshes this voter's last-used
         // name so the admin can find and block them by name later. Defensive
