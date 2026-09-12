@@ -1391,7 +1391,7 @@
                     <div class="playlist-row" onclick="showPlaylistTracks('${pl.id}', ${JSON.stringify(pl.name).replace(/"/g, '&quot;')})">
                         <img src="${safeImageUrl(pl.images?.[0]?.url)}">
                         <div>
-                            <p class="pl-name">${pl.name}</p>
+                            <p class="pl-name">${escapeHtml(pl.name)}</p>
                             <p class="pl-count">${pl.items?.total ?? pl.tracks?.total ?? 0} tracks</p>
                         </div>
                     </div>
