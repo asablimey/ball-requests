@@ -183,11 +183,11 @@
             </div>
 
             <div class="input-group">
-                <label>Venue Location <span class="optional-tag">(optional)</span></label>
+                <label>Venue Location</label>
                 <input type="text" id="input-location-search" placeholder="Search for an address or venue name" autocomplete="off">
                 <div class="location-suggestions" id="location-suggestions"></div>
                 <div id="location-map" class="location-map"></div>
-                <div class="url-preview" id="location-hint">Search to drop a pin, then drag it to the exact spot.</div>
+                <div class="url-preview" id="location-hint">Required - search to drop a pin, then drag it to the exact spot.</div>
                 <button type="button" class="location-clear-btn" id="location-clear-btn" style="display:none;" onclick="clearLocation()">Clear location</button>
             </div>
 
@@ -376,6 +376,7 @@
 
             if (!eventName.trim()) { errorMsg.textContent = 'Give your event a name.'; errorMsg.style.display = 'block'; return; }
             if (!adminPassword || adminPassword.length < 4) { errorMsg.textContent = 'Admin password must be at least 4 characters.'; errorMsg.style.display = 'block'; return; }
+            if (selectedLat === null || selectedLng === null) { errorMsg.textContent = 'Search for your venue and drop a pin so guests can find it.'; errorMsg.style.display = 'block'; return; }
 
             btn.disabled = true;
             btn.textContent = 'Creating...';
@@ -392,13 +393,11 @@
                 const body = { eventName, adminPassword };
                 if (pendingTemplateConfig) body.templateConfig = pendingTemplateConfig;
                 const venueName = venueNameInput.value.trim() || selectedVenueName;
-                // Location is entirely optional - only sent if the admin
-                // actually placed a pin.
-                if (selectedLat !== null && selectedLng !== null) {
-                    body.latitude = selectedLat;
-                    body.longitude = selectedLng;
-                    body.venueName = venueName;
-                }
+                // Venue location is required (checked above before we get
+                // here), so selectedLat/selectedLng are always set at this point.
+                body.latitude = selectedLat;
+                body.longitude = selectedLng;
+                body.venueName = venueName;
                 const res = await fetch('/api/events', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
