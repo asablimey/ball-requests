@@ -113,7 +113,7 @@
             gap: 15px;
         }
 
-        h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
+        h1 { margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         .config-dashboard {
             display: flex;
@@ -311,6 +311,64 @@
         .hints-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
         .hints-icon-btn.hints-on { color: var(--spotify-green); }
 
+        /* --- Hamburger menu button + left sidebar nav (replaces the old
+           horizontal .tab-bar) --- */
+        .menu-btn {
+            flex-shrink: 0;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            padding: 0;
+        }
+        .menu-btn svg { width: 18px; height: 18px; fill: white; }
+        .menu-btn:hover { border-color: var(--spotify-green); }
+
+        .sidebar-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 950; display: none;
+        }
+        .sidebar-backdrop.is-visible { display: block; }
+        .sidebar-panel {
+            position: fixed; top: 0; left: 0; bottom: 0;
+            width: min(280px, 84vw);
+            background: var(--panel-bg);
+            border-right: 1px solid #282828;
+            z-index: 951;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .sidebar-panel.is-visible { transform: translateX(0); }
+        .sidebar-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 20px; border-bottom: 1px solid #282828; flex-shrink: 0;
+        }
+        .sidebar-header h3 { margin: 0; font-size: 1.1rem; }
+        .sidebar-close-btn { background: none; border: none; color: #a7a7a7; font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
+        .sidebar-close-btn:hover { color: white; }
+        .sidebar-nav-item {
+            display: flex; align-items: center;
+            padding: 16px 20px; cursor: pointer; border: none;
+            background: none; color: #a7a7a7; font-size: 1rem; font-weight: 700;
+            font-family: inherit; text-align: left; width: 100%;
+            border-bottom: 1px solid #232323;
+        }
+        .sidebar-nav-item:hover { background-color: var(--card-bg); color: white; }
+        .sidebar-nav-item.active-tab {
+            color: white;
+            background-color: rgba(29, 185, 84, 0.15);
+            border-left: 3px solid var(--spotify-green);
+            padding-left: 17px;
+        }
+
         /* When hints are hidden, every settings-card-hint / filter-hint in
            the document is collapsed. Scoped to body.hints-hidden so other
            text (labels, statuses) is untouched. */
@@ -385,38 +443,10 @@
         .playback-upcoming-row .up-title { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .playback-upcoming-row .up-artist { font-size: 0.75rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-        /* TAB NAVIGATION STYLES */
-        .tab-bar {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #282828;
-            padding-bottom: 10px;
-            /* 4 tab buttons don't fit narrow phones - scroll horizontally
-               instead of overflowing the page. */
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .tab-button {
-            background-color: transparent;
-            color: #a7a7a7;
-            border: none;
-            padding: 12px 24px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            cursor: pointer;
-            border-radius: 8px;
-            flex-shrink: 0;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-        }
-        .tab-button:hover { color: white; background-color: var(--card-bg); }
-        .tab-button.active-tab {
-            color: white;
-            background-color: var(--spotify-green);
-        }
-
+        /* TAB NAVIGATION STYLES (panel visibility only - the buttons that
+           used to live in a horizontal .tab-bar are now sidebar-nav-item
+           entries in the slide-out menu; see the hamburger/sidebar styles
+           above). */
         .tab-content {
             display: none; /* Hidden by default */
             width: 100%;
@@ -806,7 +836,24 @@
         </div>
     </div>
 
+    <!-- SIDEBAR -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+    <div class="sidebar-panel" id="sidebar-panel">
+        <div class="sidebar-header">
+            <h3>Menu</h3>
+            <button class="sidebar-close-btn" onclick="closeSidebar()">✕</button>
+        </div>
+        <button type="button" id="sidebar-nav-playback" class="sidebar-nav-item" onclick="switchTab('playback')">Playback</button>
+        <button type="button" id="sidebar-nav-queue" class="sidebar-nav-item active-tab" onclick="switchTab('queue')">Live Queue</button>
+        <button type="button" id="sidebar-nav-history" class="sidebar-nav-item" onclick="switchTab('history')">Song History</button>
+        <button type="button" id="sidebar-nav-settings" class="sidebar-nav-item" onclick="switchTab('settings')">Settings</button>
+        <button type="button" id="sidebar-nav-stats" class="sidebar-nav-item" onclick="switchTab('stats')">Stats</button>
+    </div>
+
     <div class="header">
+        <button type="button" class="menu-btn" onclick="openSidebar()" aria-label="Menu">
+            <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+        </button>
         <h1>Current Requests</h1>
         <div style="display:flex; align-items:center; gap:4px;">
             <button id="toggle-hints" class="hints-icon-btn" title="Show/hide setting hints" onclick="toggleHints()">
@@ -820,14 +867,6 @@
                 </svg>
             </button>
         </div>
-    </div>
-
-    <div class="tab-bar">
-        <button id="tab-btn-playback" class="tab-button" onclick="switchTab('playback')">Playback</button>
-        <button id="tab-btn-queue" class="tab-button active-tab" onclick="switchTab('queue')">Live Queue</button>
-        <button id="tab-btn-history" class="tab-button" onclick="switchTab('history')">Song History</button>
-        <button id="tab-btn-settings" class="tab-button" onclick="switchTab('settings')">Settings</button>
-        <button id="tab-btn-stats" class="tab-button" onclick="switchTab('stats')">Stats</button>
     </div>
 
     <div id="tab-panel-playback" class="tab-content">
@@ -1238,13 +1277,24 @@
 
         const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats'];
 
+        // --- Sidebar (hamburger menu) ---
+        function openSidebar() {
+            document.getElementById('sidebar-backdrop').classList.add('is-visible');
+            document.getElementById('sidebar-panel').classList.add('is-visible');
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar-backdrop').classList.remove('is-visible');
+            document.getElementById('sidebar-panel').classList.remove('is-visible');
+        }
+
         // Tab selection switching algorithm
         function switchTab(targetTab) {
             TAB_NAMES.forEach(name => {
                 const isActive = name === targetTab;
-                document.getElementById(`tab-btn-${name}`).classList.toggle('active-tab', isActive);
+                document.getElementById(`sidebar-nav-${name}`).classList.toggle('active-tab', isActive);
                 document.getElementById(`tab-panel-${name}`).classList.toggle('active-content', isActive);
             });
+            closeSidebar();
             if (targetTab === 'stats') loadStats();
         }
 
