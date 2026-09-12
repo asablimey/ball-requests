@@ -542,6 +542,56 @@ function buildSortedQueueForAdmin(event) {
     })).sort((a, b) => (a.order || 0) - (b.order || 0));
 }
 
+// Ensures at most one upcoming track is ever sitting in Spotify's real
+// playback queue - "the next song that should play", rather than every
+// accepted request getting pushed the moment it's accepted. Called right
+// after a track leaves activeQueue as played (see markTrackPlayedByIndex,
+// which covers both the admin "Played" button and the auto-sync poller
+// noticing the current track changed) and after a new request lands
+// (buildRequestHandler below), so the first request into a previously-empty
+// queue still gets staged even though nothing "just finished playing".
+//
+// event.pushedNextTrackId records which track (if any) has already been
+// pushed, so the same one never gets pushed twice and a newly-voted-to-top
+// track doesn't jump the queue while something is already staged. A staged
+// track is considered done/consumed once it's no longer in activeQueue
+// (because it started playing and was spliced out) - at that point the next
+// call here treats the slot as free and stages whatever is now on top of
+// buildSortedQueue().
+//
+// The "is anything staged" check and the "claim this track" write both
+// happen synchronously, with no await in between - so if this fires more
+// than once in quick succession (e.g. the 4s auto-sync poller ticking again
+// before a prior call's queueTrackOnSpotify() has resolved), only the first
+// call can ever see an empty slot and reach the network; every other call
+// sees the slot already claimed and returns immediately.
+async function pushNextTrackToSpotifyIfNeeded(event) {
+    if (!event.systemConfigs.spotifyAutoQueueEnabled) return;
+
+    if (event.pushedNextTrackId) {
+        const stillStaged = event.activeQueue.some(t => t.id === event.pushedNextTrackId);
+        if (stillStaged) return; // something's already lined up - leave it alone
+        event.pushedNextTrackId = null;
+    }
+
+    const top = buildSortedQueue(event)[0];
+    if (!top) return; // queue's empty - nothing to stage
+
+    // Claim the slot before awaiting the network call, not after, so a
+    // second call landing while this one is still in flight sees it as
+    // already taken instead of also picking the same (or another) track.
+    event.pushedNextTrackId = top.id;
+    events.scheduleSave(event.slug);
+
+    const pushed = await queueTrackOnSpotify(event, top.id);
+    if (!pushed && event.pushedNextTrackId === top.id) {
+        // Spotify rejected it (no active device, not Premium, etc) - release
+        // the slot so the next trigger retries instead of leaving the event
+        // with nothing queued on Spotify for the rest of the night.
+        event.pushedNextTrackId = null;
+    }
+}
+
 // Shared by the admin "Played" button and the auto-sync poller below - moves a
 // track out of the live local queue into playedHistory/stats. trackIndex must
 // already be a valid index into activeQueue.
@@ -557,6 +607,12 @@ function markTrackPlayedByIndex(event, trackIndex) {
         requesters: track.requesters || []
     });
     logDepartedTrack(event, track, 'played');
+    // Fire-and-forget: whoever called markTrackPlayedByIndex (the admin
+    // action route, or syncNowPlayingForEvent below) doesn't need to wait on
+    // Spotify before finishing its own response/poll tick.
+    pushNextTrackToSpotifyIfNeeded(event).catch(err => {
+        console.error(`[SPOTIFY QUEUE] (${event.slug}) Failed to stage next track:`, err.message);
+    });
     return track;
 }
 
@@ -1071,9 +1127,13 @@ function buildRequestHandler(isKiosk) {
                 requesters: [requesterName],
                 order: nextQueueOrder(event)
             });
-            if (event.systemConfigs.spotifyAutoQueueEnabled) {
-                queueTrackOnSpotify(event, trackId);
-            }
+            // Don't push to Spotify's real queue here - only the one track
+            // that's actually next ever gets pushed, and that's decided by
+            // pushNextTrackToSpotifyIfNeeded (staged when a track finishes,
+            // or here if the queue was empty and nothing is staged yet).
+            pushNextTrackToSpotifyIfNeeded(event).catch(err => {
+                console.error(`[SPOTIFY QUEUE] (${event.slug}) Failed to stage next track:`, err.message);
+            });
         }
 
         event.requestLog.push({
