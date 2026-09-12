@@ -162,6 +162,23 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         // under, purely so the admin dashboard can show who this is.
         blockedVoters: {},
 
+        // artistId -> { name, blockedAt }. Every track by this artist (matched
+        // on the track's primary artist) is filtered out of guest search and
+        // rejected if requested directly by ID.
+        blockedArtists: {},
+
+        // trackId -> { name, artist, blockedAt }. Same idea as blockedArtists
+        // but for one specific song rather than everything by an artist.
+        blockedTracks: {},
+
+        // voterId -> { label, lastSeenAt }. A running directory of every guest
+        // who's successfully had a track verified through /api/request or
+        // /api/kiosk-request, keyed by their server-issued identity - powers
+        // the "block a guest by name" list in the admin Blocked tab. Guests
+        // don't have accounts, so `label` is just whatever name they were
+        // last seen requesting under, overwritten on every new request.
+        voterNames: {},
+
         spotify: {
             djRefreshToken: null,
             djAccessToken: null,
