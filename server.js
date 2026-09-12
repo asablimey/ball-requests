@@ -823,6 +823,48 @@ const masterAuthLimiter = rateLimit({
     skipSuccessfulRequests: true,
     message: { error: 'Too many failed attempts. Try again later.' }
 });
+
+// --- Public-route rate limiting ---
+// Search/request/vote/kiosk-request were previously ungated by anything but
+// per-voter throttling (MIN_REQUEST_INTERVAL_MS/MIN_VOTE_INTERVAL_MS), which
+// is keyed on the crowddj_vid cookie - a scripted client that just never
+// sends that cookie gets treated as a brand-new voter (fresh credits, no
+// rate-limit history) on every request, bypassing that throttling entirely.
+// Each of those calls can also hit Spotify's API (search/track lookup),
+// and every event shares one spotifyAccessToken - so an unthrottled flood
+// against one event's public URL can burn through Spotify's rate limit and
+// break search/requests for every other event on the server too. Keyed by
+// IP + slug so one noisy event can't eat another event's allowance, and
+// vice versa a flood against many events from one IP still gets capped.
+// NOTE ON THE KEY: guests at the same venue are very often on the same WiFi,
+// which commonly means they share one public IP via NAT - so this can't be
+// keyed tightly per-person the way adminAuthLimiter is. These limits are set
+// high enough to absorb a whole room of legitimate simultaneous guests on
+// one shared IP while still capping a scripted flood; if you regularly run
+// bigger venues (100+ phones on one WiFi) and see false-positive 429s in
+// the logs, raise these further rather than tighten them.
+const publicActionLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 90,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
+});
+
+// Looser limiter for cheap, read-only polling endpoints (queue/now-playing
+// state, served straight from the in-memory cache) - these are hit every
+// few seconds by every connected guest/kiosk/admin tab during normal use,
+// so this exists mainly to cap a scripted client hammering them, not to
+// throttle real usage. Same shared-IP caveat as above, hence the high ceiling.
+const publicReadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
+});
 app.get('/api/master/events', masterAuthLimiter, async (req, res) => {
     if (!verifyMasterPassword(req.headers['x-admin-password'])) {
         return res.status(401).json({ error: 'Unauthorized.' });
@@ -891,7 +933,7 @@ app.get('/e/:slug/api/public-config', (req, res) => {
 });
 
 // SEARCH ROUTE - Now strictly blocked if DJ turns off requests
-app.get('/e/:slug/api/search', async (req, res) => {
+app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
     const event = req.event;
     if (!event.systemConfigs.requestsAllowed || isQueueFull(event)) {
         return res.json({ tracks: [] });
@@ -1154,10 +1196,10 @@ function buildRequestHandler(isKiosk) {
     };
 }
 
-app.post('/e/:slug/api/request', voterIdentityMiddleware, buildRequestHandler(false));
-app.post('/e/:slug/api/kiosk-request', voterIdentityMiddleware, buildRequestHandler(true));
+app.post('/e/:slug/api/request', publicActionLimiter, voterIdentityMiddleware, buildRequestHandler(false));
+app.post('/e/:slug/api/kiosk-request', publicActionLimiter, voterIdentityMiddleware, buildRequestHandler(true));
 
-app.post('/e/:slug/api/vote', voterIdentityMiddleware, (req, res) => {
+app.post('/e/:slug/api/vote', publicActionLimiter, voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     const { id, type } = req.body;
     const voterId = req.serverVoterId;
@@ -1201,7 +1243,7 @@ app.post('/e/:slug/api/vote', voterIdentityMiddleware, (req, res) => {
     res.json({ success: true });
 });
 
-app.get('/e/:slug/data', (req, res) => {
+app.get('/e/:slug/data', publicReadLimiter, (req, res) => {
     const event = req.event;
     res.json({
         maxCredits: event.systemConfigs.maxCredits,
@@ -1224,7 +1266,7 @@ app.get('/e/:slug/data', (req, res) => {
     });
 });
 
-app.get('/e/:slug/kiosk-data', (req, res) => {
+app.get('/e/:slug/kiosk-data', publicReadLimiter, (req, res) => {
     const event = req.event;
     res.json({
         maxCredits: event.kioskConfigs.maxCredits,
@@ -1342,7 +1384,7 @@ app.get('/e/:slug/api/admin/stats', (req, res) => {
     res.json({ allRequests, topRequesters, totals, topLiked, topDisliked, recentRequests });
 });
 
-app.get('/e/:slug/api/my-requests', voterIdentityMiddleware, (req, res) => {
+app.get('/e/:slug/api/my-requests', publicReadLimiter, voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     const voterId = req.serverVoterId;
 
@@ -1845,7 +1887,7 @@ setInterval(syncAllLoadedEvents, 4000);
 // Public (no admin auth) - the guest, kiosk, and admin pages all poll this for
 // the live "Now Playing" bar. Only ever exposes playback state, nothing about
 // the connected account itself.
-app.get('/e/:slug/api/now-playing', (req, res) => {
+app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
     res.json(req.event.cachedNowPlaying);
 });
 
