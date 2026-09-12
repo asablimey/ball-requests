@@ -1434,6 +1434,7 @@
         let systemRequestsAllowed = true; // Local tracker for global toggling
         let explicitBlockActive = false;
         let queueIsFull = false; // Auto-close from the DJ's queue length cap, distinct from a manual close
+        let isBlockedGuest = false; // This device/guest specifically blocked via the admin Blocked tab
         let lastGuestQueue = [];
         let spotifyUpcomingQueue = [];
 
@@ -1554,6 +1555,7 @@
                 systemRequestsAllowed = data.requestsAllowed;
                 explicitBlockActive = data.explicitBlockActive || false;
                 queueIsFull = data.queueFull || false;
+                isBlockedGuest = data.blocked || false;
 
                 // Only venues the organizer actually pinned a location for
                 // (at creation) get the geofence check - unpinned venues
@@ -1603,11 +1605,13 @@
                 // the DJ manually pausing them, or the queue length cap auto-closing
                 // once it hits the configured max - each gets its own message.
                 const searchInput = document.getElementById('search-input');
-                const effectivelyOpen = systemRequestsAllowed && !queueIsFull && !outOfGeofenceRange;
+                const effectivelyOpen = systemRequestsAllowed && !queueIsFull && !outOfGeofenceRange && !isBlockedGuest;
                 if (!effectivelyOpen) {
                     searchInput.disabled = true;
                     searchInput.value = "";
-                    searchInput.placeholder = outOfGeofenceRange
+                    searchInput.placeholder = isBlockedGuest
+                        ? "Requests unavailable now"
+                        : outOfGeofenceRange
                         ? "You are no longer at this location"
                         : queueIsFull
                         ? "Queue is full right now — wait for songs to play, it'll reopen automatically."
