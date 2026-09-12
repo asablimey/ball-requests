@@ -357,20 +357,19 @@ async function createEvent(slug, eventName, adminPassword, venue, templateConfig
     // or markup-laden name get stored from the very first request.
     const safeEventName = typeof eventName === 'string' ? eventName.trim().slice(0, 60) : '';
 
-    // Venue location is entirely optional (new-event.html only sends it if the
-    // organizer actually dropped a pin). Validate shape here rather than trust
-    // the client - malformed/partial values are just dropped, not errored,
-    // since a bad location shouldn't block event creation.
-    let safeVenue = null;
-    if (venue && typeof venue.latitude === 'number' && typeof venue.longitude === 'number' &&
-        isFinite(venue.latitude) && isFinite(venue.longitude) &&
-        venue.latitude >= -90 && venue.latitude <= 90 && venue.longitude >= -180 && venue.longitude <= 180) {
-        safeVenue = {
-            latitude: venue.latitude,
-            longitude: venue.longitude,
-            venueName: typeof venue.venueName === 'string' ? venue.venueName.trim().slice(0, 120) : ''
-        };
+    // Venue location is now required at creation time - validate shape here
+    // rather than trust the client, and reject rather than silently drop a
+    // malformed/missing value (unlike the old "optional" behavior).
+    const venueLatValid = venue && typeof venue.latitude === 'number' && isFinite(venue.latitude) && venue.latitude >= -90 && venue.latitude <= 90;
+    const venueLngValid = venue && typeof venue.longitude === 'number' && isFinite(venue.longitude) && venue.longitude >= -180 && venue.longitude <= 180;
+    if (!venueLatValid || !venueLngValid) {
+        return { error: 'A venue location is required to create an event.' };
     }
+    const safeVenue = {
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        venueName: typeof venue.venueName === 'string' ? venue.venueName.trim().slice(0, 120) : ''
+    };
 
     const adminPasswordHash = await hashPassword(adminPassword);
     // Re-check for a race: two creates for the same never-before-seen slug
