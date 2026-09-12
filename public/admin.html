@@ -848,6 +848,7 @@
         <button type="button" id="sidebar-nav-history" class="sidebar-nav-item" onclick="switchTab('history')">Song History</button>
         <button type="button" id="sidebar-nav-settings" class="sidebar-nav-item" onclick="switchTab('settings')">Settings</button>
         <button type="button" id="sidebar-nav-stats" class="sidebar-nav-item" onclick="switchTab('stats')">Stats</button>
+        <button type="button" id="sidebar-nav-blocked" class="sidebar-nav-item" onclick="switchTab('blocked')">Blocked</button>
     </div>
 
     <div class="header">
@@ -1216,6 +1217,31 @@
         </div>
     </div>
 
+    <div id="tab-panel-blocked" class="tab-content">
+        <div class="panel">
+            <h2>Blocked</h2>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Search &amp; Block</div>
+                <p class="settings-card-hint" style="margin-top: 0;">Search Spotify for a song, artist, or genre to block it for the rest of this event. Blocked items are filtered out of every guest's search results automatically.</p>
+                <input type="text" id="blocklist-search-input" placeholder="Search songs, artists, or genres" oninput="onBlocklistSearchInput()" style="width: 100%; margin-bottom: 12px;">
+                <div id="blocklist-search-results"></div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Guests</div>
+                <p class="settings-card-hint" style="margin-top: 0;">Every guest who's requested a song tonight. Blocking stops their device from requesting or voting for the rest of this event.</p>
+                <input type="text" id="blocked-guest-filter-input" placeholder="Filter by name" oninput="renderBlockedTabGuests()" style="width: 100%; margin-bottom: 12px;">
+                <div id="blocklist-guests-list"></div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-section-label">Currently Blocked</div>
+                <div id="blocklist-everything-list"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // This page is served at /e/{slug}/admin, so the event's slug is
         // always the second path segment - every relative API call below
@@ -1275,7 +1301,7 @@
         // chip selection before they hit "Save Filters".
         let filtersInitialized = false;
 
-        const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats'];
+        const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats', 'blocked'];
 
         // --- Sidebar (hamburger menu) ---
         function openSidebar() {
@@ -1296,6 +1322,7 @@
             });
             closeSidebar();
             if (targetTab === 'stats') loadStats();
+            if (targetTab === 'blocked') { renderBlockedTabGuests(); renderBlockedEverything(); }
         }
 
         const SETTINGS_CATEGORIES = ['general', 'access', 'spotify', 'kiosk', 'danger'];
@@ -1975,6 +2002,12 @@ async function verifyPassword() {
                 lastBlockedVoters = data.blockedVoters || [];
                 renderBlockedGuests();
 
+                lastBlockedArtists = data.blockedArtists || [];
+                lastBlockedTracks = data.blockedTracks || [];
+                lastGuests = data.guests || [];
+                renderBlockedTabGuests();
+                renderBlockedEverything();
+
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = data.history.length === 0 ? '<p class="empty-placeholder">No tracks logged as played yet.</p>' : data.history.map(song => `
                     <div class="song-row history-row">
@@ -2246,6 +2279,220 @@ async function verifyPassword() {
                         </div>
                         <button class="btn btn-unblock" onclick="unblockGuest('${b.voterId}')">Unblock</button>
                     </div>`).join('');
+        }
+
+        // --- Blocked tab ---
+        // lastBlockedArtists/lastBlockedTracks/lastGuests are populated from
+        // the same /api/admin/data poll as lastBlockedVoters above.
+        let lastBlockedArtists = [];
+        let lastBlockedTracks = [];
+        let lastGuests = [];
+
+        let blocklistSearchDebounce = null;
+        function onBlocklistSearchInput() {
+            clearTimeout(blocklistSearchDebounce);
+            const query = document.getElementById('blocklist-search-input').value.trim();
+            const resultsEl = document.getElementById('blocklist-search-results');
+            if (!query) { resultsEl.innerHTML = ''; return; }
+            blocklistSearchDebounce = setTimeout(() => runBlocklistSearch(query), 350);
+        }
+
+        async function runBlocklistSearch(query) {
+            const resultsEl = document.getElementById('blocklist-search-results');
+            try {
+                const res = await fetch(eventUrl(`/api/admin/blocklist-search?q=${encodeURIComponent(query)}`), {
+                    headers: adminHeaders()
+                });
+                const data = await res.json();
+                const tracks = data.tracks || [];
+                const artists = data.artists || [];
+                const genres = data.genres || [];
+
+                if (tracks.length === 0 && artists.length === 0 && genres.length === 0) {
+                    resultsEl.innerHTML = '<p class="empty-placeholder">No results.</p>';
+                    return;
+                }
+
+                const genreRows = genres.map(g => `
+                    <div class="search-result-row">
+                        <div class="search-result-text">
+                            <div class="search-result-title">${escapeHtml(g.label)}</div>
+                            <div class="search-result-artist">Genre</div>
+                        </div>
+                        ${g.blocked
+                            ? `<button class="btn btn-unblock" onclick="unblockGenreFromSearch('${g.key}')">Unblock</button>`
+                            : `<button class="btn btn-block" onclick="blockGenreFromSearch('${g.key}', '${escapeHtml(g.label).replace(/'/g, "\\'")}')">Block</button>`}
+                    </div>`).join('');
+
+                const artistRows = artists.map(a => `
+                    <div class="search-result-row">
+                        <img src="${safeImageUrl(a.image)}">
+                        <div class="search-result-text">
+                            <div class="search-result-title">${escapeHtml(a.name)}</div>
+                            <div class="search-result-artist">Artist</div>
+                        </div>
+                        ${a.blocked
+                            ? `<button class="btn btn-unblock" onclick="unblockArtistFromSearch('${a.id}')">Unblock</button>`
+                            : `<button class="btn btn-block" onclick="blockArtistFromSearch('${a.id}', '${escapeHtml(a.name).replace(/'/g, "\\'")}')">Block</button>`}
+                    </div>`).join('');
+
+                const trackRows = tracks.map(t => `
+                    <div class="search-result-row">
+                        <img src="${safeImageUrl(t.artwork)}">
+                        <div class="search-result-text">
+                            <div class="search-result-title">${escapeHtml(t.name)}</div>
+                            <div class="search-result-artist">${escapeHtml(t.artist)}</div>
+                        </div>
+                        ${t.blocked
+                            ? `<button class="btn btn-unblock" onclick="unblockTrackFromSearch('${t.id}')">Unblock</button>`
+                            : `<button class="btn btn-block" onclick="blockTrackFromSearch('${t.id}', '${escapeHtml(t.name).replace(/'/g, "\\'")}', '${escapeHtml(t.artist).replace(/'/g, "\\'")}')">Block</button>`}
+                    </div>`).join('');
+
+                resultsEl.innerHTML = genreRows + artistRows + trackRows;
+            } catch (err) {
+                resultsEl.innerHTML = '<p class="empty-placeholder">Search unavailable right now.</p>';
+            }
+        }
+
+        // Each of these re-runs the current search afterward so the button
+        // on that row flips from Block <-> Unblock immediately, instead of
+        // waiting for the next 3s dashboard poll.
+        async function blockArtistFromSearch(artistId, name) {
+            try {
+                await fetch(eventUrl('/api/admin/block-artist'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ artistId, name })
+                });
+                showToast(`Blocked "${name}".`, 'success');
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not block that artist.', 'error'); }
+        }
+        async function unblockArtistFromSearch(artistId) {
+            try {
+                await fetch(eventUrl('/api/admin/unblock-artist'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ artistId })
+                });
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not unblock that artist.', 'error'); }
+        }
+        async function blockTrackFromSearch(trackId, name, artist) {
+            try {
+                await fetch(eventUrl('/api/admin/block-track'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ trackId, name, artist })
+                });
+                showToast(`Blocked "${name}".`, 'success');
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not block that song.', 'error'); }
+        }
+        async function unblockTrackFromSearch(trackId) {
+            try {
+                await fetch(eventUrl('/api/admin/unblock-track'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ trackId })
+                });
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not unblock that song.', 'error'); }
+        }
+        async function blockGenreFromSearch(genreKey, label) {
+            try {
+                await fetch(eventUrl('/api/admin/block-genre'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ genreKey })
+                });
+                showToast(`Blocked "${label}".`, 'success');
+                selectedGenres = [...new Set([...selectedGenres, genreKey])];
+                renderFilterChips();
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not block that genre.', 'error'); }
+        }
+        async function unblockGenreFromSearch(genreKey) {
+            try {
+                await fetch(eventUrl('/api/admin/unblock-genre'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ genreKey })
+                });
+                selectedGenres = selectedGenres.filter(k => k !== genreKey);
+                renderFilterChips();
+                runBlocklistSearch(document.getElementById('blocklist-search-input').value.trim());
+                updateDashboard();
+            } catch (err) { showToast('Could not unblock that genre.', 'error'); }
+        }
+
+        // "Guests" section - every voter who's had a request go through
+        // (see event.voterNames in server.js), filterable by name, each with
+        // a Block button that reuses the same block-voter route the Stats
+        // tab's Recent Requests list already uses.
+        function renderBlockedTabGuests() {
+            const el = document.getElementById('blocklist-guests-list');
+            if (!el) return;
+            const filter = (document.getElementById('blocked-guest-filter-input')?.value || '').trim().toLowerCase();
+            const filtered = filter
+                ? lastGuests.filter(g => (g.label || '').toLowerCase().includes(filter))
+                : lastGuests;
+            el.innerHTML = filtered.length === 0
+                ? '<p class="empty-placeholder">No guests yet.</p>'
+                : filtered.map(g => `
+                    <div class="stat-row">
+                        <div class="stat-row-text">
+                            <div class="stat-row-title">${escapeHtml(g.label)}</div>
+                        </div>
+                        ${g.blocked
+                            ? '<span class="outcome-badge dropped" style="margin-left:4px;">Blocked</span>'
+                            : `<button class="btn btn-block" onclick="blockGuest('${g.voterId}', '${escapeHtml(g.label).replace(/'/g, "\\'")}')">Block</button>`}
+                    </div>`).join('');
+        }
+
+        // "Currently Blocked" section - everything blocked, of every type,
+        // in one list, each with its own type-appropriate Unblock action.
+        function renderBlockedEverything() {
+            const el = document.getElementById('blocklist-everything-list');
+            if (!el) return;
+
+            const guestRows = lastBlockedVoters.map(b => `
+                <div class="stat-row">
+                    <div class="stat-row-text">
+                        <div class="stat-row-title">${escapeHtml(b.label)}</div>
+                        <div class="stat-row-artist">Guest</div>
+                    </div>
+                    <button class="btn btn-unblock" onclick="unblockGuest('${b.voterId}')">Unblock</button>
+                </div>`);
+
+            const artistRows = lastBlockedArtists.map(a => `
+                <div class="stat-row">
+                    <div class="stat-row-text">
+                        <div class="stat-row-title">${escapeHtml(a.name)}</div>
+                        <div class="stat-row-artist">Artist</div>
+                    </div>
+                    <button class="btn btn-unblock" onclick="unblockArtistFromSearch('${a.artistId}'); renderBlockedEverything();">Unblock</button>
+                </div>`);
+
+            const trackRows = lastBlockedTracks.map(t => `
+                <div class="stat-row">
+                    <div class="stat-row-text">
+                        <div class="stat-row-title">${escapeHtml(t.name)}</div>
+                        <div class="stat-row-artist">${escapeHtml(t.artist || 'Song')}</div>
+                    </div>
+                    <button class="btn btn-unblock" onclick="unblockTrackFromSearch('${t.trackId}'); renderBlockedEverything();">Unblock</button>
+                </div>`);
+
+            const genreRows = (selectedGenres || []).map(key => `
+                <div class="stat-row">
+                    <div class="stat-row-text">
+                        <div class="stat-row-title">${escapeHtml(GENRE_OPTIONS.find(g => g.key === key)?.label || key)}</div>
+                        <div class="stat-row-artist">Genre</div>
+                    </div>
+                    <button class="btn btn-unblock" onclick="unblockGenreFromSearch('${key}'); renderBlockedEverything();">Unblock</button>
+                </div>`);
+
+            const allRows = guestRows.concat(artistRows, trackRows, genreRows).join('');
+            el.innerHTML = allRows || '<p class="empty-placeholder">Nothing is blocked right now.</p>';
         }
 
         function toggleFullscreen() {
