@@ -320,6 +320,26 @@ const GENRE_CATEGORIES = {
     afrobeats: ['afrobeat', 'afro pop', 'afrobeats']
 };
 
+// Display labels for the categories above - mirrors GENRE_OPTIONS in
+// admin.html (keep both in sync if a category is ever added/renamed). Used
+// by the Blocked tab's combined search so a DJ can find "Hip-Hop/Rap" by
+// typing "hip", not just the internal key.
+const GENRE_LABELS = {
+    pop: 'Pop',
+    hiphop: 'Hip-Hop/Rap',
+    rock: 'Rock/Metal',
+    rnb: 'R&B/Soul',
+    country: 'Country',
+    electronic: 'Electronic/Dance',
+    latin: 'Latin',
+    indie: 'Indie/Alt',
+    jazz: 'Jazz/Blues',
+    classical: 'Classical',
+    reggae: 'Reggae',
+    kpop: 'K-Pop',
+    afrobeats: 'Afrobeats'
+};
+
 // Batch-fetches genres for a list of artist IDs. Track objects from Spotify's
 // search endpoint don't include genre info directly - only the artist objects
 // do - so genre filtering costs one extra API call per search (only made when
@@ -382,6 +402,20 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 // just not add to it or vote on it.
 function isVoterBlocked(event, voterId) {
     return !!(event.blockedVoters && event.blockedVoters[voterId]);
+}
+
+// True if this specific artist has been blocked (Blocked tab). Matched
+// against a track's primary artist, both in search results and at
+// request time - defensive `event.blockedArtists &&` guards events created
+// before this field existed.
+function isArtistBlocked(event, artistId) {
+    return !!(artistId && event.blockedArtists && event.blockedArtists[artistId]);
+}
+
+// True if this specific track has been blocked (Blocked tab), independent
+// of any artist-level block.
+function isTrackBlocked(event, trackId) {
+    return !!(event.blockedTracks && event.blockedTracks[trackId]);
 }
 
 function getOrCreateVoterCreditState(event, voterId, maxCredits) {
@@ -992,6 +1026,10 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
             tracks = tracks.filter(track => !isExtendedOrClubMix(track.name));
         }
 
+        // Blocked tab: drop anything the DJ has specifically blocked, by
+        // track or by its primary artist, before it ever reaches a guest.
+        tracks = tracks.filter(track => !isTrackBlocked(event, track.id) && !isArtistBlocked(event, track._primaryArtistId));
+
         // Same rule the request endpoint enforces (see SONG_REQUEST_GAP) -
         // filtered out of search too, so a guest never sees a song only to
         // have it rejected the moment they try to actually request it.
@@ -1111,6 +1149,13 @@ function buildRequestHandler(isKiosk) {
             return res.status(403).json({ error: "That song was just played - it needs to sit out a while before it can be requested again." });
         }
 
+        // Blocked tab: same track/artist block guest search already filters
+        // out, re-checked here since a request can arrive with a track ID
+        // the guest already had cached before it was blocked.
+        if (isTrackBlocked(event, verifiedTrack.id) || isArtistBlocked(event, primaryArtistId)) {
+            return res.status(403).json({ error: "That song isn't available at this event." });
+        }
+
         if (event.systemConfigs.explicitBlockActive && verifiedTrack.explicit) {
             return res.status(403).json({ error: "Explicit content is currently restricted by the admin." });
         }
@@ -1146,6 +1191,12 @@ function buildRequestHandler(isKiosk) {
         const requesterName = (typeof username === 'string' && username.trim() !== '')
             ? username.trim().slice(0, 30)
             : 'Anonymous';
+
+        // Blocked tab guest directory - records/refreshes this voter's last-used
+        // name so the admin can find and block them by name later. Defensive
+        // check guards events created before voterNames existed.
+        if (!event.voterNames) event.voterNames = {};
+        event.voterNames[voterId] = { label: requesterName, lastSeenAt: Date.now() };
 
         const trackId = verifiedTrack.id;
 
@@ -1243,7 +1294,7 @@ app.post('/e/:slug/api/vote', publicActionLimiter, voterIdentityMiddleware, (req
     res.json({ success: true });
 });
 
-app.get('/e/:slug/data', publicReadLimiter, (req, res) => {
+app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     res.json({
         maxCredits: event.systemConfigs.maxCredits,
@@ -1262,11 +1313,15 @@ app.get('/e/:slug/data', publicReadLimiter, (req, res) => {
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
         queue: buildSortedQueue(event),
-        history: event.playedHistory
+        history: event.playedHistory,
+        // This guest's own block status (Blocked tab) - lets the guest page
+        // grey out the search bar for just this one browser/device, instead
+        // of only finding out when a request/vote gets rejected.
+        blocked: isVoterBlocked(event, req.serverVoterId)
     });
 });
 
-app.get('/e/:slug/kiosk-data', publicReadLimiter, (req, res) => {
+app.get('/e/:slug/kiosk-data', publicReadLimiter, voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     res.json({
         maxCredits: event.kioskConfigs.maxCredits,
@@ -1284,7 +1339,8 @@ app.get('/e/:slug/kiosk-data', publicReadLimiter, (req, res) => {
         spotifyConnectEnabled: event.kioskConfigs.spotifyConnectEnabled,
         displayOnlyMode: event.kioskConfigs.displayOnlyMode,
         queue: buildSortedQueue(event),
-        history: event.playedHistory
+        history: event.playedHistory,
+        blocked: isVoterBlocked(event, req.serverVoterId)
     });
 });
 
@@ -1314,7 +1370,28 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
             voterId,
             label: info.label,
             blockedAt: info.blockedAt
-        })).sort((a, b) => b.blockedAt - a.blockedAt)
+        })).sort((a, b) => b.blockedAt - a.blockedAt),
+        blockedArtists: Object.entries(event.blockedArtists || {}).map(([artistId, info]) => ({
+            artistId,
+            name: info.name,
+            blockedAt: info.blockedAt
+        })).sort((a, b) => b.blockedAt - a.blockedAt),
+        blockedTracks: Object.entries(event.blockedTracks || {}).map(([trackId, info]) => ({
+            trackId,
+            name: info.name,
+            artist: info.artist,
+            blockedAt: info.blockedAt
+        })).sort((a, b) => b.blockedAt - a.blockedAt),
+        // Every guest who's had a request go through, most-recently-seen
+        // first - powers the Blocked tab's "Guests" section. `blocked` lets
+        // the UI show the right button (Block vs already-blocked) without a
+        // second lookup against blockedVoters.
+        guests: Object.entries(event.voterNames || {}).map(([voterId, info]) => ({
+            voterId,
+            label: info.label,
+            lastSeenAt: info.lastSeenAt,
+            blocked: !!(event.blockedVoters && event.blockedVoters[voterId])
+        })).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
     });
 });
 
@@ -1591,6 +1668,129 @@ app.post('/e/:slug/api/admin/unblock-voter', (req, res) => {
     if (typeof voterId === 'string') delete event.blockedVoters[voterId];
     events.scheduleSave(event.slug);
     res.json({ success: true });
+});
+
+// --- Blocked tab: artists, tracks, genres ---
+// Same shape as block-voter/unblock-voter above - store just enough (name,
+// timestamp) to render the "Currently Blocked" list without a Spotify
+// round-trip, and let isArtistBlocked/isTrackBlocked do the real work at
+// search and request time.
+app.post('/e/:slug/api/admin/block-artist', (req, res) => {
+    const event = req.event;
+    const { artistId, name } = req.body;
+    if (typeof artistId !== 'string' || !artistId) return res.status(400).json({ error: 'Missing artistId.' });
+    if (!event.blockedArtists) event.blockedArtists = {};
+    event.blockedArtists[artistId] = {
+        name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 80) : 'Unknown Artist',
+        blockedAt: Date.now()
+    };
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/unblock-artist', (req, res) => {
+    const event = req.event;
+    const { artistId } = req.body;
+    if (typeof artistId === 'string' && event.blockedArtists) delete event.blockedArtists[artistId];
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/block-track', (req, res) => {
+    const event = req.event;
+    const { trackId, name, artist } = req.body;
+    if (typeof trackId !== 'string' || !trackId) return res.status(400).json({ error: 'Missing trackId.' });
+    if (!event.blockedTracks) event.blockedTracks = {};
+    event.blockedTracks[trackId] = {
+        name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 120) : 'Unknown Track',
+        artist: typeof artist === 'string' ? artist.trim().slice(0, 120) : '',
+        blockedAt: Date.now()
+    };
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/unblock-track', (req, res) => {
+    const event = req.event;
+    const { trackId } = req.body;
+    if (typeof trackId === 'string' && event.blockedTracks) delete event.blockedTracks[trackId];
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Genre blocking reuses the exact same systemConfigs.genreFilter array the
+// Settings tab's filter chips already read/write (see /admin/config above) -
+// these just add/remove one key at a time instead of replacing the whole
+// array, so the Blocked tab and Settings tab never fight over it.
+app.post('/e/:slug/api/admin/block-genre', (req, res) => {
+    const event = req.event;
+    const { genreKey } = req.body;
+    if (typeof genreKey !== 'string' || !Object.prototype.hasOwnProperty.call(GENRE_CATEGORIES, genreKey)) {
+        return res.status(400).json({ error: 'Unknown genre.' });
+    }
+    if (!Array.isArray(event.systemConfigs.genreFilter)) event.systemConfigs.genreFilter = [];
+    if (!event.systemConfigs.genreFilter.includes(genreKey)) event.systemConfigs.genreFilter.push(genreKey);
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/unblock-genre', (req, res) => {
+    const event = req.event;
+    const { genreKey } = req.body;
+    if (typeof genreKey === 'string') {
+        event.systemConfigs.genreFilter = (event.systemConfigs.genreFilter || []).filter(k => k !== genreKey);
+    }
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Combined search for the Blocked tab: one query hits Spotify for both
+// tracks and artists (type=track,artist in a single call) and checks the
+// query against the curated genre categories locally - no separate genre
+// search exists on Spotify's side, and this is a small fixed list anyway.
+// Each result carries `blocked` so the UI shows the right button state
+// without a second round-trip.
+app.get('/e/:slug/api/admin/blocklist-search', async (req, res) => {
+    const event = req.event;
+    const query = req.query.q;
+    if (!query) return res.json({ tracks: [], artists: [], genres: [] });
+    if (!spotifyAccessToken) await getSpotifyToken();
+    try {
+        const searchRes = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track,artist&limit=8`, {
+            headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
+        });
+        if (!searchRes.ok) return res.status(502).json({ error: 'Spotify search temporarily unavailable.' });
+        const data = await searchRes.json();
+
+        const tracks = (data.tracks?.items || []).map(t => ({
+            id: t.id,
+            name: t.name,
+            artist: (t.artists || []).map(a => a.name).join(', '),
+            artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            blocked: isTrackBlocked(event, t.id)
+        }));
+
+        const artists = (data.artists?.items || []).map(a => ({
+            id: a.id,
+            name: a.name,
+            image: a.images?.[a.images.length - 1]?.url || null,
+            blocked: isArtistBlocked(event, a.id)
+        }));
+
+        const q = query.trim().toLowerCase();
+        const genres = Object.keys(GENRE_CATEGORIES)
+            .filter(key => key.includes(q) || GENRE_LABELS[key].toLowerCase().includes(q))
+            .map(key => ({
+                key,
+                label: GENRE_LABELS[key],
+                blocked: (event.systemConfigs.genreFilter || []).includes(key)
+            }));
+
+        res.json({ tracks, artists, genres });
+    } catch (err) {
+        console.error('[BLOCKLIST SEARCH] Failed:', err.message);
+        res.status(500).json({ error: 'Search unavailable' });
+    }
 });
 
 // Admin-only search, used by the "Add a Song" panel in the Live Queue tab.
