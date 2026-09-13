@@ -105,15 +105,6 @@
 
         .layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
 
-        /* Below the fit-to-screen breakpoint the page already falls back
-           to normal scrolling flow (see the min-width:821px block below),
-           so the two-column grid should fall back too - a fixed 220px
-           sidebar next to the timetable gets crushed on phone-width
-           screens otherwise. */
-        @media (max-width: 820px) {
-            .layout { grid-template-columns: 1fr; }
-        }
-
         .panel { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
         .panel h2 { margin: 0 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
 
@@ -395,29 +386,7 @@
         const HOUR_PX_DEFAULT = 40;
         let hourPx = HOUR_PX_DEFAULT;
 
-        // The 7 day-boxes each scroll horizontally on their own, but they
-        // should feel like one shared timeline. Position is kept as a
-        // time-of-day (minutes) rather than a raw pixel offset, since
-        // pixels-per-hour changes with zoom - storing minutes means "8am"
-        // stays "8am" (rather than some arbitrary pixel count) whether
-        // renderDayBoxes() just rebuilt the DOM or the zoom level changed.
-        // null means "not set yet" - scrollTimetablesToNow() picks a
-        // sensible default the first time it's called.
-        let sharedScrollMinutes = null;
-
         document.getElementById('back-to-admin').href = eventUrl('/admin');
-
-        // Scroll events don't bubble, so this listens in the capture phase
-        // on the shared ancestor instead of attaching one listener per
-        // day-box (which would need re-attaching every renderDayBoxes()
-        // rebuild anyway).
-        document.getElementById('day-boxes').addEventListener('scroll', (e) => {
-            if (!e.target.classList || !e.target.classList.contains('timetable-scroll')) return;
-            sharedScrollMinutes = (e.target.scrollLeft / (hourPx * 24)) * TRACK_MINUTES;
-            document.querySelectorAll('.timetable-scroll').forEach(el => {
-                if (el !== e.target) el.scrollLeft = e.target.scrollLeft;
-            });
-        }, true);
 
         function showToast(message, kind) {
             const el = document.getElementById('toast');
@@ -600,10 +569,8 @@
             document.getElementById('zoom-readout').textContent = Math.round((hourPx / HOUR_PX_DEFAULT) * 100) + '%';
             document.getElementById('zoom-out-btn').disabled = hourPx <= HOUR_PX_MIN;
             document.getElementById('zoom-in-btn').disabled = hourPx >= HOUR_PX_MAX;
-            // renderDayBoxes() re-applies sharedScrollMinutes at the new
-            // hourPx, so whatever time of day was on screen stays on
-            // screen - no separate "jump back to now" call needed here.
             renderDayBoxes();
+            scrollTimetablesToNow();
         }
 
         // Every day box defaults to starting an hour before the current
@@ -615,10 +582,8 @@
         // block, and resetting everyone's scroll position mid-drag would
         // fight the drag instead of just repositioning a block.
         function scrollTimetablesToNow() {
-            if (sharedScrollMinutes === null) {
-                sharedScrollMinutes = Math.max(0, new Date().getHours() - 1) * 60;
-            }
-            const offsetPx = (sharedScrollMinutes / TRACK_MINUTES) * hourPx * 24;
+            const targetHour = Math.max(0, new Date().getHours() - 1);
+            const offsetPx = targetHour * hourPx;
             document.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
         }
 
@@ -674,16 +639,6 @@
                     track.appendChild(buildBlockEl(rule, conflictingIds.has(rule.id)));
                 });
             });
-
-            // The innerHTML replacement above just tore down and rebuilt
-            // every .timetable-scroll element, so their scroll position
-            // reset to 0 - reapply the shared position (in minutes, scaled
-            // to the current zoom) rather than leaving every day snapped
-            // back to midnight.
-            if (sharedScrollMinutes !== null) {
-                const offsetPx = (sharedScrollMinutes / TRACK_MINUTES) * hourPx * 24;
-                container.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
-            }
         }
 
         function buildBlockEl(rule, isConflicting) {
@@ -753,7 +708,6 @@
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
                 const duration = origEnd - origStart;
-                const timeLabel = el.querySelector('.block-time');
                 let moved = false;
 
                 function onMove(ev) {
@@ -763,21 +717,12 @@
                     let newStart = Math.max(0, Math.min(TRACK_MINUTES - duration, origStart + deltaMin));
                     rule.start = minutesToHHMM(newStart);
                     rule.end = minutesToHHMM(newStart + duration);
-                    // Move just this block and update its own label rather
-                    // than calling renderDayBoxes() on every mousemove -
-                    // that used to tear down and rebuild all 7 day-boxes
-                    // per tick, snapping everyone's scroll position back to
-                    // 0 mid-drag and making the drag itself feel laggy.
-                    el.style.left = ((newStart / TRACK_MINUTES) * hourPx * 24) + 'px';
-                    if (timeLabel) timeLabel.textContent = `${rule.start}\u2013${rule.end}`;
+                    renderDayBoxes();
                 }
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
-                    if (!moved) { openModal(ruleId); return; }
-                    // Full rebuild now that the drag is done, so conflict
-                    // outlines and everything else settle correctly.
-                    renderDayBoxes();
+                    if (!moved) openModal(ruleId);
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
@@ -795,24 +740,17 @@
                 const startX = e.clientX;
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
-                const blockEl = handle.parentElement;
-                const timeLabel = blockEl.querySelector('.block-time');
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
                     let newEnd = Math.max(origStart + 15, Math.min(TRACK_MINUTES, origEnd + deltaMin));
                     rule.end = minutesToHHMM(newEnd);
-                    // Same reasoning as the move-drag above: resize just
-                    // this block's width live, defer the full rebuild
-                    // (conflict outlines etc.) to mouseup.
-                    blockEl.style.width = Math.max(10, ((newEnd - origStart) / TRACK_MINUTES) * hourPx * 24) + 'px';
-                    if (timeLabel) timeLabel.textContent = `${rule.start}\u2013${rule.end}`;
+                    renderDayBoxes();
                 }
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
-                    renderDayBoxes();
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
