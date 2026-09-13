@@ -129,7 +129,19 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             locationLockEnabled: true,
             guestSpotifyConnectEnabled: false,
             spotifyAutoQueueEnabled: true,
-            lastSwitchedPlaylist: ''
+            // Whatever's actually live right now - manual switch or
+            // scheduled one, updated the moment either actually takes
+            // effect. Purely a "what's playing" readout; not the thing to
+            // revert to (see fallbackPlaylistUri below).
+            lastSwitchedPlaylist: '',
+            // The admin's own baseline pick from the Fallback Playlist box
+            // on the settings page - set ONLY by that manual action, never
+            // touched by the scheduler. This is what a scheduler gap (a
+            // stretch of time no rule covers) seamlessly hands back to.
+            // Kept separate from lastSwitchedPlaylist so the scheduler
+            // overwriting "what's playing" all day doesn't erase the
+            // admin's actual baseline choice.
+            fallbackPlaylistUri: ''
         },
         kioskConfigs: {
             requestsAllowed: true,
@@ -328,6 +340,13 @@ function ensureSchedulerDefaults(event) {
     }
     if (!event.schedulerRuntime || typeof event.schedulerRuntime !== 'object') {
         event.schedulerRuntime = { activeRuleId: null, pendingSwitchUri: null, pendingSwitchLabel: null };
+    }
+    // Events saved before the fallback/scheduled split existed only have
+    // lastSwitchedPlaylist. Seed fallbackPlaylistUri from it once so a gap
+    // in the timetable has something to hand back to, instead of silently
+    // being an empty string on every pre-existing event.
+    if (event.systemConfigs && typeof event.systemConfigs.fallbackPlaylistUri !== 'string') {
+        event.systemConfigs.fallbackPlaylistUri = event.systemConfigs.lastSwitchedPlaylist || '';
     }
     return event;
 }
