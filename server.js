@@ -291,7 +291,11 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
 // --- Music Scheduler ---------------------------------------------------
 // A day/time timetable (event.musicScheduler.rules) that drives playlist
 // switches, volume, and requests-open/closed automatically, so a venue
-// doesn't need someone flipping settings by hand throughout the day.
+// doesn't need someone flipping settings by hand throughout the day. This
+// is meant to be the main way playback is driven once it's set up - the
+// timetable is expected to usually cover the whole week. The admin's
+// manually-set Fallback Playlist (systemConfigs.fallbackPlaylistUri) is
+// just the safety net for whatever gaps remain, not the normal case.
 //
 // The tricky part is the playlist switch: switchDjPlaylist() above is
 // immediate and will cut off whatever's currently playing. A schedule
@@ -358,6 +362,20 @@ function clearSchedulerSwitchTimer(slug) {
     }
 }
 
+// Drops any switch the scheduler currently has queued up, without touching
+// what's actually playing right now. Needed anywhere something else can
+// make the scheduler's queued plan stale or unwanted:
+//   - an admin manually switches the playlist themselves (that pick should
+//     win outright, not get silently overwritten once the current song
+//     ends and the old queued switch fires)
+//   - the timetable itself gets edited/saved, which can delete or change
+//     the very rule a switch was queued for
+function cancelPendingSchedulerSwitch(event) {
+    clearSchedulerSwitchTimer(event.slug);
+    event.schedulerRuntime.pendingSwitchUri = null;
+    event.schedulerRuntime.pendingSwitchLabel = null;
+}
+
 // Actually performs the held-pending playlist switch, if one is still due
 // and still safe (re-checked here rather than trusting the state from when
 // the timer was set, in case something changed - e.g. a new guest request
@@ -406,6 +424,19 @@ async function tickMusicScheduler(event) {
                 event.schedulerRuntime.pendingSwitchLabel = playlist.label;
                 console.log(`[SCHEDULER] (${event.slug}) "${currentRule.id}" now active - queued handoff to "${playlist.label}".`);
             }
+        } else {
+            // We just walked off the end of a scheduled block into a gap
+            // the timetable doesn't cover. The scheduler is meant to be the
+            // main driver of playback, so a gap should be the rare/edge
+            // case, not silently left running whatever the last block was -
+            // seamlessly hand back to the admin's own Fallback Playlist,
+            // the same way a rule boundary would hand off to a new one.
+            const fallbackUri = event.systemConfigs.fallbackPlaylistUri;
+            if (fallbackUri && fallbackUri !== event.systemConfigs.lastSwitchedPlaylist) {
+                event.schedulerRuntime.pendingSwitchUri = fallbackUri;
+                event.schedulerRuntime.pendingSwitchLabel = 'Fallback Playlist';
+                console.log(`[SCHEDULER] (${event.slug}) No rule covers this time - queued handoff back to the Fallback Playlist.`);
+            }
         }
         events.scheduleSave(event.slug);
     }
@@ -451,6 +482,46 @@ async function tickMusicScheduler(event) {
         }, remainingMs);
         schedulerSwitchTimers.set(event.slug, handle);
     }
+}
+
+// Turns one rule into the day-segments it actually occupies, unrolling an
+// overnight window (e.g. Fri 22:00-02:00) into two pieces - Friday
+// 22:00-24:00, and Saturday 00:00-02:00 - so overlap checking never has to
+// special-case the wraparound itself; it just compares plain same-day
+// ranges.
+function ruleToDaySegments(rule) {
+    const start = parseHHMM(rule.start);
+    const end = parseHHMM(rule.end);
+    const overnight = end <= start;
+    const segments = [];
+    for (const day of rule.days) {
+        if (!overnight) {
+            segments.push({ day, start, end });
+        } else {
+            segments.push({ day, start, end: 1440 });
+            segments.push({ day: (day + 1) % 7, start: 0, end });
+        }
+    }
+    return segments;
+}
+
+// Finds the first pair of rules that share any overlapping time on any day,
+// or null if the timetable is clean. O(n^2) in rule count, which is fine -
+// safeRules is capped at 200.
+function findOverlappingRulePair(rules) {
+    const withSegments = rules.map(r => ({ rule: r, segments: ruleToDaySegments(r) }));
+    for (let i = 0; i < withSegments.length; i++) {
+        for (let j = i + 1; j < withSegments.length; j++) {
+            for (const segA of withSegments[i].segments) {
+                for (const segB of withSegments[j].segments) {
+                    if (segA.day === segB.day && segA.start < segB.end && segB.start < segA.end) {
+                        return [withSegments[i].rule, withSegments[j].rule];
+                    }
+                }
+            }
+        }
+    }
+    return null;
 }
 
 // Manual queue position, independent of vote count - see the admin reorder
@@ -1570,6 +1641,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         locationLockEnabled: event.systemConfigs.locationLockEnabled !== false,
         djSpotifyQueueConnected: !!event.spotify.djRefreshToken,
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
+        fallbackPlaylistUri: event.systemConfigs.fallbackPlaylistUri || '',
         kiosk: event.kioskConfigs,
         queue: buildSortedQueueForAdmin(event),
         history: event.playedHistory,
@@ -1748,12 +1820,23 @@ app.post('/e/:slug/api/admin/toggle-spotify-auto-queue', (req, res) => {
     res.json({ success: true });
 });
 
+// The admin's manual Fallback Playlist "Switch Now" action. This is an
+// explicit human decision, so it wins outright over the scheduler: it
+// cancels any switch the scheduler currently has queued up (rather than
+// letting that queued switch silently fire and undo this pick once the
+// current song ends), and it updates fallbackPlaylistUri - the baseline
+// the scheduler hands back to during a timetable gap - not just
+// lastSwitchedPlaylist.
 app.post('/e/:slug/api/admin/switch-playlist', async (req, res) => {
     const event = req.event;
     const { playlistUrl } = req.body;
     if (!playlistUrl) return res.status(400).json({ error: 'Missing playlistUrl.' });
+    cancelPendingSchedulerSwitch(event);
     const result = await switchDjPlaylist(event, playlistUrl);
-    if (result.success) event.systemConfigs.lastSwitchedPlaylist = playlistUrl.trim();
+    if (result.success) {
+        event.systemConfigs.lastSwitchedPlaylist = playlistUrl.trim();
+        event.systemConfigs.fallbackPlaylistUri = playlistUrl.trim();
+    }
     events.scheduleSave(event.slug);
     res.status(result.success ? 200 : 400).json(result);
 });
@@ -1812,12 +1895,29 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         };
     }).filter(Boolean).slice(0, 200) : event.musicScheduler.rules;
 
+    // Overlaps are rejected outright rather than silently resolved by
+    // first-match-wins - two blocks fighting over the same slot almost
+    // always means a dragging mistake, and resolving it silently would
+    // just hide that from the admin instead of letting them fix it.
+    const conflict = findOverlappingRulePair(safeRules);
+    if (conflict) {
+        return res.status(400).json({
+            error: 'Two scheduled blocks overlap - fix the conflict before saving.',
+            conflictingRuleIds: [conflict[0].id, conflict[1].id]
+        });
+    }
+
     event.musicScheduler.enabled = !!enabled;
     event.musicScheduler.playlists = safePlaylists;
     event.musicScheduler.rules = safeRules;
     // Force the next tick to re-evaluate from scratch rather than trusting
-    // whatever rule used to be "active" under the old timetable.
+    // whatever rule used to be "active" under the old timetable. Also drop
+    // any switch that was already queued up under the OLD timetable - the
+    // rule (or even the whole schedule) it was queued for may no longer
+    // exist, so let the next tick decide fresh instead of letting a stale
+    // switch fire on data that's just been replaced.
     event.schedulerRuntime.activeRuleId = null;
+    cancelPendingSchedulerSwitch(event);
     events.scheduleSave(event.slug);
     res.json({ success: true, playlists: safePlaylists, rules: safeRules });
 });
