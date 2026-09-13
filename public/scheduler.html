@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <title>Music Scheduler</title>
+
+    <style>
+        :root {
+            --spotify-green: #1DB954;
+            --spotify-black: #121212;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+            --red-action: #e91429;
+            --border: #282828;
+            --text-dim: #a7a7a7;
+        }
+        html { overflow-x: hidden; }
+        * { box-sizing: border-box; }
+        body {
+            background-color: var(--spotify-black);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* --- Lock screen (same pattern as admin.html/master.html) --- */
+        #lock-screen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: var(--spotify-black);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 9999; padding: 20px;
+        }
+        .lock-container {
+            background-color: var(--panel-bg); border: 1px solid var(--border);
+            padding: 40px; border-radius: 16px; text-align: center;
+            max-width: 340px; width: 100%;
+        }
+        .lock-container h2 { margin: 0 0 8px; font-size: 1.5rem; }
+        .lock-container p { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 20px; line-height: 1.4; }
+        .lock-input {
+            width: 100%; background-color: var(--card-bg); border: 1px solid #333;
+            padding: 12px; color: white; border-radius: 8px; font-size: 1rem;
+            outline: none; text-align: center; margin-bottom: 15px;
+        }
+        .lock-input:focus { border-color: var(--spotify-green); }
+        .lock-btn {
+            background-color: var(--spotify-green); color: white; border: none;
+            padding: 12px 24px; border-radius: 50px; font-weight: 700; cursor: pointer;
+            width: 100%; font-size: 1rem;
+        }
+        .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 12px; display: none; }
+
+        #dashboard { display: none; max-width: 1180px; margin: 0 auto; }
+
+        .header {
+            display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap;
+            border-bottom: 1px solid var(--border); padding-bottom: 18px; margin-bottom: 18px;
+        }
+        .header h1 { margin: 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px; }
+        .header .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 4px; }
+        .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+        a.back-link { color: var(--text-dim); font-size: 0.85rem; text-decoration: none; }
+        a.back-link:hover { color: white; }
+
+        .btn { border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.85rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+        .btn-primary { background: var(--spotify-green); color: white; }
+        .btn-primary:hover { filter: brightness(1.1); }
+        .btn-ghost { background: var(--card-bg); border: 1px solid #333; color: white; }
+        .btn-ghost:hover { border-color: #555; }
+        .btn-small { padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; }
+
+        .toggle-row { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-dim); }
+        .switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider-toggle {
+            position: absolute; cursor: pointer; inset: 0; background-color: #333;
+            border-radius: 22px; transition: 0.15s;
+        }
+        .slider-toggle:before {
+            position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px;
+            background-color: white; border-radius: 50%; transition: 0.15s;
+        }
+        .switch input:checked + .slider-toggle { background-color: var(--spotify-green); }
+        .switch input:checked + .slider-toggle:before { transform: translateX(18px); }
+
+        .status-bar {
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 16px; margin-bottom: 18px; font-size: 0.85rem; color: var(--text-dim);
+            display: flex; gap: 20px; flex-wrap: wrap;
+        }
+        .status-bar strong { color: white; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--spotify-green); margin-right: 6px; }
+
+        .layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
+        @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
+
+        .panel { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+        .panel h2 { margin: 0 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+
+        /* --- Playlist palette --- */
+        .playlist-chip {
+            display: flex; align-items: center; gap: 8px; background: var(--card-bg);
+            border: 1px solid #333; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+            cursor: grab; font-size: 0.85rem;
+        }
+        .playlist-chip:active { cursor: grabbing; }
+        .chip-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+        .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .chip-remove { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1rem; padding: 0 2px; }
+        .chip-remove:hover { color: var(--red-action); }
+        .chip-hint { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 12px; line-height: 1.4; }
+
+        .add-playlist-form input {
+            width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 8px; outline: none;
+        }
+        .add-playlist-form input:focus { border-color: var(--spotify-green); }
+
+        /* --- Timetable --- */
+        .timetable-scroll { overflow-x: auto; }
+        .timetable { min-width: 900px; }
+        .hour-ruler { display: flex; margin-left: 70px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
+        .hour-label { flex-shrink: 0; font-size: 0.7rem; color: var(--text-dim); }
+
+        .day-row { display: flex; align-items: center; margin-bottom: 6px; }
+        .day-label { width: 70px; flex-shrink: 0; font-size: 0.8rem; color: var(--text-dim); font-weight: 600; }
+        .day-track {
+            position: relative; height: 46px; background: var(--card-bg); border-radius: 6px;
+            background-image: repeating-linear-gradient(to right, #2f2f2f 0, #2f2f2f 1px, transparent 1px, transparent var(--hourpx));
+        }
+        .day-track.drag-over { outline: 2px dashed var(--spotify-green); outline-offset: -2px; }
+
+        .schedule-block {
+            position: absolute; top: 4px; bottom: 4px; border-radius: 6px;
+            padding: 4px 8px; font-size: 0.72rem; color: white; overflow: hidden;
+            cursor: grab; user-select: none; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        .schedule-block:active { cursor: grabbing; }
+        .schedule-block .block-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .schedule-block .block-time { opacity: 0.85; white-space: nowrap; }
+        .resize-handle {
+            position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize;
+            background: rgba(255,255,255,0.15);
+        }
+
+        .empty-hint { color: var(--text-dim); font-size: 0.8rem; padding: 30px 10px; text-align: center; }
+
+        /* --- Edit modal --- */
+        #modal-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 500; align-items: center; justify-content: center; padding: 20px;
+        }
+        #modal-backdrop.show { display: flex; }
+        .modal {
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
+            padding: 24px; max-width: 380px; width: 100%; max-height: 90vh; overflow-y: auto;
+        }
+        .modal h3 { margin: 0 0 16px; font-size: 1.1rem; }
+        .field-group { margin-bottom: 16px; }
+        .field-group label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+        .field-group select, .field-group input[type="time"] {
+            width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 9px 10px; border-radius: 6px; font-size: 0.9rem; outline: none;
+        }
+        .time-row { display: flex; gap: 10px; }
+        .time-row > div { flex: 1; }
+        .days-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+        .day-toggle {
+            width: 36px; height: 36px; border-radius: 8px; background: var(--card-bg); border: 1px solid #333;
+            color: var(--text-dim); font-size: 0.75rem; font-weight: 700; cursor: pointer;
+        }
+        .day-toggle.active { background: var(--spotify-green); color: white; border-color: var(--spotify-green); }
+        .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.85rem; }
+        .modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 20px; }
+        .toast {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 12px 20px; border-radius: 8px; font-size: 0.9rem; opacity: 0;
+            transition: opacity 0.2s ease; pointer-events: none; z-index: 10000;
+        }
+        .toast.show { opacity: 1; }
+        .toast.error { border-color: var(--red-action); }
+    </style>
+</head>
+<body>
+
+    <div id="lock-screen">
+        <div class="lock-container">
+            <h2>Music Scheduler</h2>
+            <p>Enter this event's admin password to manage its timetable.</p>
+            <input type="password" id="password-input" class="lock-input" placeholder="Admin password" autocomplete="off">
+            <button class="lock-btn" onclick="verifyLogin()">Unlock</button>
+            <div class="lock-error" id="lock-error-msg">Incorrect password.</div>
+        </div>
+    </div>
+
+    <div id="dashboard">
+        <div class="header">
+            <div>
+                <h1>Music Scheduler</h1>
+                <div class="subtitle">Drag a playlist onto the timeline to build the day's timetable.</div>
+            </div>
+            <div class="header-actions">
+                <a class="back-link" id="back-to-admin" href="#">&larr; Back to Admin</a>
+                <label class="toggle-row">
+                    <span class="switch">
+                        <input type="checkbox" id="scheduler-enabled-toggle">
+                        <span class="slider-toggle"></span>
+                    </span>
+                    Scheduler enabled
+                </label>
+                <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+            </div>
+        </div>
+
+        <div class="status-bar" id="status-bar">
+            <span><span class="status-dot"></span>Loading status&hellip;</span>
+        </div>
+
+        <div class="layout">
+            <div class="panel">
+                <h2>Playlists</h2>
+                <div class="chip-hint">Add a Spotify playlist here, then drag it onto the timeline. Playlists in use can't be removed until their blocks are deleted.</div>
+                <div id="playlist-list"></div>
+                <div class="add-playlist-form">
+                    <input type="text" id="new-playlist-label" placeholder="Name (e.g. Lunch Vibes)" maxlength="60">
+                    <input type="text" id="new-playlist-url" placeholder="Spotify playlist link or URI">
+                    <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addPlaylist()">+ Add Playlist</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Timetable</h2>
+                <div class="timetable-scroll">
+                    <div class="timetable" id="timetable" style="--hourpx: 48px;">
+                        <div class="hour-ruler" id="hour-ruler"></div>
+                        <div id="day-rows"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-backdrop">
+        <div class="modal">
+            <h3>Edit Block</h3>
+            <div class="field-group">
+                <label>Playlist</label>
+                <select id="modal-playlist"></select>
+            </div>
+            <div class="field-group">
+                <label>Time Range</label>
+                <div class="time-row">
+                    <div><input type="time" id="modal-start"></div>
+                    <div><input type="time" id="modal-end"></div>
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Days</label>
+                <div class="days-grid" id="modal-days"></div>
+            </div>
+            <div class="field-group">
+                <div class="checkbox-row">
+                    <input type="checkbox" id="modal-volume-enabled" onchange="toggleModalVolume()">
+                    <label style="margin:0; text-transform:none;">Set volume for this block</label>
+                </div>
+                <input type="range" id="modal-volume" min="0" max="100" value="50" style="width:100%;" oninput="document.getElementById('modal-volume-readout').textContent = this.value + '%'">
+                <div style="text-align:right; font-size:0.75rem; color:var(--text-dim);" id="modal-volume-readout">50%</div>
+            </div>
+            <div class="field-group">
+                <label>Requests</label>
+                <select id="modal-requests">
+                    <option value="nochange">No change</option>
+                    <option value="open">Force requests ON</option>
+                    <option value="closed">Force requests OFF</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" style="background:var(--red-action); border-color:var(--red-action);" onclick="deleteModalRule()">Delete</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="applyModal()">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const EVENT_SLUG = location.pathname.split('/')[2] || '';
+        function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+        function adminHeaders() { return { 'x-admin-password': adminPassword, 'Content-Type': 'application/json' }; }
+
+        let adminPassword = '';
+        let playlists = [];
+        let rules = [];
+        let schedulerEnabled = false;
+
+        const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const PLAYLIST_COLORS = ['#1DB954', '#e91429', '#5B8DEF', '#F2B705', '#B15BEF', '#05C7F2', '#F2780C', '#57C785'];
+        const HOUR_PX = 48;
+        const TRACK_MINUTES = 1440;
+
+        document.getElementById('back-to-admin').href = eventUrl('/admin');
+
+        function showToast(message, kind) {
+            const el = document.getElementById('toast');
+            el.textContent = message;
+            el.className = 'toast show' + (kind === 'error' ? ' error' : '');
+            setTimeout(() => { el.className = 'toast'; }, 3000);
+        }
+
+        async function verifyLogin() {
+            const input = document.getElementById('password-input');
+            const errorMsg = document.getElementById('lock-error-msg');
+            const attempt = input.value;
+            try {
+                const res = await fetch(eventUrl('/api/admin/scheduler'), { headers: { 'x-admin-password': attempt } });
+                if (res.ok) {
+                    adminPassword = attempt;
+                    const data = await res.json();
+                    playlists = data.playlists || [];
+                    rules = data.rules || [];
+                    schedulerEnabled = !!data.enabled;
+                    document.getElementById('scheduler-enabled-toggle').checked = schedulerEnabled;
+                    document.getElementById('lock-screen').style.display = 'none';
+                    document.getElementById('dashboard').style.display = 'block';
+                    renderAll();
+                    refreshStatus();
+                    setInterval(refreshStatus, 10000);
+                    return;
+                }
+            } catch (e) { /* fall through */ }
+            errorMsg.style.display = 'block';
+            input.value = '';
+            input.focus();
+        }
+        document.getElementById('password-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyLogin(); });
+
+        async function refreshStatus() {
+            try {
+                const res = await fetch(eventUrl('/api/admin/scheduler'), { headers: adminHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+                const bar = document.getElementById('status-bar');
+                if (!data.enabled) {
+                    bar.innerHTML = `<span><span class="status-dot" style="background:#555;"></span>Scheduler is turned off.</span>`;
+                    return;
+                }
+                const activeRule = (data.rules || []).find(r => r.id === data.activeRuleId);
+                const activePlaylist = activeRule ? (data.playlists || []).find(p => p.id === activeRule.playlistId) : null;
+                let html = `<span><span class="status-dot"></span>Active block: <strong>${activePlaylist ? escapeHtml(activePlaylist.label) : 'None (default playback)'}</strong></span>`;
+                if (data.pendingSwitchLabel) {
+                    html += `<span>Waiting for a clean handoff to <strong>${escapeHtml(data.pendingSwitchLabel)}</strong>&hellip;</span>`;
+                }
+                bar.innerHTML = html;
+            } catch (e) { /* silent - status bar is a nice-to-have */ }
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function minutesToHHMM(m) {
+            m = Math.max(0, Math.min(1439, m));
+            const h = Math.floor(m / 60), mm = m % 60;
+            return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+        }
+        function hhmmToMinutes(str) {
+            const [h, m] = (str || '0:0').split(':').map(n => parseInt(n, 10));
+            return (h || 0) * 60 + (m || 0);
+        }
+        function playlistColor(playlistId) {
+            const idx = playlists.findIndex(p => p.id === playlistId);
+            return PLAYLIST_COLORS[idx >= 0 ? idx % PLAYLIST_COLORS.length : 0];
+        }
+        function genId() { return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
+
+        function extractPlaylistIdClientSide(input) {
+            if (!input) return null;
+            const str = input.trim();
+            let match = str.match(/playlist[\/:]([a-zA-Z0-9]+)/);
+            if (match) return match[1];
+            if (/^[a-zA-Z0-9]+$/.test(str)) return str;
+            return null;
+        }
+
+        // ---------- Playlist palette ----------
+        function renderPlaylists() {
+            const list = document.getElementById('playlist-list');
+            if (playlists.length === 0) {
+                list.innerHTML = `<div class="chip-hint">No playlists yet - add one below.</div>`;
+                return;
+            }
+            list.innerHTML = playlists.map((p, i) => `
+                <div class="playlist-chip" draggable="true" data-playlist-id="${escapeHtml(p.id)}"
+                     ondragstart="onChipDragStart(event, '${escapeHtml(p.id)}')">
+                    <span class="chip-swatch" style="background:${PLAYLIST_COLORS[i % PLAYLIST_COLORS.length]}"></span>
+                    <span class="chip-label">${escapeHtml(p.label)}</span>
+                    <button class="chip-remove" onclick="removePlaylist('${escapeHtml(p.id)}')" title="Remove">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        function addPlaylist() {
+            const labelInput = document.getElementById('new-playlist-label');
+            const urlInput = document.getElementById('new-playlist-url');
+            const label = labelInput.value.trim();
+            const url = urlInput.value.trim();
+            if (!label) return showToast('Give the playlist a name first.', 'error');
+            const id = extractPlaylistIdClientSide(url);
+            if (!id) return showToast('Could not read a playlist link/URI from that.', 'error');
+            playlists.push({ id: genId(), label, uri: url });
+            labelInput.value = ''; urlInput.value = '';
+            renderPlaylists();
+        }
+
+        function removePlaylist(id) {
+            if (rules.some(r => r.playlistId === id)) {
+                return showToast('Delete the blocks using this playlist first.', 'error');
+            }
+            playlists = playlists.filter(p => p.id !== id);
+            renderPlaylists();
+        }
+
+        function onChipDragStart(e, playlistId) {
+            e.dataTransfer.setData('text/plain', playlistId);
+        }
+
+        // ---------- Timetable ----------
+        function renderRuler() {
+            const ruler = document.getElementById('hour-ruler');
+            let html = '';
+            for (let h = 0; h < 24; h += 2) {
+                html += `<div class="hour-label" style="width:${HOUR_PX * 2}px;">${h === 0 ? '12am' : h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm'}</div>`;
+            }
+            ruler.innerHTML = html;
+        }
+
+        function renderDayRows() {
+            const container = document.getElementById('day-rows');
+            container.innerHTML = DAY_NAMES.map((name, dayIdx) => `
+                <div class="day-row">
+                    <div class="day-label">${name}</div>
+                    <div class="day-track" style="width:${HOUR_PX * 24}px;" data-day="${dayIdx}"
+                         ondragover="onTrackDragOver(event)" ondragleave="onTrackDragLeave(event)" ondrop="onTrackDrop(event, ${dayIdx})">
+                    </div>
+                </div>
+            `).join('');
+            rules.forEach(rule => {
+                rule.days.forEach(dayIdx => {
+                    const track = container.querySelector(`.day-track[data-day="${dayIdx}"]`);
+                    if (track) track.appendChild(buildBlockEl(rule));
+                });
+            });
+        }
+
+        function buildBlockEl(rule) {
+            const start = hhmmToMinutes(rule.start);
+            const end = hhmmToMinutes(rule.end);
+            const playlist = playlists.find(p => p.id === rule.playlistId);
+            const el = document.createElement('div');
+            el.className = 'schedule-block';
+            el.dataset.ruleId = rule.id;
+            el.style.left = ((start / TRACK_MINUTES) * HOUR_PX * 24) + 'px';
+            el.style.width = Math.max(10, ((end - start) / TRACK_MINUTES) * HOUR_PX * 24) + 'px';
+            el.style.background = playlistColor(rule.playlistId);
+            el.innerHTML = `
+                <div class="block-title">${escapeHtml(playlist ? playlist.label : 'Unknown')}</div>
+                <div class="block-time">${rule.start}&ndash;${rule.end}</div>
+                <div class="resize-handle" data-rule-id="${rule.id}"></div>
+            `;
+            attachBlockDrag(el, rule.id);
+            attachResizeDrag(el.querySelector('.resize-handle'), rule.id);
+            return el;
+        }
+
+        function renderAll() {
+            renderPlaylists();
+            renderRuler();
+            renderDayRows();
+        }
+
+        // ---------- Drag-to-create (palette -> track) ----------
+        function onTrackDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+        function onTrackDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+        function onTrackDrop(e, dayIdx) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('drag-over');
+            const playlistId = e.dataTransfer.getData('text/plain');
+            if (!playlists.some(p => p.id === playlistId)) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            let minutes = Math.round((x / rect.width) * TRACK_MINUTES);
+            minutes = Math.round(minutes / 15) * 15;
+            minutes = Math.max(0, Math.min(TRACK_MINUTES - 60, minutes));
+            const rule = {
+                id: genId(),
+                playlistId,
+                days: [dayIdx],
+                start: minutesToHHMM(minutes),
+                end: minutesToHHMM(minutes + 60),
+                volume: null,
+                requestsAllowed: null
+            };
+            rules.push(rule);
+            renderDayRows();
+            openModal(rule.id);
+        }
+
+        // ---------- Move / resize existing blocks ----------
+        function attachBlockDrag(el, ruleId) {
+            el.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('resize-handle')) return;
+                e.preventDefault();
+                const rule = rules.find(r => r.id === ruleId);
+                if (!rule) return;
+                const track = el.parentElement;
+                const trackWidth = track.getBoundingClientRect().width;
+                const startX = e.clientX;
+                const origStart = hhmmToMinutes(rule.start);
+                const origEnd = hhmmToMinutes(rule.end);
+                const duration = origEnd - origStart;
+                let moved = false;
+
+                function onMove(ev) {
+                    const deltaX = ev.clientX - startX;
+                    if (Math.abs(deltaX) > 3) moved = true;
+                    let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
+                    let newStart = Math.max(0, Math.min(TRACK_MINUTES - duration, origStart + deltaMin));
+                    rule.start = minutesToHHMM(newStart);
+                    rule.end = minutesToHHMM(newStart + duration);
+                    renderDayRows();
+                }
+                function onUp() {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    if (!moved) openModal(ruleId);
+                }
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        }
+
+        function attachResizeDrag(handle, ruleId) {
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const rule = rules.find(r => r.id === ruleId);
+                if (!rule) return;
+                const track = handle.closest('.day-track');
+                const trackWidth = track.getBoundingClientRect().width;
+                const startX = e.clientX;
+                const origStart = hhmmToMinutes(rule.start);
+                const origEnd = hhmmToMinutes(rule.end);
+
+                function onMove(ev) {
+                    const deltaX = ev.clientX - startX;
+                    let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
+                    let newEnd = Math.max(origStart + 15, Math.min(TRACK_MINUTES, origEnd + deltaMin));
+                    rule.end = minutesToHHMM(newEnd);
+                    renderDayRows();
+                }
+                function onUp() {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                }
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        }
+
+        // ---------- Edit modal ----------
+        let modalRuleId = null;
+        function openModal(ruleId) {
+            const rule = rules.find(r => r.id === ruleId);
+            if (!rule) return;
+            modalRuleId = ruleId;
+
+            const playlistSelect = document.getElementById('modal-playlist');
+            playlistSelect.innerHTML = playlists.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+            playlistSelect.value = rule.playlistId;
+
+            document.getElementById('modal-start').value = rule.start;
+            document.getElementById('modal-end').value = rule.end;
+
+            const daysWrap = document.getElementById('modal-days');
+            daysWrap.innerHTML = DAY_NAMES.map((name, idx) => `
+                <button type="button" class="day-toggle${rule.days.includes(idx) ? ' active' : ''}" data-day="${idx}" onclick="this.classList.toggle('active')">${name}</button>
+            `).join('');
+
+            const volEnabled = document.getElementById('modal-volume-enabled');
+            volEnabled.checked = typeof rule.volume === 'number';
+            document.getElementById('modal-volume').value = typeof rule.volume === 'number' ? rule.volume : 50;
+            document.getElementById('modal-volume-readout').textContent = (typeof rule.volume === 'number' ? rule.volume : 50) + '%';
+            toggleModalVolume();
+
+            const reqSelect = document.getElementById('modal-requests');
+            reqSelect.value = rule.requestsAllowed === true ? 'open' : rule.requestsAllowed === false ? 'closed' : 'nochange';
+
+            document.getElementById('modal-backdrop').classList.add('show');
+        }
+        function toggleModalVolume() {
+            const enabled = document.getElementById('modal-volume-enabled').checked;
+            document.getElementById('modal-volume').style.opacity = enabled ? '1' : '0.35';
+            document.getElementById('modal-volume').disabled = !enabled;
+        }
+        function closeModal() {
+            document.getElementById('modal-backdrop').classList.remove('show');
+            modalRuleId = null;
+        }
+        function applyModal() {
+            const rule = rules.find(r => r.id === modalRuleId);
+            if (!rule) return closeModal();
+
+            const start = document.getElementById('modal-start').value;
+            const end = document.getElementById('modal-end').value;
+            if (!start || !end) return showToast('Set both a start and end time.', 'error');
+
+            const days = [...document.querySelectorAll('#modal-days .day-toggle.active')].map(b => parseInt(b.dataset.day, 10));
+            if (days.length === 0) return showToast('Pick at least one day.', 'error');
+
+            rule.playlistId = document.getElementById('modal-playlist').value;
+            rule.start = start;
+            rule.end = end;
+            rule.days = days;
+            rule.volume = document.getElementById('modal-volume-enabled').checked ? parseInt(document.getElementById('modal-volume').value, 10) : null;
+            const reqVal = document.getElementById('modal-requests').value;
+            rule.requestsAllowed = reqVal === 'open' ? true : reqVal === 'closed' ? false : null;
+
+            closeModal();
+            renderDayRows();
+        }
+        function deleteModalRule() {
+            rules = rules.filter(r => r.id !== modalRuleId);
+            closeModal();
+            renderDayRows();
+        }
+
+        // ---------- Save ----------
+        document.getElementById('scheduler-enabled-toggle').addEventListener('change', (e) => {
+            schedulerEnabled = e.target.checked;
+        });
+
+        async function saveSchedule() {
+            try {
+                const res = await fetch(eventUrl('/api/admin/scheduler'), {
+                    method: 'POST',
+                    headers: adminHeaders(),
+                    body: JSON.stringify({ enabled: schedulerEnabled, playlists, rules })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    playlists = data.playlists;
+                    rules = data.rules;
+                    renderAll();
+                    showToast('Schedule saved.');
+                    refreshStatus();
+                } else {
+                    showToast(data.error || 'Could not save the schedule.', 'error');
+                }
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
+        }
+    </script>
+</body>
+</html>
