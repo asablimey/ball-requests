@@ -959,19 +959,19 @@
             <div class="settings-layout">
                 <div class="settings-sidebar">
                     <button type="button" id="settings-nav-general" class="settings-nav-item active-nav" onclick="switchSettingsCategory('general')">
-                        <span class="nav-icon">⚙️</span>General
+                        General
                     </button>
                     <button type="button" id="settings-nav-access" class="settings-nav-item" onclick="switchSettingsCategory('access')">
-                        <span class="nav-icon">🔓</span>Access &amp; Guests
+                        Access &amp; Guests
                     </button>
                     <button type="button" id="settings-nav-spotify" class="settings-nav-item" onclick="switchSettingsCategory('spotify')">
-                        <span class="nav-icon">🎧</span>Spotify
+                        Spotify
                     </button>
                     <button type="button" id="settings-nav-kiosk" class="settings-nav-item" onclick="switchSettingsCategory('kiosk')">
-                        <span class="nav-icon">📺</span>Kiosk
+                        Kiosk
                     </button>
                     <button type="button" id="settings-nav-danger" class="settings-nav-item danger-nav" onclick="switchSettingsCategory('danger')">
-                        <span class="nav-icon">⚠️</span>Danger Zone
+                        Danger Zone
                     </button>
                 </div>
 
@@ -1032,7 +1032,7 @@
                         <div class="settings-card">
                             <div class="settings-section-label">Export</div>
                             <div class="control-bar">
-                                <button class="save-config-btn" onclick="exportStatsCSV()">⬇ Export Night's Stats (CSV)</button>
+                                <button class="save-config-btn" onclick="exportStatsCSV()">Export Night's Stats (CSV)</button>
                             </div>
                         </div>
 
@@ -1040,7 +1040,7 @@
                             <div class="settings-section-label">Duplicate as Template</div>
                             <p class="settings-card-hint" style="margin-top: 0;">Carries over your credit/countdown/filter/kiosk rules to a brand-new event - not the name, password, venue, or tonight's queue and history.</p>
                             <div class="control-bar">
-                                <button class="save-config-btn" onclick="duplicateAsTemplate()">📋 Duplicate as Template for a New Event</button>
+                                <button class="save-config-btn" onclick="duplicateAsTemplate()">Duplicate as Template for a New Event</button>
                             </div>
                         </div>
                     </div>
@@ -1053,7 +1053,11 @@
                                 <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
                                 <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
                                 <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
+                                <button id="toggle-location-lock" class="toggle-btn open-status" onclick="toggleLocationLock()">Location Lock: ON</button>
                             </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                When on, guests must be within 300m of the pinned venue location to request a song. Turn it off to let anyone check in and request from anywhere, regardless of distance.
+                            </p>
                         </div>
 
                         <div class="settings-card">
@@ -1070,12 +1074,10 @@
                         </div>
 
                         <div class="settings-card">
-                            <div class="settings-section-label">Genre &amp; Decade Filters (Theme Nights)</div>
+                            <div class="settings-section-label">Decade Filters (Theme Nights)</div>
                             <div class="filter-panel">
-                                <p class="filter-hint">Genres: pick any you DON'T want played tonight - guests won't be able to search or request them. Decades: pick any to restrict guests to only those decades. Leave everything unchecked to allow anything.</p>
-                                <div class="filter-group-label">Genres</div>
-                                <div class="filter-chip-row" id="genre-filter-chips"></div>
-                                <div class="filter-group-label" style="margin-top: 18px;">Decades</div>
+                                <p class="filter-hint">Pick any decades to restrict guests to only those. Leave everything unchecked to allow anything.</p>
+                                <div class="filter-group-label">Decades</div>
                                 <div class="filter-chip-row" id="decade-filter-chips"></div>
                                 <button class="save-config-btn" style="margin-top: 18px;" onclick="saveFilters()">Save Filters</button>
                             </div>
@@ -1098,7 +1100,7 @@
                             <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
                                 When connected, every newly-accepted request is automatically added to your live Spotify app queue.
                                 This logs in as your own Spotify account (not guests') and requires Spotify Premium plus an active
-                                device (open Spotify and play something first). Click to (re)connect.
+                                device (open Spotify and play something first). Click to connect - click again to disconnect.
                             </p>
                         </div>
 
@@ -1131,6 +1133,7 @@
                                 <button id="toggle-kiosk-requests" class="toggle-btn open-status" onclick="toggleKioskRequests()">Kiosk Requests: OPEN</button>
                                 <button id="toggle-kiosk-spotify" class="toggle-btn closed-status" onclick="toggleKioskSpotify()">Kiosk Spotify Connect: OFF</button>
                                 <button id="toggle-kiosk-display-only" class="toggle-btn closed-status" onclick="toggleKioskDisplayOnly()">Display-Only Mode: OFF</button>
+                                <button class="toggle-btn neutral-status" onclick="openKioskPage()">Open Kiosk Page</button>
                             </div>
                             <p class="settings-card-hint" style="margin-top: -10px;">
                                 <strong>Display-Only Mode</strong> turns the kiosk page into a full-screen, read-only "now playing" board -
@@ -1155,11 +1158,11 @@
                         <div class="settings-card danger-zone">
                             <div class="settings-section-label">Danger Zone</div>
                             <div class="control-bar">
-                                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">🗑 Clear Active Queue</button>
-                                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">🗑 Clear Played History</button>
+                                <button class="utility-btn" onclick="clearSystem('clearQueue', 'Are you sure you want to completely empty the queue?')">Clear Active Queue</button>
+                                <button class="utility-btn" onclick="clearSystem('clearHistory', 'Are you sure you want to clear your played history log?')">Clear Played History</button>
                             </div>
                             <div class="control-bar" style="margin-top: 10px;">
-                                <button class="utility-btn" style="background: var(--red-action, #e91429); border-color: var(--red-action, #e91429); color: white;" onclick="closeEvent()">⛔ Close This Event</button>
+                                <button class="utility-btn" style="background: var(--red-action, #e91429); border-color: var(--red-action, #e91429); color: white;" onclick="closeEvent()">Close This Event</button>
                             </div>
                             <p style="color: #a7a7a7; font-size: 0.8rem; margin: 8px 0 0 0;">Permanently deletes this event and everything in it - queue, history, settings, Spotify connection. This can't be undone, and the URL becomes free for anyone to reuse.</p>
                         </div>
@@ -1271,6 +1274,7 @@
         let radioEditsOnly = false;
         let queueCapEnabled = false;
         let guestSpotifyEnabled = false;
+        let locationLockEnabled = true;
         let kioskRequestsAllowed = true;
         let kioskSpotifyEnabled = false;
         let kioskDisplayOnlyMode = false;
@@ -1573,22 +1577,10 @@ async function verifyPassword() {
         }
 
         function renderFilterChips() {
-            const genreEl = document.getElementById('genre-filter-chips');
-            genreEl.innerHTML = GENRE_OPTIONS.map(g => `
-                <div class="filter-chip ${selectedGenres.includes(g.key) ? 'is-selected' : ''}" onclick="toggleGenreChip('${g.key}')">${g.label}</div>
-            `).join('');
-
             const decadeEl = document.getElementById('decade-filter-chips');
             decadeEl.innerHTML = DECADE_OPTIONS.map(d => `
                 <div class="filter-chip ${selectedDecades.includes(d) ? 'is-selected' : ''}" onclick="toggleDecadeChip(${d})">${d}s</div>
             `).join('');
-        }
-
-        function toggleGenreChip(key) {
-            selectedGenres = selectedGenres.includes(key)
-                ? selectedGenres.filter(g => g !== key)
-                : [...selectedGenres, key];
-            renderFilterChips();
         }
 
         function toggleDecadeChip(decade) {
@@ -1603,7 +1595,7 @@ async function verifyPassword() {
             const res = await fetch(eventUrl('/api/admin/config'), {
                 method: 'POST',
                 headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ genreFilter: selectedGenres, decadeFilter: selectedDecades })
+                body: JSON.stringify({ decadeFilter: selectedDecades })
             });
             if (res.ok) showToast("Filters updated.", "success");
             updateDashboard();
@@ -1619,7 +1611,24 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        let djSpotifyQueueConnected = false;
         async function connectDjSpotify() {
+            if (!isAuthorized) return;
+            // Already connected - clicking again disconnects instead of
+            // restarting the login flow.
+            if (djSpotifyQueueConnected) {
+                try {
+                    await fetch(eventUrl('/api/admin/spotify-disconnect'), {
+                        method: 'POST',
+                        headers: adminHeaders()
+                    });
+                } catch (e) {
+                    showToast('Could not reach the server. Try again.', 'error');
+                    return;
+                }
+                updateDashboard();
+                return;
+            }
             // The actual admin password never goes in a URL - a full-page
             // navigation can't send it as a header, so instead we first fetch
             // a short-lived, single-use ticket over an authenticated POST
@@ -1663,6 +1672,20 @@ async function verifyPassword() {
                 body: JSON.stringify({ enabled: !guestSpotifyEnabled })
             });
             updateDashboard();
+        }
+
+        async function toggleLocationLock() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/toggle-location-lock'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !locationLockEnabled })
+            });
+            updateDashboard();
+        }
+
+        function openKioskPage() {
+            window.open(eventUrl('/kiosk'), '_blank', 'noopener');
         }
 
         async function toggleKioskRequests() {
@@ -1947,9 +1970,15 @@ async function verifyPassword() {
                 guestSpotifyBtn.innerText = guestSpotifyEnabled ? "Guest Spotify Connect: ON" : "Guest Spotify Connect: OFF";
                 guestSpotifyBtn.className = guestSpotifyEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
+                const locationLockBtn = document.getElementById('toggle-location-lock');
+                locationLockEnabled = data.locationLockEnabled !== false;
+                locationLockBtn.innerText = locationLockEnabled ? "Location Lock: ON" : "Location Lock: OFF";
+                locationLockBtn.className = locationLockEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
                 const relayBtn = document.getElementById('spotify-relay-status');
-                relayBtn.innerText = data.djSpotifyQueueConnected ? "Spotify Queue Relay: CONNECTED (click to reconnect)" : "Spotify Queue Relay: NOT CONNECTED (click to connect)";
-                relayBtn.className = data.djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
+                djSpotifyQueueConnected = !!data.djSpotifyQueueConnected;
+                relayBtn.innerText = djSpotifyQueueConnected ? "Spotify Connected" : "Connect Spotify Account";
+                relayBtn.className = djSpotifyQueueConnected ? "toggle-btn open-status" : "toggle-btn closed-status";
 
                 const autoQueueBtn = document.getElementById('toggle-spotify-auto-queue');
                 spotifyAutoQueueEnabled = data.spotifyAutoQueueEnabled !== false;
