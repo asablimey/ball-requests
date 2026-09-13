@@ -956,7 +956,7 @@
             const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
 
             if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
-                setQueueDisplayHtml(display, '<p class="empty-placeholder">No songs requested yet. Be the first!</p>');
+                setQueueDisplayHtml(display, '');
                 return;
             }
 
