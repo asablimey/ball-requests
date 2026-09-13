@@ -1001,7 +1001,6 @@
     <div class="modal-overlay" id="username-modal">
         <div class="username-modal-box">
             <h3>What's your name?</h3>
-            <p>So the admin knows who requested each song. Only the admin can see this.</p>
             <input type="text" id="username-input" class="username-input" placeholder="Your name" maxlength="30" onkeydown="if(event.key === 'Enter') saveUsername()">
             <button class="username-save-btn" onclick="saveUsername()">Continue</button>
         </div>
@@ -1174,6 +1173,7 @@
         function leaveVenue() {
             closeSidebar();
             clearSelectedVenue();
+            openVenueScreen();
         }
 
         // Runs once on page load - picks back up wherever the guest left off,
@@ -1502,9 +1502,20 @@
             guestUsername = val;
             localStorage.setItem('guestUsername', guestUsername);
             document.getElementById('username-modal').classList.remove('is-visible');
-            // Don't make the guest wait for the next 4s poll to see the
-            // search bar unlock now that a name is on file.
-            if (hasVenueSelected()) fetchSystemState();
+            if (hasVenueSelected()) {
+                // Registers the name server-side right away, rather than
+                // waiting for the guest's first request - lets the admin's
+                // Blocked tab see (and block) this guest even if they never
+                // end up requesting a song.
+                fetch(eventUrl('/api/set-username'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: guestUsername })
+                }).catch(() => {});
+                // Don't make the guest wait for the next 4s poll to see the
+                // search bar unlock now that a name is on file.
+                fetchSystemState();
+            }
         }
 
         // Reopens the same modal used for the first-time name prompt, but
@@ -1735,7 +1746,7 @@
             const spotifyOnly = (spotifyUpcomingQueue || []).filter(t => !guestIds.has(t.id));
 
             if (lastGuestQueue.length === 0 && spotifyOnly.length === 0) {
-                setQueueDisplayHtml(display, '<p class="empty-placeholder">No songs requested yet. Be the first!</p>');
+                setQueueDisplayHtml(display, '');
                 return;
             }
 
