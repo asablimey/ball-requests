@@ -1118,7 +1118,9 @@
                                 Switches Spotify to this playlist immediately - whatever was queued up next from the old one is
                                 replaced. If a request happens to be playing right now, this will interrupt it, so best used
                                 between songs. Guest requests you've explicitly queued aren't affected by this - they still get
-                                added to the queue as normal and play before anything from a playlist.
+                                added to the queue as normal and play before anything from a playlist. This also becomes your
+                                baseline for the Music Scheduler: if enabled, the scheduler seamlessly falls back to whatever's
+                                set here during any stretch of time its timetable doesn't cover.
                             </p>
                             <p id="fallback-playlist-status" style="color:#888; font-size:0.8rem; margin: 0;"></p>
                         </div>
@@ -1986,13 +1988,20 @@ async function verifyPassword() {
                 autoQueueBtn.innerText = spotifyAutoQueueEnabled ? "Auto-Queue to Spotify: ON" : "Auto-Queue to Spotify: OFF";
                 autoQueueBtn.className = spotifyAutoQueueEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
 
-                if (data.lastSwitchedPlaylist) {
-                    const fallbackInput = document.getElementById('input-fallback-playlist');
-                    if (document.activeElement !== fallbackInput && !fallbackInput.value) {
-                        fallbackInput.value = data.lastSwitchedPlaylist;
-                    }
-                    document.getElementById('fallback-playlist-status').innerText = `Currently playing from: ${data.lastSwitchedPlaylist}`;
+                // The input box reflects the admin's own saved baseline
+                // (fallbackPlaylistUri), NOT whatever's playing right now -
+                // once the Music Scheduler is driving things, "currently
+                // playing" is usually a scheduled block, not this fallback.
+                const fallbackInput = document.getElementById('input-fallback-playlist');
+                if (data.fallbackPlaylistUri && document.activeElement !== fallbackInput && !fallbackInput.value) {
+                    fallbackInput.value = data.fallbackPlaylistUri;
                 }
+                const statusParts = [];
+                if (data.fallbackPlaylistUri) statusParts.push(`Fallback set to: ${data.fallbackPlaylistUri}`);
+                if (data.lastSwitchedPlaylist && data.lastSwitchedPlaylist !== data.fallbackPlaylistUri) {
+                    statusParts.push(`Currently playing from: ${data.lastSwitchedPlaylist} (Music Scheduler)`);
+                }
+                document.getElementById('fallback-playlist-status').innerText = statusParts.join(' \u00b7 ');
 
                 if (data.kiosk) {
                     const kioskReqBtn = document.getElementById('toggle-kiosk-requests');
