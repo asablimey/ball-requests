@@ -146,6 +146,10 @@
             position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize;
             background: rgba(255,255,255,0.15);
         }
+        .schedule-block.conflict {
+            outline: 2px solid var(--red-action); outline-offset: -2px;
+            box-shadow: 0 0 0 3px rgba(233,20,41,0.25);
+        }
 
         .empty-hint { color: var(--text-dim); font-size: 0.8rem; padding: 30px 10px; text-align: center; }
 
@@ -382,6 +386,46 @@
         }
         function genId() { return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
 
+        // ---------- Overlap detection (mirrors findOverlappingRulePair server-side) ----------
+        // Unrolls an overnight block (end <= start) into two same-day pieces
+        // so the comparison below never has to special-case wraparound.
+        function ruleToDaySegments(rule) {
+            const start = hhmmToMinutes(rule.start);
+            const end = hhmmToMinutes(rule.end);
+            const overnight = end <= start;
+            const segments = [];
+            for (const day of rule.days) {
+                if (!overnight) {
+                    segments.push({ day, start, end });
+                } else {
+                    segments.push({ day, start, end: 1440 });
+                    segments.push({ day: (day + 1) % 7, start: 0, end });
+                }
+            }
+            return segments;
+        }
+
+        // Returns a Set of rule ids involved in at least one overlap, so
+        // conflicting blocks can be outlined on the timetable and Save can
+        // be blocked until they're fixed.
+        function findConflictingRuleIds() {
+            const withSegments = rules.map(r => ({ id: r.id, segments: ruleToDaySegments(r) }));
+            const conflicting = new Set();
+            for (let i = 0; i < withSegments.length; i++) {
+                for (let j = i + 1; j < withSegments.length; j++) {
+                    for (const segA of withSegments[i].segments) {
+                        for (const segB of withSegments[j].segments) {
+                            if (segA.day === segB.day && segA.start < segB.end && segB.start < segA.end) {
+                                conflicting.add(withSegments[i].id);
+                                conflicting.add(withSegments[j].id);
+                            }
+                        }
+                    }
+                }
+            }
+            return conflicting;
+        }
+
         function extractPlaylistIdClientSide(input) {
             if (!input) return null;
             const str = input.trim();
@@ -453,24 +497,26 @@
                     </div>
                 </div>
             `).join('');
+            const conflictingIds = findConflictingRuleIds();
             rules.forEach(rule => {
                 rule.days.forEach(dayIdx => {
                     const track = container.querySelector(`.day-track[data-day="${dayIdx}"]`);
-                    if (track) track.appendChild(buildBlockEl(rule));
+                    if (track) track.appendChild(buildBlockEl(rule, conflictingIds.has(rule.id)));
                 });
             });
         }
 
-        function buildBlockEl(rule) {
+        function buildBlockEl(rule, isConflicting) {
             const start = hhmmToMinutes(rule.start);
             const end = hhmmToMinutes(rule.end);
             const playlist = playlists.find(p => p.id === rule.playlistId);
             const el = document.createElement('div');
-            el.className = 'schedule-block';
+            el.className = 'schedule-block' + (isConflicting ? ' conflict' : '');
             el.dataset.ruleId = rule.id;
             el.style.left = ((start / TRACK_MINUTES) * HOUR_PX * 24) + 'px';
             el.style.width = Math.max(10, ((end - start) / TRACK_MINUTES) * HOUR_PX * 24) + 'px';
             el.style.background = playlistColor(rule.playlistId);
+            el.title = isConflicting ? 'Overlaps with another block - drag to fix before saving.' : '';
             el.innerHTML = `
                 <div class="block-title">${escapeHtml(playlist ? playlist.label : 'Unknown')}</div>
                 <div class="block-time">${rule.start}&ndash;${rule.end}</div>
@@ -649,6 +695,16 @@
         });
 
         async function saveSchedule() {
+            // Block the save locally first - no point round-tripping to the
+            // server for something the timetable can already tell isn't
+            // savable. renderDayRows() re-runs the same check, so the
+            // conflicting blocks are already outlined at this point.
+            if (findConflictingRuleIds().size > 0) {
+                renderDayRows();
+                showToast('Two blocks overlap - fix the outlined conflict before saving.', 'error');
+                return;
+            }
+
             try {
                 const res = await fetch(eventUrl('/api/admin/scheduler'), {
                     method: 'POST',
@@ -662,6 +718,13 @@
                     renderAll();
                     showToast('Schedule saved.');
                     refreshStatus();
+                } else if (data.conflictingRuleIds) {
+                    // Backstop in case something slipped past the client
+                    // check (e.g. stale state) - the server re-checked and
+                    // rejected the whole save, so re-render to outline
+                    // whatever it flagged.
+                    renderDayRows();
+                    showToast(data.error || 'Two blocks overlap - fix the conflict before saving.', 'error');
                 } else {
                     showToast(data.error || 'Could not save the schedule.', 'error');
                 }
