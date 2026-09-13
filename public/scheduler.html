@@ -53,11 +53,17 @@
         }
         .lock-error { color: var(--red-action); font-size: 0.85rem; margin-top: 12px; display: none; }
 
-        #dashboard { display: none; max-width: 1180px; margin: 0 auto; }
+        /* #dashboard.show is toggled by JS instead of an inline display
+           style, specifically so the media query below can switch it
+           between block (small screens - normal page scroll) and flex
+           (laptop+ - fixed-height app shell) without JS having to know
+           which one applies. */
+        #dashboard { display: none; max-width: 1400px; margin: 0 auto; }
+        #dashboard.show { display: block; }
 
         .header {
             display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap;
-            border-bottom: 1px solid var(--border); padding-bottom: 18px; margin-bottom: 18px;
+            border-bottom: 1px solid var(--border); padding-bottom: 18px; margin-bottom: 18px; flex-shrink: 0;
         }
         .header h1 { margin: 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px; }
         .header .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 4px; }
@@ -90,13 +96,12 @@
         .status-bar {
             background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px;
             padding: 12px 16px; margin-bottom: 18px; font-size: 0.85rem; color: var(--text-dim);
-            display: flex; gap: 20px; flex-wrap: wrap;
+            display: flex; gap: 20px; flex-wrap: wrap; flex-shrink: 0;
         }
         .status-bar strong { color: white; }
         .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--spotify-green); margin-right: 6px; }
 
         .layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
-        @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
 
         .panel { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
         .panel h2 { margin: 0 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
@@ -112,6 +117,24 @@
         .zoom-btn:hover { border-color: #555; }
         .zoom-btn:disabled { opacity: 0.35; cursor: default; }
         .zoom-readout { font-size: 0.75rem; color: var(--text-dim); width: 38px; text-align: center; }
+
+        /* --- Fit-to-screen app shell (laptop and up) ---------------------
+           Below 821px the layout is left as normal, page-scrolling flow
+           (a fixed-height shell doesn't have room to work with once the
+           sidebar and timetable have to stack vertically). At 821px+, the
+           whole app is pinned to the viewport height and only the two
+           inner lists - the playlist palette and the day-boxes column -
+           scroll internally, so nothing about the page itself scrolls and
+           the header/status bar/panel chrome never drift out of view. */
+        @media (min-width: 821px) {
+            html, body { height: 100%; }
+            body { overflow: hidden; display: flex; flex-direction: column; }
+            #dashboard.show { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+            .layout { flex: 1; min-height: 0; align-items: stretch; }
+            .panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+            #playlist-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+            #day-boxes { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+        }
 
         /* --- Playlist palette --- */
         .playlist-chip {
@@ -133,7 +156,7 @@
         .add-playlist-form input:focus { border-color: var(--spotify-green); }
 
         /* --- Timetable --- */
-        .timetable-scroll { overflow-x: auto; }
+        .timetable-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
         .timetable { min-width: 900px; }
         .hour-ruler { display: flex; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
         .hour-label { flex-shrink: 0; font-size: 0.7rem; color: var(--text-dim); }
@@ -384,7 +407,7 @@
                     schedulerEnabled = !!data.enabled;
                     document.getElementById('scheduler-enabled-toggle').checked = schedulerEnabled;
                     document.getElementById('lock-screen').style.display = 'none';
-                    document.getElementById('dashboard').style.display = 'block';
+                    document.getElementById('dashboard').classList.add('show');
                     renderAll();
                     refreshStatus();
                     setInterval(refreshStatus, 10000);
@@ -545,6 +568,21 @@
             document.getElementById('zoom-out-btn').disabled = hourPx <= HOUR_PX_MIN;
             document.getElementById('zoom-in-btn').disabled = hourPx >= HOUR_PX_MAX;
             renderDayBoxes();
+            scrollTimetablesToNow();
+        }
+
+        // Every day box defaults to starting an hour before the current
+        // time (9am now -> the visible timeline opens at 8am) rather than
+        // always opening at midnight, so the near-term hours are visible
+        // without having to scroll first. Only called on initial load and
+        // after a zoom change - NOT from renderDayBoxes() itself, since
+        // that also runs on every mousemove while dragging/resizing a
+        // block, and resetting everyone's scroll position mid-drag would
+        // fight the drag instead of just repositioning a block.
+        function scrollTimetablesToNow() {
+            const targetHour = Math.max(0, new Date().getHours() - 1);
+            const offsetPx = targetHour * hourPx;
+            document.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
         }
 
         // Builds all 7 day boxes, each with its own hour ruler and 4 lanes:
@@ -625,6 +663,7 @@
         function renderAll() {
             renderPlaylists();
             renderDayBoxes();
+            scrollTimetablesToNow();
         }
 
         // ---------- Drag-to-create (palette -> track) ----------
