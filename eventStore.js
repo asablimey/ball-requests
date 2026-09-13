@@ -204,6 +204,32 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             artist: null, artwork: null, progressMs: 0, durationMs: 0,
             updatedAt: Date.now(), upcoming: [],
             deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off'
+        },
+
+        // --- Music Scheduler ---------------------------------------------
+        // A day/time timetable that drives playlist switches, volume, and
+        // requests-open/closed automatically (see tickMusicScheduler in
+        // server.js). `playlists` is the small named palette an admin builds
+        // up on the Scheduler page (label + Spotify playlist URI); `rules`
+        // are the actual timeline blocks, each referencing a playlist by id.
+        musicScheduler: {
+            enabled: false,
+            playlists: [], // { id, label, uri }
+            rules: []      // { id, playlistId, days: [0-6], start: "HH:MM", end: "HH:MM", volume: null|0-100, requestsAllowed: null|boolean }
+        },
+
+        // Runtime-only bookkeeping for the scheduler - not meant to be
+        // edited by hand, just persisted so a server restart mid-transition
+        // doesn't lose track of a switch that was waiting to happen.
+        // activeRuleId: whichever rule the clock currently says should be
+        // "on", used to detect boundary crossings. pendingSwitchUri/Label:
+        // set the moment a boundary is crossed and the playlist actually
+        // needs to change; cleared once the seamless handoff (see
+        // tickMusicScheduler) has actually fired.
+        schedulerRuntime: {
+            activeRuleId: null,
+            pendingSwitchUri: null,
+            pendingSwitchLabel: null
         }
     };
 }
@@ -286,11 +312,32 @@ const lastAccess = new Map();
 // now means a network call to Redis instead of a local fs read. Every
 // call site in server.js already does `await events.getEvent(...)` or
 // receives the resolved value via async route handlers, so this is safe.
+// Events saved before the Music Scheduler existed won't have these fields at
+// all (Redis just returns whatever was written at the time) - back them in
+// with fresh defaults rather than letting every scheduler code path have to
+// null-check its way down to event.musicScheduler.rules. Mutates in place
+// and only ever adds missing pieces, never overwrites something that's
+// already there.
+function ensureSchedulerDefaults(event) {
+    if (!event.musicScheduler || typeof event.musicScheduler !== 'object') {
+        event.musicScheduler = { enabled: false, playlists: [], rules: [] };
+    } else {
+        if (!Array.isArray(event.musicScheduler.playlists)) event.musicScheduler.playlists = [];
+        if (!Array.isArray(event.musicScheduler.rules)) event.musicScheduler.rules = [];
+        if (typeof event.musicScheduler.enabled !== 'boolean') event.musicScheduler.enabled = false;
+    }
+    if (!event.schedulerRuntime || typeof event.schedulerRuntime !== 'object') {
+        event.schedulerRuntime = { activeRuleId: null, pendingSwitchUri: null, pendingSwitchLabel: null };
+    }
+    return event;
+}
+
 async function getEvent(slug) {
     lastAccess.set(slug, Date.now());
     if (cache.has(slug)) return cache.get(slug);
     const loaded = await loadFromRedis(slug);
     if (!loaded) return null;
+    ensureSchedulerDefaults(loaded);
     cache.set(slug, loaded);
     return loaded;
 }
