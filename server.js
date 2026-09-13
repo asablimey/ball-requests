@@ -1107,8 +1107,10 @@ function buildRequestHandler(isKiosk) {
         // Kiosk requests skip this - a kiosk is a fixed device physically at
         // the venue by definition. Only the guest's own phone (isKiosk ===
         // false) needs to prove it's actually near the pinned venue location,
-        // and only if the organizer actually pinned one at creation.
-        if (!isKiosk && typeof event.venueLatitude === 'number' && typeof event.venueLongitude === 'number') {
+        // and only if the organizer actually pinned one at creation AND
+        // hasn't switched off Location Lock (defaults to on - see
+        // systemConfigs.locationLockEnabled).
+        if (!isKiosk && event.systemConfigs.locationLockEnabled !== false && typeof event.venueLatitude === 'number' && typeof event.venueLongitude === 'number') {
             const lat = parseFloat(req.body.lat);
             const lng = parseFloat(req.body.lng);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -1266,6 +1268,21 @@ function buildRequestHandler(isKiosk) {
 app.post('/e/:slug/api/request', publicActionLimiter, voterIdentityMiddleware, buildRequestHandler(false));
 app.post('/e/:slug/api/kiosk-request', publicActionLimiter, voterIdentityMiddleware, buildRequestHandler(true));
 
+// Registers/refreshes this voter's name in the Blocked tab's guest directory
+// as soon as they set or change it - not just the first time a request goes
+// through. Lets the admin see (and block) every guest who's logged in, even
+// ones who never actually requested a song.
+app.post('/e/:slug/api/set-username', publicActionLimiter, voterIdentityMiddleware, (req, res) => {
+    const event = req.event;
+    const voterId = req.serverVoterId;
+    const name = typeof req.body.username === 'string' ? req.body.username.trim().slice(0, 30) : '';
+    if (name === '') return res.status(400).json({ error: 'A name is required.' });
+    if (!event.voterNames) event.voterNames = {};
+    event.voterNames[voterId] = { label: name, lastSeenAt: Date.now() };
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
 app.post('/e/:slug/api/vote', publicActionLimiter, voterIdentityMiddleware, (req, res) => {
     const event = req.event;
     const { id, type } = req.body;
@@ -1320,8 +1337,13 @@ app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) 
         radioEditsOnly: event.systemConfigs.radioEditsOnly,
         eventName: event.systemConfigs.eventName || '',
         venueName: event.venueName || '',
-        venueLatitude: event.venueLatitude,
-        venueLongitude: event.venueLongitude,
+        // Only sent when Location Lock is on - this is what drives the
+        // client-side geofence watch/"too far" messaging, so turning the
+        // lock off (systemConfigs.locationLockEnabled === false) hides the
+        // pin entirely rather than just disabling the server-side check,
+        // keeping the guest UI in sync with the actual rule in effect.
+        venueLatitude: event.systemConfigs.locationLockEnabled !== false ? event.venueLatitude : null,
+        venueLongitude: event.systemConfigs.locationLockEnabled !== false ? event.venueLongitude : null,
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
@@ -1377,6 +1399,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         decadeFilter: event.systemConfigs.decadeFilter || [],
         guestSpotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
         spotifyAutoQueueEnabled: event.systemConfigs.spotifyAutoQueueEnabled,
+        locationLockEnabled: event.systemConfigs.locationLockEnabled !== false,
         djSpotifyQueueConnected: !!event.spotify.djRefreshToken,
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         kiosk: event.kioskConfigs,
@@ -1398,10 +1421,11 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
             artist: info.artist,
             blockedAt: info.blockedAt
         })).sort((a, b) => b.blockedAt - a.blockedAt),
-        // Every guest who's had a request go through, most-recently-seen
-        // first - powers the Blocked tab's "Guests" section. `blocked` lets
-        // the UI show the right button (Block vs already-blocked) without a
-        // second lookup against blockedVoters.
+        // Every guest who's set a name - whether or not they've actually
+        // requested a song - most-recently-seen first. Powers the Blocked
+        // tab's "Guests" section. `blocked` lets the UI show the right
+        // button (Block vs already-blocked) without a second lookup against
+        // blockedVoters.
         guests: Object.entries(event.voterNames || {}).map(([voterId, info]) => ({
             voterId,
             label: info.label,
@@ -1529,6 +1553,19 @@ app.post('/e/:slug/api/admin/toggle-queue-cap', (req, res) => {
     res.json({ success: true });
 });
 
+// Disconnects the DJ's own Spotify account from this event - clears the
+// stored tokens so djSpotifyQueueConnected goes back to false and auto-queue
+// stops relaying. Doesn't touch guestSpotifyConnectEnabled (guests' own
+// optional Spotify connect) or anything about the queue/history.
+app.post('/e/:slug/api/admin/spotify-disconnect', (req, res) => {
+    const event = req.event;
+    event.spotify.djRefreshToken = null;
+    event.spotify.djAccessToken = null;
+    event.spotify.djAccessTokenExpiresAt = 0;
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
 app.post('/e/:slug/api/admin/toggle-guest-spotify', (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled === 'boolean') req.event.systemConfigs.guestSpotifyConnectEnabled = enabled;
@@ -1627,6 +1664,13 @@ app.post('/e/:slug/api/admin/toggle-explicit', (req, res) => {
 app.post('/e/:slug/api/admin/toggle-radio-edits', (req, res) => {
     const { radioEditsOnly } = req.body;
     if (typeof radioEditsOnly === 'boolean') req.event.systemConfigs.radioEditsOnly = radioEditsOnly;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/toggle-location-lock', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') req.event.systemConfigs.locationLockEnabled = enabled;
     events.scheduleSave(req.event.slug);
     res.json({ success: true });
 });
