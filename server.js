@@ -288,6 +288,171 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
     }
 }
 
+// --- Music Scheduler ---------------------------------------------------
+// A day/time timetable (event.musicScheduler.rules) that drives playlist
+// switches, volume, and requests-open/closed automatically, so a venue
+// doesn't need someone flipping settings by hand throughout the day.
+//
+// The tricky part is the playlist switch: switchDjPlaylist() above is
+// immediate and will cut off whatever's currently playing. A schedule
+// boundary firing mid-song should NOT do that. Instead, a due switch is
+// held in schedulerRuntime.pendingSwitchUri until it's actually safe:
+//   1. Any guest-requested songs still in the local queue play out first
+//      (they always take priority over the schedule).
+//   2. Once the guest queue is empty, we wait for the track that's
+//      currently playing to actually finish, then switch.
+// "Waiting for it to finish" is done with a one-shot timer sized to the
+// track's remaining duration (recomputed each tick to correct for drift),
+// rather than just polling and switching one tick late - that would let a
+// sliver of the OLD playlist's next track sneak in before we cut over.
+
+// HH:MM -> minutes since midnight. Returns null for anything malformed so
+// callers can just skip a bad rule instead of crashing on it.
+function parseHHMM(str) {
+    if (typeof str !== 'string') return null;
+    const m = str.match(/^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/);
+    if (!m) return null;
+    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// Finds whichever rule should be "on" right now, or null if none match.
+// Supports overnight windows (e.g. 22:00-02:00) by checking the wrapped
+// range separately from the normal same-day range. If two rules somehow
+// overlap, the first match in array order wins - the Scheduler UI is
+// expected to prevent admins from creating overlaps in the first place.
+function getActiveScheduleRule(event, now = new Date()) {
+    const rules = event.musicScheduler?.rules || [];
+    if (rules.length === 0) return null;
+    const day = now.getDay(); // 0=Sun..6=Sat
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    for (const rule of rules) {
+        const start = parseHHMM(rule.start);
+        const end = parseHHMM(rule.end);
+        if (start === null || end === null || !Array.isArray(rule.days) || rule.days.length === 0) continue;
+        const overnight = end <= start;
+        if (!overnight) {
+            if (rule.days.includes(day) && minutes >= start && minutes < end) return rule;
+        } else {
+            // e.g. 22:00-02:00: "on" either from `start` to midnight on a
+            // listed day, or from midnight to `end` on the day AFTER a
+            // listed day (yesterday's window spilling into today).
+            const yesterday = (day + 6) % 7;
+            if (rule.days.includes(day) && minutes >= start) return rule;
+            if (rule.days.includes(yesterday) && minutes < end) return rule;
+        }
+    }
+    return null;
+}
+
+// Per-slug timer handles for the "wait for the current song to end" step.
+// Deliberately kept out of the event object - a setTimeout handle can't be
+// JSON-serialized/persisted, and it's fine for this to reset on a server
+// restart (the next tick just re-evaluates from scratch).
+const schedulerSwitchTimers = new Map();
+
+function clearSchedulerSwitchTimer(slug) {
+    const handle = schedulerSwitchTimers.get(slug);
+    if (handle) {
+        clearTimeout(handle);
+        schedulerSwitchTimers.delete(slug);
+    }
+}
+
+// Actually performs the held-pending playlist switch, if one is still due
+// and still safe (re-checked here rather than trusting the state from when
+// the timer was set, in case something changed - e.g. a new guest request
+// landed - in the meantime).
+async function fireScheduledSwitch(event) {
+    const uri = event.schedulerRuntime.pendingSwitchUri;
+    if (!uri) return;
+    if (event.activeQueue.length > 0 || event.pushedNextTrackId) return; // a guest request beat us to it - wait again
+    const result = await switchDjPlaylist(event, uri);
+    if (result.success) {
+        event.systemConfigs.lastSwitchedPlaylist = uri;
+        event.schedulerRuntime.pendingSwitchUri = null;
+        event.schedulerRuntime.pendingSwitchLabel = null;
+        events.scheduleSave(event.slug);
+        console.log(`[SCHEDULER] (${event.slug}) Seamless playlist switch complete.`);
+    }
+    // On failure (e.g. no active device), pendingSwitchUri is deliberately
+    // left set - the next tick will just try the whole flow again.
+}
+
+// Called once per event on every sync tick (see syncAllLoadedEvents).
+// Cheap when the scheduler is off or nothing's changed: one array scan plus
+// a couple of comparisons.
+async function tickMusicScheduler(event) {
+    if (!event.musicScheduler?.enabled) return;
+
+    const currentRule = getActiveScheduleRule(event);
+    const currentRuleId = currentRule ? currentRule.id : null;
+
+    if (currentRuleId !== event.schedulerRuntime.activeRuleId) {
+        event.schedulerRuntime.activeRuleId = currentRuleId;
+
+        if (currentRule) {
+            // Volume and requests-open/closed aren't disruptive to listen
+            // to, so those apply the moment the boundary is crossed - only
+            // the playlist content itself needs to wait for a clean handoff.
+            if (typeof currentRule.volume === 'number') {
+                spotifyPlayerCommand(event, 'PUT', '/volume', `?volume_percent=${currentRule.volume}`).catch(() => {});
+            }
+            if (typeof currentRule.requestsAllowed === 'boolean') {
+                event.systemConfigs.requestsAllowed = currentRule.requestsAllowed;
+            }
+            const playlist = (event.musicScheduler.playlists || []).find(p => p.id === currentRule.playlistId);
+            if (playlist && playlist.uri && playlist.uri !== event.systemConfigs.lastSwitchedPlaylist) {
+                event.schedulerRuntime.pendingSwitchUri = playlist.uri;
+                event.schedulerRuntime.pendingSwitchLabel = playlist.label;
+                console.log(`[SCHEDULER] (${event.slug}) "${currentRule.id}" now active - queued handoff to "${playlist.label}".`);
+            }
+        }
+        events.scheduleSave(event.slug);
+    }
+
+    if (!event.schedulerRuntime.pendingSwitchUri) {
+        clearSchedulerSwitchTimer(event.slug);
+        return;
+    }
+
+    // A guest request is still playing out (or staged next) - hold off and
+    // re-check on the next tick. Don't leave a stale timer armed from a
+    // previous check while we're in this holding pattern.
+    if (event.activeQueue.length > 0 || event.pushedNextTrackId) {
+        clearSchedulerSwitchTimer(event.slug);
+        return;
+    }
+
+    // Nothing playing at all (e.g. paused, or no device) - nothing to wait
+    // for, switch right away.
+    if (!event.cachedNowPlaying.isPlaying || !event.cachedNowPlaying.trackId) {
+        clearSchedulerSwitchTimer(event.slug);
+        await fireScheduledSwitch(event);
+        return;
+    }
+
+    // Something's genuinely playing (the old playlist's own continuation,
+    // since the guest queue is confirmed empty above) - let it finish, then
+    // switch. Recompute the remaining time and re-arm the timer every tick
+    // rather than trusting one estimate for the whole wait, since Spotify's
+    // reported progress can drift between polls.
+    const remainingMs = Math.max(0, (event.cachedNowPlaying.durationMs || 0) - (event.cachedNowPlaying.progressMs || 0));
+    clearSchedulerSwitchTimer(event.slug);
+    if (remainingMs <= 4500) {
+        // Close enough to the next poll tick anyway - just switch now
+        // rather than arm a near-instant timer.
+        await fireScheduledSwitch(event);
+    } else {
+        const handle = setTimeout(() => {
+            schedulerSwitchTimers.delete(event.slug);
+            fireScheduledSwitch(event).catch(err => {
+                console.error(`[SCHEDULER] (${event.slug}) Switch failed:`, err.message);
+            });
+        }, remainingMs);
+        schedulerSwitchTimers.set(event.slug, handle);
+    }
+}
+
 // Manual queue position, independent of vote count - see the admin reorder
 // route below. New tracks always land at the end of the DJ's manual order;
 // dragging in the admin UI is what actually moves them from there.
@@ -811,6 +976,9 @@ app.param('slug', async (req, res, next, slug) => {
 
 app.get('/e/:slug', voterIdentityMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/e/:slug/admin/scheduler', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'scheduler.html'));
 });
 app.get('/e/:slug/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
@@ -1590,6 +1758,70 @@ app.post('/e/:slug/api/admin/switch-playlist', async (req, res) => {
     res.status(result.success ? 200 : 400).json(result);
 });
 
+// --- Music Scheduler --------------------------------------------------
+// Returns everything the Scheduler page needs to render itself: the saved
+// playlist palette, the timetable rules, whether the whole thing is turned
+// on, and (for a small status readout) whatever switch is currently pending.
+app.get('/e/:slug/api/admin/scheduler', (req, res) => {
+    const event = req.event;
+    res.json({
+        enabled: !!event.musicScheduler.enabled,
+        playlists: event.musicScheduler.playlists,
+        rules: event.musicScheduler.rules,
+        activeRuleId: event.schedulerRuntime.activeRuleId,
+        pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel
+    });
+});
+
+// Full replace of playlists+rules+enabled, validated here rather than
+// trusted from the client - this is the one place a bad time string or a
+// junk playlist URI would otherwise get silently saved and then break the
+// tick loop later. Anything that doesn't validate is dropped rather than
+// rejecting the whole save, so one bad row doesn't block the rest.
+app.post('/e/:slug/api/admin/scheduler', (req, res) => {
+    const event = req.event;
+    const { enabled, playlists, rules } = req.body || {};
+
+    const safePlaylists = Array.isArray(playlists) ? playlists.map(p => {
+        if (!p || typeof p !== 'object') return null;
+        const label = typeof p.label === 'string' ? p.label.trim().slice(0, 60) : '';
+        const uriRaw = typeof p.uri === 'string' ? p.uri.trim() : '';
+        const id = extractSpotifyPlaylistId(uriRaw);
+        if (!label || !id) return null;
+        return { id: typeof p.id === 'string' && p.id ? p.id : crypto.randomUUID(), label, uri: uriRaw };
+    }).filter(Boolean).slice(0, 50) : event.musicScheduler.playlists;
+
+    const validDays = new Set([0, 1, 2, 3, 4, 5, 6]);
+    const playlistIds = new Set(safePlaylists.map(p => p.id));
+    const safeRules = Array.isArray(rules) ? rules.map(r => {
+        if (!r || typeof r !== 'object') return null;
+        if (!playlistIds.has(r.playlistId)) return null;
+        if (parseHHMM(r.start) === null || parseHHMM(r.end) === null) return null;
+        const days = Array.isArray(r.days) ? [...new Set(r.days.map(d => parseInt(d, 10)).filter(d => validDays.has(d)))] : [];
+        if (days.length === 0) return null;
+        const volume = Number.isInteger(r.volume) && r.volume >= 0 && r.volume <= 100 ? r.volume : null;
+        const requestsAllowed = typeof r.requestsAllowed === 'boolean' ? r.requestsAllowed : null;
+        return {
+            id: typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID(),
+            playlistId: r.playlistId,
+            days,
+            start: r.start,
+            end: r.end,
+            volume,
+            requestsAllowed
+        };
+    }).filter(Boolean).slice(0, 200) : event.musicScheduler.rules;
+
+    event.musicScheduler.enabled = !!enabled;
+    event.musicScheduler.playlists = safePlaylists;
+    event.musicScheduler.rules = safeRules;
+    // Force the next tick to re-evaluate from scratch rather than trusting
+    // whatever rule used to be "active" under the old timetable.
+    event.schedulerRuntime.activeRuleId = null;
+    events.scheduleSave(event.slug);
+    res.json({ success: true, playlists: safePlaylists, rules: safeRules });
+});
+
 // --- DJ transport controls ---
 // All of these ride on the same user-modify-playback-state scope already
 // granted by the existing "Connect Spotify" flow (see DJ_QUEUE_SCOPES above)
@@ -2136,8 +2368,16 @@ async function syncAllLoadedEvents() {
     if (isSyncingAllEvents) return;
     isSyncingAllEvents = true;
     try {
-        const loaded = events.getLoadedEvents().filter(e => e.spotify.djRefreshToken);
-        await Promise.allSettled(loaded.map(event => syncNowPlayingForEvent(event)));
+        const loaded = events.getLoadedEvents();
+        const connected = loaded.filter(e => e.spotify.djRefreshToken);
+        // Now-playing sync only matters (and only works) for events with
+        // Spotify connected. The scheduler tick, though, runs for every
+        // loaded event - even one with no Spotify connection yet still has
+        // a requests-open/closed setting the timetable can drive.
+        await Promise.allSettled(connected.map(event => syncNowPlayingForEvent(event)));
+        await Promise.allSettled(loaded.map(event => tickMusicScheduler(event).catch(err => {
+            console.error(`[SCHEDULER] (${event.slug}) Tick failed:`, err.message);
+        })));
     } finally {
         isSyncingAllEvents = false;
     }
