@@ -78,6 +78,16 @@
         .header h1 { margin: 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px; }
         .header .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 4px; }
         .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .tz-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-dim); }
+        .tz-label { flex-shrink: 0; }
+        #timezone-select {
+            background: var(--card-bg); border: 1px solid var(--border); color: white;
+            border-radius: 6px; padding: 6px 8px; font-size: 0.82rem; max-width: 220px;
+        }
+        .tz-warning {
+            background: rgba(233,20,41,0.12); border: 1px solid var(--red-action); color: #ffb4bb;
+            border-radius: 8px; padding: 10px 14px; font-size: 0.82rem; margin-bottom: 14px;
+        }
 
         a.back-link { color: var(--text-dim); font-size: 0.85rem; text-decoration: none; }
         a.back-link:hover { color: white; }
@@ -317,6 +327,10 @@
                 <div class="subtitle">Scroll through the week. Drag a playlist onto the crowdDJ Music lane to schedule it.</div>
             </div>
             <div class="header-actions">
+                <label class="tz-row" title="All the times you drag onto the timeline are read in this timezone - not the server's, and not necessarily your browser's if the venue is somewhere else.">
+                    <span class="tz-label">Timezone</span>
+                    <select id="timezone-select"></select>
+                </label>
                 <a class="back-link" id="back-to-admin" href="#">&larr; Back to Admin</a>
                 <label class="toggle-row">
                     <span class="switch">
@@ -328,6 +342,8 @@
                 <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
             </div>
         </div>
+
+        <div class="tz-warning" id="tz-warning" style="display:none;"></div>
 
         <div class="status-bar" id="status-bar">
             <span><span class="status-dot"></span>Loading status&hellip;</span>
@@ -414,6 +430,33 @@
         let playlists = [];
         let rules = [];
         let schedulerEnabled = false;
+        let eventTimezone = null; // whatever's actually saved server-side, or null if never set
+
+        // getActiveScheduleRule on the server checks the CURRENT TIME against
+        // each rule's HH:MM - and it has to check that in *some* timezone.
+        // Since the server itself just runs on whatever the host defaults to
+        // (UTC on Render), without this the schedule would silently compare
+        // against the wrong hours entirely for anyone not in UTC+0 - blocks
+        // would just never fire at the times they were actually dragged onto.
+        // So every save sends along the timezone these HH:MM values are meant
+        // to be read in, and the server evaluates rules against that zone
+        // specifically rather than its own local clock.
+        function populateTimezoneSelect(selected) {
+            const select = document.getElementById('timezone-select');
+            const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            let zones;
+            try {
+                zones = Intl.supportedValuesOf('timeZone');
+            } catch (e) {
+                // Older engine without supportedValuesOf - the dropdown just
+                // offers what we actually know: the browser's own zone, plus
+                // whatever's already saved if that's somehow different.
+                zones = [...new Set([browserTz, selected].filter(Boolean))];
+            }
+            if (!zones.includes(browserTz)) zones = [browserTz, ...zones];
+            select.innerHTML = zones.map(z => `<option value="${z}">${z.replace(/_/g, ' ')}</option>`).join('');
+            select.value = selected && zones.includes(selected) ? selected : browserTz;
+        }
 
         const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const FULL_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -455,7 +498,16 @@
                     playlists = data.playlists || [];
                     rules = data.rules || [];
                     schedulerEnabled = !!data.enabled;
+                    eventTimezone = typeof data.timezone === 'string' && data.timezone ? data.timezone : null;
                     document.getElementById('scheduler-enabled-toggle').checked = schedulerEnabled;
+                    populateTimezoneSelect(eventTimezone);
+                    const warning = document.getElementById('tz-warning');
+                    if (!eventTimezone) {
+                        warning.style.display = 'block';
+                        warning.textContent = `No timezone was saved for this schedule yet, so it defaulted to server time and blocks likely fired at the wrong hours. Set to "${document.getElementById('timezone-select').value}" below and hit Save Schedule to fix that.`;
+                    } else {
+                        warning.style.display = 'none';
+                    }
                     document.getElementById('lock-screen').style.display = 'none';
                     document.getElementById('dashboard').classList.add('show');
                     renderAll();
@@ -901,15 +953,18 @@
             }
 
             try {
+                const selectedTz = document.getElementById('timezone-select').value;
                 const res = await fetch(eventUrl('/api/admin/scheduler'), {
                     method: 'POST',
                     headers: adminHeaders(),
-                    body: JSON.stringify({ enabled: schedulerEnabled, playlists, rules })
+                    body: JSON.stringify({ enabled: schedulerEnabled, playlists, rules, timezone: selectedTz })
                 });
                 const data = await res.json();
                 if (res.ok && data.success) {
                     playlists = data.playlists;
                     rules = data.rules;
+                    eventTimezone = data.timezone || selectedTz;
+                    document.getElementById('tz-warning').style.display = 'none';
                     renderAll();
                     showToast('Schedule saved.');
                     refreshStatus();
