@@ -319,6 +319,45 @@ function parseHHMM(str) {
     return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
+// The HH:MM values on every rule are wall-clock times in whatever timezone
+// the DJ was in when they built the schedule (event.musicScheduler.timezone,
+// sent by scheduler.html on every save) - NOT the server process's own
+// timezone. A server on Render runs in UTC regardless of where any given
+// event's venue is, so comparing "now" via now.getHours()/getDay() (the
+// server's own local time) against those HH:MM values would check them
+// against the wrong hours entirely for anyone outside UTC+0 - rules would
+// just never fire at the times they were actually dragged onto the
+// timeline. This resolves "now" inside the event's own saved zone instead,
+// via Intl's IANA tz database rather than a fixed numeric offset (so DST
+// transitions are handled automatically, same as they would be for a
+// person actually standing at the venue).
+function getEventLocalTime(event, now = new Date()) {
+    const tz = event.musicScheduler?.timezone;
+    if (!tz) {
+        // No timezone on file yet - this is either a schedule saved before
+        // this fix existed, or one that was never saved at all. Falling
+        // back to the server's own local time keeps this from throwing,
+        // but it's almost certainly wrong for the DJ's actual venue; the
+        // scheduler.html banner tells them to re-save once to attach a
+        // real zone.
+        return { day: now.getDay(), minutes: now.getHours() * 60 + now.getMinutes() };
+    }
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(now);
+        const map = {};
+        for (const p of parts) map[p.type] = p.value;
+        const weekdayIndex = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[map.weekday];
+        let hour = parseInt(map.hour, 10);
+        if (hour === 24) hour = 0; // some locales render midnight as "24" with hour12:false
+        return { day: weekdayIndex, minutes: hour * 60 + parseInt(map.minute, 10) };
+    } catch (err) {
+        console.error(`[SCHEDULER] (${event.slug}) Invalid saved timezone "${tz}", falling back to server local time:`, err.message);
+        return { day: now.getDay(), minutes: now.getHours() * 60 + now.getMinutes() };
+    }
+}
+
 // Finds whichever rule should be "on" right now, or null if none match.
 // Supports overnight windows (e.g. 22:00-02:00) by checking the wrapped
 // range separately from the normal same-day range. If two rules somehow
@@ -327,8 +366,7 @@ function parseHHMM(str) {
 function getActiveScheduleRule(event, now = new Date()) {
     const rules = event.musicScheduler?.rules || [];
     if (rules.length === 0) return null;
-    const day = now.getDay(); // 0=Sun..6=Sat
-    const minutes = now.getHours() * 60 + now.getMinutes();
+    const { day, minutes } = getEventLocalTime(event, now);
     for (const rule of rules) {
         const start = parseHHMM(rule.start);
         const end = parseHHMM(rule.end);
@@ -1851,6 +1889,7 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
         enabled: !!event.musicScheduler.enabled,
         playlists: event.musicScheduler.playlists,
         rules: event.musicScheduler.rules,
+        timezone: event.musicScheduler.timezone || null,
         activeRuleId: event.schedulerRuntime.activeRuleId,
         pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel
     });
@@ -1863,7 +1902,24 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
 // rejecting the whole save, so one bad row doesn't block the rest.
 app.post('/e/:slug/api/admin/scheduler', (req, res) => {
     const event = req.event;
-    const { enabled, playlists, rules } = req.body || {};
+    const { enabled, playlists, rules, timezone } = req.body || {};
+
+    // Validated by actually trying to construct a formatter with it rather
+    // than matching against a fixed list - that list changes over time
+    // (IANA zones get added/renamed), and this way anything the runtime's
+    // own tz database recognizes is accepted. An invalid/missing value
+    // just means the schedule keeps whatever timezone it already had
+    // (falling back to server-local time in tickMusicScheduler if it never
+    // had one), rather than failing the whole save over it.
+    let safeTimezone = event.musicScheduler.timezone || null;
+    if (typeof timezone === 'string' && timezone) {
+        try {
+            new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+            safeTimezone = timezone;
+        } catch (e) {
+            console.error(`[SCHEDULER] (${event.slug}) Rejected invalid timezone "${timezone}":`, e.message);
+        }
+    }
 
     const safePlaylists = Array.isArray(playlists) ? playlists.map(p => {
         if (!p || typeof p !== 'object') return null;
@@ -1910,6 +1966,7 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
     event.musicScheduler.enabled = !!enabled;
     event.musicScheduler.playlists = safePlaylists;
     event.musicScheduler.rules = safeRules;
+    event.musicScheduler.timezone = safeTimezone;
     // Force the next tick to re-evaluate from scratch rather than trusting
     // whatever rule used to be "active" under the old timetable. Also drop
     // any switch that was already queued up under the OLD timetable - the
@@ -1919,7 +1976,7 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
     event.schedulerRuntime.activeRuleId = null;
     cancelPendingSchedulerSwitch(event);
     events.scheduleSave(event.slug);
-    res.json({ success: true, playlists: safePlaylists, rules: safeRules });
+    res.json({ success: true, playlists: safePlaylists, rules: safeRules, timezone: safeTimezone });
 });
 
 // --- DJ transport controls ---
