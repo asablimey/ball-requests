@@ -180,15 +180,16 @@
         .playlist-chip:active { cursor: grabbing; }
         .chip-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
         .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .chip-type { flex-shrink: 0; font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.3px; }
         .chip-remove { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1rem; padding: 0 2px; }
         .chip-remove:hover { color: var(--red-action); }
         .chip-hint { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 12px; line-height: 1.4; }
 
-        .add-playlist-form input {
+        .add-playlist-form input, .add-playlist-form select {
             width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
             padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 8px; outline: none;
         }
-        .add-playlist-form input:focus { border-color: var(--spotify-green); }
+        .add-playlist-form input:focus, .add-playlist-form select:focus { border-color: var(--spotify-green); }
 
         /* --- Timetable --- */
         /* overflow-x only - there's nothing to overflow vertically inside
@@ -324,7 +325,7 @@
         <div class="header">
             <div>
                 <h1>Music Scheduler</h1>
-                <div class="subtitle">Scroll through the week. Drag a playlist onto the crowdDJ Music lane to schedule it.</div>
+                <div class="subtitle">Scroll through the week. Drag a playlist onto its matching lane to schedule it - crowdDJ and Karaoke can't overlap since they share the same speakers.</div>
             </div>
             <div class="header-actions">
                 <label class="tz-row" title="All the times you drag onto the timeline are read in this timezone - not the server's, and not necessarily your browser's if the venue is somewhere else.">
@@ -357,6 +358,10 @@
                 <div class="add-playlist-form">
                     <input type="text" id="new-playlist-label" placeholder="Name (e.g. Lunch Vibes)" maxlength="60">
                     <input type="text" id="new-playlist-url" placeholder="Spotify playlist link or URI">
+                    <select id="new-playlist-type">
+                        <option value="crowddj">crowdDJ Music</option>
+                        <option value="karaoke">Karaoke</option>
+                    </select>
                     <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addPlaylist()">+ Add Playlist</button>
                 </div>
             </div>
@@ -460,14 +465,20 @@
 
         const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const FULL_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const PLAYLIST_COLORS = ['#1DB954', '#e91429', '#5B8DEF', '#F2B705', '#B15BEF', '#05C7F2', '#F2780C', '#57C785'];
+        // Blocks are colored by lane type, not per-playlist - every crowdDJ
+        // block is green, every karaoke block is blue, so the timetable
+        // reads as "what kind of thing is playing" at a glance rather than
+        // needing to check each block's label.
+        const LANE_TYPES = {
+            crowddj: { label: 'crowdDJ Music', color: '#1DB954' },
+            karaoke: { label: 'Karaoke', color: '#5B8DEF' }
+        };
         const TRACK_MINUTES = 1440;
         const LANE_LABEL_WIDTH = 108;
         // Placeholder lanes: not wired to anything yet, shown so the layout
-        // is ready for them. Only "crowdDJ Music" (rendered separately,
-        // since it's the one lane backed by real data) is interactive.
+        // is ready for them. crowdDJ Music and Karaoke are rendered
+        // separately below since they're backed by real data.
         const PLACEHOLDER_LANES = [
-            { label: 'Karaoke' },
             { label: 'Ambient Visuals' },
             { label: '' }
         ];
@@ -568,9 +579,12 @@
             const [h, m] = (str || '0:0').split(':').map(n => parseInt(n, 10));
             return (h || 0) * 60 + (m || 0);
         }
+        function playlistType(playlistId) {
+            const playlist = playlists.find(p => p.id === playlistId);
+            return (playlist && playlist.type === 'karaoke') ? 'karaoke' : 'crowddj';
+        }
         function playlistColor(playlistId) {
-            const idx = playlists.findIndex(p => p.id === playlistId);
-            return PLAYLIST_COLORS[idx >= 0 ? idx % PLAYLIST_COLORS.length : 0];
+            return LANE_TYPES[playlistType(playlistId)].color;
         }
         function genId() { return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
 
@@ -630,11 +644,12 @@
                 list.innerHTML = `<div class="chip-hint">No playlists yet - add one below.</div>`;
                 return;
             }
-            list.innerHTML = playlists.map((p, i) => `
+            list.innerHTML = playlists.map((p) => `
                 <div class="playlist-chip" draggable="true" data-playlist-id="${escapeHtml(p.id)}"
                      ondragstart="onChipDragStart(event, '${escapeHtml(p.id)}')">
-                    <span class="chip-swatch" style="background:${PLAYLIST_COLORS[i % PLAYLIST_COLORS.length]}"></span>
+                    <span class="chip-swatch" style="background:${playlistColor(p.id)}"></span>
                     <span class="chip-label">${escapeHtml(p.label)}</span>
+                    <span class="chip-type">${p.type === 'karaoke' ? 'Karaoke' : 'crowdDJ'}</span>
                     <button class="chip-remove" onclick="removePlaylist('${escapeHtml(p.id)}')" title="Remove">&times;</button>
                 </div>
             `).join('');
@@ -643,12 +658,14 @@
         function addPlaylist() {
             const labelInput = document.getElementById('new-playlist-label');
             const urlInput = document.getElementById('new-playlist-url');
+            const typeSelect = document.getElementById('new-playlist-type');
             const label = labelInput.value.trim();
             const url = urlInput.value.trim();
+            const type = typeSelect.value === 'karaoke' ? 'karaoke' : 'crowddj';
             if (!label) return showToast('Give the playlist a name first.', 'error');
             const id = extractPlaylistIdClientSide(url);
             if (!id) return showToast('Could not read a playlist link/URI from that.', 'error');
-            playlists.push({ id: genId(), label, uri: url });
+            playlists.push({ id: genId(), label, uri: url, type });
             labelInput.value = ''; urlInput.value = '';
             renderPlaylists();
         }
@@ -712,10 +729,18 @@
             const trackWidth = hourPx * 24;
 
             container.innerHTML = DAY_NAMES.map((dayName, dayIdx) => {
-                const dayRules = rules.filter(r => r.days.includes(dayIdx));
-                const musicLaneInner = dayRules.length === 0
-                    ? `<div class="empty-hint">Nothing scheduled - drag a playlist in from the left.</div>`
-                    : '';
+                const laneEmptyHint = laneType => rules.some(r => r.days.includes(dayIdx) && playlistType(r.playlistId) === laneType)
+                    ? ''
+                    : `<div class="empty-hint">Nothing scheduled - drag a ${LANE_TYPES[laneType].label} playlist in from the left.</div>`;
+
+                const liveLanesHtml = ['crowddj', 'karaoke'].map(laneType => `
+                    <div class="lane-row">
+                        <div class="lane-label" style="width:${LANE_LABEL_WIDTH}px;">${escapeHtml(LANE_TYPES[laneType].label)}</div>
+                        <div class="day-track" style="width:${trackWidth}px; --hourpx:${hourPx}px;" data-day="${dayIdx}" data-lane="${laneType}"
+                             ondragover="onTrackDragOver(event)" ondragleave="onTrackDragLeave(event)" ondrop="onTrackDrop(event, ${dayIdx}, '${laneType}')">${laneEmptyHint(laneType)}</div>
+                    </div>
+                `).join('');
+
                 const placeholderLanesHtml = PLACEHOLDER_LANES.map(lane => `
                     <div class="lane-row">
                         <div class="lane-label" style="width:${LANE_LABEL_WIDTH}px;">${escapeHtml(lane.label)}</div>
@@ -731,11 +756,7 @@
                         <div class="timetable-scroll">
                             <div class="timetable">
                                 <div class="hour-ruler">${buildRulerHtml()}</div>
-                                <div class="lane-row">
-                                    <div class="lane-label" style="width:${LANE_LABEL_WIDTH}px;">crowdDJ Music</div>
-                                    <div class="day-track" style="width:${trackWidth}px; --hourpx:${hourPx}px;" data-day="${dayIdx}"
-                                         ondragover="onTrackDragOver(event)" ondragleave="onTrackDragLeave(event)" ondrop="onTrackDrop(event, ${dayIdx})">${musicLaneInner}</div>
-                                </div>
+                                ${liveLanesHtml}
                                 ${placeholderLanesHtml}
                             </div>
                         </div>
@@ -744,11 +765,15 @@
             }).join('');
 
             // Blocks are appended as real elements (not innerHTML strings)
-            // so their drag/resize listeners can be attached directly.
+            // so their drag/resize listeners can be attached directly. Each
+            // block only ever goes into the track matching its playlist's
+            // type, so a crowdDJ rule can never land in the Karaoke lane
+            // even if the underlying data got edited some other way.
             DAY_NAMES.forEach((_, dayIdx) => {
-                const track = container.querySelector(`.day-track[data-day="${dayIdx}"]`);
                 rules.filter(r => r.days.includes(dayIdx)).forEach(rule => {
-                    track.appendChild(buildBlockEl(rule, conflictingIds.has(rule.id)));
+                    const laneType = playlistType(rule.playlistId);
+                    const track = container.querySelector(`.day-track[data-day="${dayIdx}"][data-lane="${laneType}"]`);
+                    if (track) track.appendChild(buildBlockEl(rule, conflictingIds.has(rule.id)));
                 });
             });
         }
@@ -783,11 +808,14 @@
         // ---------- Drag-to-create (palette -> track) ----------
         function onTrackDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
         function onTrackDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
-        function onTrackDrop(e, dayIdx) {
+        function onTrackDrop(e, dayIdx, laneType) {
             e.preventDefault();
             e.currentTarget.classList.remove('drag-over');
             const playlistId = e.dataTransfer.getData('text/plain');
             if (!playlists.some(p => p.id === playlistId)) return;
+            if (playlistType(playlistId) !== laneType) {
+                return showToast(`That's a ${LANE_TYPES[playlistType(playlistId)].label} playlist - drop it on the ${LANE_TYPES[playlistType(playlistId)].label} lane instead.`, 'error');
+            }
             const rect = e.currentTarget.getBoundingClientRect();
             const x = e.clientX - rect.left;
             let minutes = Math.round((x / rect.width) * TRACK_MINUTES);
@@ -876,8 +904,14 @@
             if (!rule) return;
             modalRuleId = ruleId;
 
+            // Only offer playlists of this block's own type - reassigning a
+            // Karaoke block to a crowdDJ playlist (or vice versa) would move
+            // it to a different lane out from under the admin, so that
+            // switch isn't offered here at all.
+            const laneType = playlistType(rule.playlistId);
             const playlistSelect = document.getElementById('modal-playlist');
-            playlistSelect.innerHTML = playlists.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+            playlistSelect.innerHTML = playlists.filter(p => playlistType(p.id) === laneType)
+                .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
             playlistSelect.value = rule.playlistId;
 
             document.getElementById('modal-start').value = rule.start;
