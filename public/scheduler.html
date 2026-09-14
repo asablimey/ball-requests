@@ -259,9 +259,11 @@
         .schedule-block .block-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .schedule-block .block-time { opacity: 0.85; white-space: nowrap; margin-top: 2px; }
         .resize-handle {
-            position: absolute; right: 0; top: 0; bottom: 0; width: 10px; cursor: ew-resize;
+            position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize;
             background: rgba(255,255,255,0.15);
         }
+        .resize-handle-right { right: 0; }
+        .resize-handle-left { left: 0; }
         .schedule-block.conflict {
             outline: 2px solid var(--red-action); outline-offset: -2px;
             box-shadow: 0 0 0 3px rgba(233,20,41,0.25);
@@ -696,6 +698,19 @@
             return maxEnd;
         }
 
+        // Mirror of the above for the left edge: how far can `start`
+        // shrink back before it hits the previous block.
+        function computeResizeMinStart(rule, excludeId) {
+            const end = hhmmToMinutes(rule.end);
+            let minStart = 0;
+            rule.days.forEach(d => {
+                occupiedRangesForDay(d, excludeId).forEach(([, e]) => {
+                    if (e <= end && e > minStart) minStart = e;
+                });
+            });
+            return minStart;
+        }
+
         function extractPlaylistIdClientSide(input) {
             if (!input) return null;
             const str = input.trim();
@@ -860,10 +875,12 @@
             el.innerHTML = `
                 <div class="block-title">${escapeHtml(playlist ? playlist.label : 'Unknown')}</div>
                 <div class="block-time">${rule.start}&ndash;${rule.end}</div>
-                <div class="resize-handle" data-rule-id="${rule.id}"></div>
+                <div class="resize-handle resize-handle-left" data-rule-id="${rule.id}"></div>
+                <div class="resize-handle resize-handle-right" data-rule-id="${rule.id}"></div>
             `;
             attachBlockDrag(el, rule.id);
-            attachResizeDrag(el.querySelector('.resize-handle'), rule.id);
+            attachResizeDrag(el.querySelector('.resize-handle-left'), rule.id, 'start');
+            attachResizeDrag(el.querySelector('.resize-handle-right'), rule.id, 'end');
             return el;
         }
 
@@ -964,7 +981,7 @@
             });
         }
 
-        function attachResizeDrag(handle, ruleId) {
+        function attachResizeDrag(handle, ruleId, side) {
             handle.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -975,16 +992,20 @@
                 const startX = e.clientX;
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
-                // Same idea as the move drag - computed once so the right
-                // edge stops dead at the next block instead of overlapping
-                // it and getting flagged after the fact.
-                const maxEnd = computeResizeMaxEnd(rule, ruleId);
+                // Same idea as the move drag - computed once so whichever
+                // edge is being dragged stops dead at the next block
+                // instead of overlapping it and getting flagged after
+                // the fact.
+                const bound = side === 'end' ? computeResizeMaxEnd(rule, ruleId) : computeResizeMinStart(rule, ruleId);
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
-                    let newEnd = Math.max(origStart + 15, Math.min(maxEnd, origEnd + deltaMin));
-                    rule.end = minutesToHHMM(newEnd);
+                    if (side === 'end') {
+                        rule.end = minutesToHHMM(Math.max(origStart + 15, Math.min(bound, origEnd + deltaMin)));
+                    } else {
+                        rule.start = minutesToHHMM(Math.max(bound, Math.min(origEnd - 15, origStart + deltaMin)));
+                    }
                     renderDayBoxes();
                 }
                 function onUp() {
