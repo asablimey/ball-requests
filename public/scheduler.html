@@ -266,6 +266,14 @@
             outline: 2px solid var(--red-action); outline-offset: -2px;
             box-shadow: 0 0 0 3px rgba(233,20,41,0.25);
         }
+        /* Comes after .conflict so a selected block's white outline wins
+           if a block is somehow both (e.g. a conflict left over from a
+           manually-typed modal edit) - selection is the more useful
+           signal to show in that moment since Backspace only acts on it. */
+        .schedule-block.selected {
+            outline: 2px solid #ffffff; outline-offset: -2px;
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.25);
+        }
 
         .empty-hint {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -325,7 +333,6 @@
         <div class="header">
             <div>
                 <h1>Music Scheduler</h1>
-                <div class="subtitle">Scroll through the week. Drag a playlist onto its matching lane to schedule it - crowdDJ and Karaoke can't overlap since they share the same speakers.</div>
             </div>
             <div class="header-actions">
                 <label class="tz-row" title="All the times you drag onto the timeline are read in this timezone - not the server's, and not necessarily your browser's if the venue is somewhere else.">
@@ -436,6 +443,7 @@
         let rules = [];
         let schedulerEnabled = false;
         let eventTimezone = null; // whatever's actually saved server-side, or null if never set
+        let selectedRuleId = null; // single-click-selected block - outlined white, deleted with Backspace
 
         // getActiveScheduleRule on the server checks the CURRENT TIME against
         // each rule's HH:MM - and it has to check that in *some* timezone.
@@ -628,6 +636,66 @@
             return conflicting;
         }
 
+        // ---------- Physical collision bounds (drag/resize/drop can't cross these) ----------
+        // Sorted [start,end) minute ranges occupied on one day by every
+        // OTHER rule, across BOTH lanes - crowdDJ and Karaoke share the
+        // same speakers so a block being dragged has to treat the other
+        // lane's blocks as solid too, not just its own lane's.
+        function occupiedRangesForDay(dayIdx, excludeRuleId) {
+            const ranges = [];
+            rules.forEach(r => {
+                if (excludeRuleId && r.id === excludeRuleId) return;
+                ruleToDaySegments(r).forEach(seg => {
+                    if (seg.day === dayIdx) ranges.push([seg.start, seg.end]);
+                });
+            });
+            ranges.sort((a, b) => a[0] - b[0]);
+            return ranges;
+        }
+
+        // Finds the empty gap a block of [curStart, curStart+duration)
+        // already sits inside on one day, and returns how far its start
+        // can move left/right before it touches whatever is on either
+        // side of that gap.
+        function gapBoundsForDay(dayIdx, curStart, duration, excludeRuleId) {
+            const curEnd = curStart + duration;
+            let prevEnd = 0, nextStart = TRACK_MINUTES;
+            occupiedRangesForDay(dayIdx, excludeRuleId).forEach(([s, e]) => {
+                if (e <= curStart && e > prevEnd) prevEnd = e;
+                if (s >= curEnd && s < nextStart) nextStart = s;
+            });
+            return { minStart: prevEnd, maxStart: nextStart - duration };
+        }
+
+        // A dragged block's start/end apply to every day it's assigned to
+        // at once, so the allowed range while moving it is the
+        // intersection of the gap on EACH of those days - it can't be
+        // dragged past a neighbor on any one of them.
+        function computeMoveBounds(rule, excludeId) {
+            const duration = hhmmToMinutes(rule.end) - hhmmToMinutes(rule.start);
+            const curStart = hhmmToMinutes(rule.start);
+            let minStart = 0, maxStart = TRACK_MINUTES - duration;
+            rule.days.forEach(d => {
+                const bounds = gapBoundsForDay(d, curStart, duration, excludeId);
+                minStart = Math.max(minStart, bounds.minStart);
+                maxStart = Math.min(maxStart, bounds.maxStart);
+            });
+            return { minStart, maxStart };
+        }
+
+        // Same idea for resizing (right-edge only): how far can `end`
+        // grow on each of the rule's days before it hits the next block.
+        function computeResizeMaxEnd(rule, excludeId) {
+            const start = hhmmToMinutes(rule.start);
+            let maxEnd = TRACK_MINUTES;
+            rule.days.forEach(d => {
+                occupiedRangesForDay(d, excludeId).forEach(([s]) => {
+                    if (s >= start && s < maxEnd) maxEnd = s;
+                });
+            });
+            return maxEnd;
+        }
+
         function extractPlaylistIdClientSide(input) {
             if (!input) return null;
             const str = input.trim();
@@ -783,7 +851,7 @@
             const end = hhmmToMinutes(rule.end);
             const playlist = playlists.find(p => p.id === rule.playlistId);
             const el = document.createElement('div');
-            el.className = 'schedule-block' + (isConflicting ? ' conflict' : '');
+            el.className = 'schedule-block' + (isConflicting ? ' conflict' : '') + (rule.id === selectedRuleId ? ' selected' : '');
             el.dataset.ruleId = rule.id;
             el.style.left = ((start / TRACK_MINUTES) * hourPx * 24) + 'px';
             el.style.width = Math.max(10, ((end - start) / TRACK_MINUTES) * hourPx * 24) + 'px';
@@ -820,13 +888,29 @@
             const x = e.clientX - rect.left;
             let minutes = Math.round((x / rect.width) * TRACK_MINUTES);
             minutes = Math.round(minutes / 15) * 15;
-            minutes = Math.max(0, Math.min(TRACK_MINUTES - 60, minutes));
+            minutes = Math.max(0, Math.min(TRACK_MINUTES - 15, minutes));
+
+            // A new block can't be dropped on top of anything else -
+            // clamp it into whatever open gap exists at the drop point,
+            // across both lanes on this day. If there isn't 15 minutes
+            // of room there, refuse the drop entirely.
+            let gapStart = 0, gapEnd = TRACK_MINUTES;
+            occupiedRangesForDay(dayIdx, null).forEach(([s, e2]) => {
+                if (e2 <= minutes && e2 > gapStart) gapStart = e2;
+                if (s >= minutes && s < gapEnd) gapEnd = s;
+            });
+            if (gapEnd - gapStart < 15) {
+                return showToast('No room there - that time is already taken.', 'error');
+            }
+            const start = Math.max(gapStart, Math.min(minutes, gapEnd - 15));
+            const end = Math.min(gapEnd, start + 60);
+
             const rule = {
                 id: genId(),
                 playlistId,
                 days: [dayIdx],
-                start: minutesToHHMM(minutes),
-                end: minutesToHHMM(minutes + 60),
+                start: minutesToHHMM(start),
+                end: minutesToHHMM(end),
                 volume: null,
                 requestsAllowed: null
             };
@@ -848,13 +932,17 @@
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
                 const duration = origEnd - origStart;
+                // Computed once up front (the other rules don't move during
+                // this drag) so the block hits a hard wall at a neighbor
+                // instead of just being flagged red after the fact.
+                const { minStart, maxStart } = computeMoveBounds(rule, ruleId);
                 let moved = false;
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
                     if (Math.abs(deltaX) > 3) moved = true;
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
-                    let newStart = Math.max(0, Math.min(TRACK_MINUTES - duration, origStart + deltaMin));
+                    let newStart = Math.max(minStart, Math.min(maxStart, origStart + deltaMin));
                     rule.start = minutesToHHMM(newStart);
                     rule.end = minutesToHHMM(newStart + duration);
                     renderDayBoxes();
@@ -862,10 +950,17 @@
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
-                    if (!moved) openModal(ruleId);
+                    if (!moved) {
+                        selectedRuleId = ruleId;
+                        renderDayBoxes();
+                    }
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
+            });
+            el.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                openModal(ruleId);
             });
         }
 
@@ -880,11 +975,15 @@
                 const startX = e.clientX;
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
+                // Same idea as the move drag - computed once so the right
+                // edge stops dead at the next block instead of overlapping
+                // it and getting flagged after the fact.
+                const maxEnd = computeResizeMaxEnd(rule, ruleId);
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
-                    let newEnd = Math.max(origStart + 15, Math.min(TRACK_MINUTES, origEnd + deltaMin));
+                    let newEnd = Math.max(origStart + 15, Math.min(maxEnd, origEnd + deltaMin));
                     rule.end = minutesToHHMM(newEnd);
                     renderDayBoxes();
                 }
@@ -969,6 +1068,27 @@
             closeModal();
             renderDayBoxes();
         }
+
+        // ---------- Block selection (click to select, Backspace to delete) ----------
+        // Clicking anywhere that isn't a block clears the selection -
+        // clicking a block itself is handled in attachBlockDrag's mouseup,
+        // so this only needs to handle the "clicked away" case.
+        document.addEventListener('click', (e) => {
+            if (selectedRuleId && !e.target.closest('.schedule-block')) {
+                selectedRuleId = null;
+                renderDayBoxes();
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+            if (!selectedRuleId) return;
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return; // typing elsewhere shouldn't delete a block
+            e.preventDefault();
+            rules = rules.filter(r => r.id !== selectedRuleId);
+            selectedRuleId = null;
+            renderDayBoxes();
+        });
 
         // ---------- Save ----------
         document.getElementById('scheduler-enabled-toggle').addEventListener('change', (e) => {
