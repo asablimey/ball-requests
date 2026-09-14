@@ -15,6 +15,7 @@
             --red-action: #e91429;
             --border: #282828;
             --text-dim: #a7a7a7;
+            --day-box-bg: #1f1f1f;
         }
         html { overflow-x: hidden; overscroll-behavior-x: none; }
         * { box-sizing: border-box; }
@@ -60,7 +61,14 @@
            between block (small screens - normal page scroll) and flex
            (laptop+ - fixed-height app shell) without JS having to know
            which one applies. */
-        #dashboard { display: none; max-width: 1400px; margin: 0 auto; }
+        /* width:100% keeps this stretched to the flex parent's width (the
+           fixed-height shell below makes #dashboard a flex item, and an
+           auto side margin on a flex item overrides stretch alignment -
+           without this it shrinks to fit its content instead of the
+           screen, which is what was forcing the header/timetable wider
+           than the viewport). max-width + the auto margin still center it
+           on screens wider than 1400px. */
+        #dashboard { display: none; width: 100%; max-width: 1400px; margin: 0 auto; }
         #dashboard.show { display: block; }
 
         .header {
@@ -103,10 +111,16 @@
         .status-bar strong { color: white; }
         .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--spotify-green); margin-right: 6px; }
 
-        .layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
+        .layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
 
-        .panel { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+        .panel {
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0;
+            height: 100%; min-height: 0; display: flex; flex-direction: column;
+        }
         .panel h2 { margin: 0 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+
+        .playlists-panel { flex: 0 0 220px; }
+        .timetable-panel { flex: 1; min-width: 0; }
 
         .panel-head-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
         .panel-head-row h2 { margin: 0; }
@@ -120,22 +134,31 @@
         .zoom-btn:disabled { opacity: 0.35; cursor: default; }
         .zoom-readout { font-size: 0.75rem; color: var(--text-dim); width: 38px; text-align: center; }
 
-        /* --- Fit-to-screen app shell (laptop and up) ---------------------
-           Below 821px the layout is left as normal, page-scrolling flow
-           (a fixed-height shell doesn't have room to work with once the
-           sidebar and timetable have to stack vertically). At 821px+, the
-           whole app is pinned to the viewport height and only the two
-           inner lists - the playlist palette and the day-boxes column -
-           scroll internally, so nothing about the page itself scrolls and
-           the header/status bar/panel chrome never drift out of view. */
-        @media (min-width: 821px) {
-            html, body { height: 100%; }
-            body { overflow: hidden; display: flex; flex-direction: column; }
-            #dashboard.show { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-            .layout { flex: 1; min-height: 0; align-items: stretch; }
-            .panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
-            #playlist-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
-            #day-boxes { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+        /* --- Fit-to-screen app shell -------------------------------------
+           The whole app is pinned to the available height (the viewport,
+           or - once embedded in the admin page - whatever height the
+           surrounding iframe is given) and only two things scroll
+           internally: the playlist palette and the day-boxes column.
+           Nothing about the page itself scrolls, so the header/status
+           bar/panel chrome never drift out of view. This now applies at
+           every width rather than laptop+ only: gating it behind a
+           min-width used to leave narrow screens on normal page-scrolling
+           flow with the palette and timetable still forced side by side,
+           which is what crushed the timetable down to nothing and made
+           the hour ruler collide with the lane label. */
+        html, body { height: 100%; }
+        body { overflow: hidden; display: flex; flex-direction: column; }
+        #dashboard.show { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+        #playlist-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+        #day-boxes { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+
+        /* Below 720px there isn't room for the palette and the timetable
+           side by side, so they stack - palette gets a capped height with
+           its own scroll, timetable takes the rest. */
+        @media (max-width: 720px) {
+            .layout { flex-direction: column; }
+            .playlists-panel { flex: 0 0 auto; max-height: 280px; overflow-y: auto; }
+            .timetable-panel { flex: 1; min-height: 0; }
         }
 
         /* --- Playlist palette --- */
@@ -158,31 +181,56 @@
         .add-playlist-form input:focus { border-color: var(--spotify-green); }
 
         /* --- Timetable --- */
-        .timetable-scroll { overflow-x: auto; overscroll-behavior: contain; touch-action: pan-x; }
+        /* overflow-x only - there's nothing to overflow vertically inside
+           one day box (its height is just its lane rows stacked), so
+           there's no need to make this a vertical scroll container too.
+           That matters here: an explicit overflow-y:hidden combined with
+           overscroll-behavior would have "contained" vertical scroll
+           input right here instead of letting it chain up to the
+           #day-boxes list - which, since the timeline fills most of each
+           card, would have meant vertical scrolling only worked from the
+           thin margins around it. touch-action: pan-x reserves touch
+           drags for horizontal panning here while still letting a
+           vertical touch-scroll gesture fall through to the page/list. */
+        .timetable-scroll { overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x; }
         .timetable { min-width: 900px; }
         .hour-ruler { display: flex; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
-        .hour-label { flex-shrink: 0; font-size: 0.7rem; color: var(--text-dim); }
-        .ruler-spacer { flex-shrink: 0; }
+        .hour-label { flex-shrink: 0; font-size: 0.75rem; color: var(--text-dim); }
+        /* Sticky + matching background so this spacer stays docked over
+           the lane label as the box scrolls horizontally, instead of
+           scrolling away and leaving hour numbers to collide with the
+           label sitting below it. */
+        .ruler-spacer {
+            flex-shrink: 0; position: sticky; left: 0; z-index: 3;
+            background: var(--day-box-bg);
+        }
 
-        .day-box { margin-bottom: 22px; }
+        /* Each day is its own card now - a visible gap plus a border
+           around it, rather than just a heading and some margin - and
+           each one scrolls its own timeline independently. */
+        .day-box {
+            margin-bottom: 20px; background: var(--day-box-bg);
+            border: 1px solid var(--border); border-radius: 10px; padding: 14px 14px 16px;
+        }
         .day-box:last-child { margin-bottom: 0; }
-        .day-box-header { font-size: 0.85rem; font-weight: 700; color: white; margin-bottom: 8px; }
+        .day-box-header { font-size: 0.9rem; font-weight: 700; color: white; margin-bottom: 10px; }
 
-        .lane-row { display: flex; margin-bottom: 5px; }
+        .lane-row { display: flex; margin-bottom: 8px; }
+        .lane-row:last-child { margin-bottom: 0; }
         .lane-label {
             flex-shrink: 0; display: flex; align-items: center; font-size: 0.75rem; font-weight: 600;
             color: var(--text-dim); padding-right: 10px; position: sticky; left: 0;
-            background: var(--panel-bg); z-index: 2; line-height: 1.2;
+            background: var(--day-box-bg); z-index: 2; line-height: 1.2;
         }
 
         .day-track {
-            position: relative; height: 44px; background: var(--card-bg); border-radius: 6px; flex-shrink: 0;
+            position: relative; height: 64px; background: var(--card-bg); border-radius: 6px; flex-shrink: 0;
             background-image: repeating-linear-gradient(to right, #2f2f2f 0, #2f2f2f 1px, transparent 1px, transparent var(--hourpx));
         }
         .day-track.drag-over { outline: 2px dashed var(--spotify-green); outline-offset: -2px; }
 
         .placeholder-track {
-            position: relative; height: 40px; border-radius: 6px; flex-shrink: 0;
+            position: relative; height: 52px; border-radius: 6px; flex-shrink: 0;
             background: repeating-linear-gradient(45deg, #1c1c1c, #1c1c1c 8px, #202020 8px, #202020 16px);
             display: flex; align-items: center; justify-content: center;
         }
@@ -192,15 +240,15 @@
         }
 
         .schedule-block {
-            position: absolute; top: 4px; bottom: 4px; border-radius: 6px;
-            padding: 4px 8px; font-size: 0.72rem; color: white; overflow: hidden;
+            position: absolute; top: 6px; bottom: 6px; border-radius: 6px;
+            padding: 6px 10px; font-size: 0.78rem; color: white; overflow: hidden;
             cursor: grab; user-select: none; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
         }
         .schedule-block:active { cursor: grabbing; }
         .schedule-block .block-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .schedule-block .block-time { opacity: 0.85; white-space: nowrap; }
+        .schedule-block .block-time { opacity: 0.85; white-space: nowrap; margin-top: 2px; }
         .resize-handle {
-            position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize;
+            position: absolute; right: 0; top: 0; bottom: 0; width: 10px; cursor: ew-resize;
             background: rgba(255,255,255,0.15);
         }
         .schedule-block.conflict {
@@ -286,7 +334,7 @@
         </div>
 
         <div class="layout">
-            <div class="panel">
+            <div class="panel playlists-panel">
                 <h2>Playlists</h2>
                 <div class="chip-hint">Add a Spotify playlist here, then drag it onto the timeline. Playlists in use can't be removed until their blocks are deleted.</div>
                 <div id="playlist-list"></div>
@@ -297,7 +345,7 @@
                 </div>
             </div>
 
-            <div class="panel">
+            <div class="panel timetable-panel">
                 <div class="panel-head-row">
                     <h2>Timetable</h2>
                     <div class="zoom-controls">
@@ -421,6 +469,18 @@
             input.focus();
         }
         document.getElementById('password-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyLogin(); });
+
+        // When embedded in an iframe on the admin page, the admin page
+        // posts its already-entered password over so this doesn't make
+        // the DJ log in a second time. Ignored when loaded standalone
+        // (no parent ever sends the message).
+        window.addEventListener('message', (e) => {
+            if (e.origin !== window.location.origin) return;
+            if (e.data && e.data.type === 'crowddj-admin-password' && e.data.password) {
+                document.getElementById('password-input').value = e.data.password;
+                verifyLogin();
+            }
+        });
 
         async function refreshStatus() {
             try {
