@@ -446,6 +446,9 @@
         let schedulerEnabled = false;
         let eventTimezone = null; // whatever's actually saved server-side, or null if never set
         let selectedRuleId = null; // single-click-selected block - outlined white, deleted with Backspace
+        let lastBlockClickTime = 0; // for manual double-click detection - see attachBlockDrag
+        let lastBlockClickRuleId = null;
+        const DOUBLE_CLICK_MS = 400;
 
         // getActiveScheduleRule on the server checks the CURRENT TIME against
         // each rule's HH:MM - and it has to check that in *some* timezone.
@@ -967,17 +970,28 @@
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
-                    if (!moved) {
-                        selectedRuleId = ruleId;
-                        renderDayBoxes();
+                    if (moved) return;
+
+                    // Manual double-click detection instead of a native
+                    // 'dblclick' listener: selecting a block re-renders it
+                    // (renderDayBoxes replaces the DOM node), so by the time
+                    // a second click lands it's hitting a freshly-built
+                    // element and the browser's own dblclick pairing can
+                    // miss it. Timing + ruleId is immune to that swap.
+                    const now = Date.now();
+                    if (lastBlockClickRuleId === ruleId && now - lastBlockClickTime < DOUBLE_CLICK_MS) {
+                        lastBlockClickTime = 0;
+                        lastBlockClickRuleId = null;
+                        openModal(ruleId);
+                        return;
                     }
+                    lastBlockClickTime = now;
+                    lastBlockClickRuleId = ruleId;
+                    selectedRuleId = ruleId;
+                    renderDayBoxes();
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
-            });
-            el.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                openModal(ruleId);
             });
         }
 
@@ -997,9 +1011,11 @@
                 // instead of overlapping it and getting flagged after
                 // the fact.
                 const bound = side === 'end' ? computeResizeMaxEnd(rule, ruleId) : computeResizeMinStart(rule, ruleId);
+                let moved = false;
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
+                    if (Math.abs(deltaX) > 3) moved = true;
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
                     if (side === 'end') {
                         rule.end = minutesToHHMM(Math.max(origStart + 15, Math.min(bound, origEnd + deltaMin)));
@@ -1011,6 +1027,22 @@
                 function onUp() {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
+                    if (moved) return;
+
+                    // A click (not a drag) on the handle itself still
+                    // counts toward double-click detection, same as
+                    // clicking the body of the block - see attachBlockDrag.
+                    const now = Date.now();
+                    if (lastBlockClickRuleId === ruleId && now - lastBlockClickTime < DOUBLE_CLICK_MS) {
+                        lastBlockClickTime = 0;
+                        lastBlockClickRuleId = null;
+                        openModal(ruleId);
+                        return;
+                    }
+                    lastBlockClickTime = now;
+                    lastBlockClickRuleId = ruleId;
+                    selectedRuleId = ruleId;
+                    renderDayBoxes();
                 }
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
