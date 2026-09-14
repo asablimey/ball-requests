@@ -402,6 +402,19 @@ function getActiveScheduleRule(event, now = new Date()) {
     return null;
 }
 
+// Whether the block active right now on the Music Scheduler is a Karaoke
+// block, so the search route can lock guest/kiosk results down to karaoke
+// versions only for the duration of that slot. Only enabled schedules count -
+// a disabled scheduler shouldn't silently restrict search just because a
+// karaoke rule is still sitting in its (currently inert) timetable.
+function musicSchedulerActiveIsKaraoke(event, now = new Date()) {
+    if (!event.musicScheduler?.enabled) return false;
+    const activeRule = getActiveScheduleRule(event, now);
+    if (!activeRule) return false;
+    const playlist = (event.musicScheduler.playlists || []).find(p => p.id === activeRule.playlistId);
+    return !!playlist && playlist.type === 'karaoke';
+}
+
 // Per-slug "which trackId are we waiting to finish" state for the reactive
 // boundary check. Deliberately kept out of the event object - it's pure
 // runtime bookkeeping, not something that needs to survive a restart (the
@@ -804,6 +817,16 @@ const EXTENDED_MIX_PATTERN = /\b(extended|club|dub|instrumental|maxi[\s-]?mix|12
 function isExtendedOrClubMix(trackName) {
     if (!trackName) return false;
     return EXTENDED_MIX_PATTERN.test(trackName);
+}
+
+// Flags karaoke/backing-track versions by the descriptor Spotify's karaoke
+// catalog (Karaoke Universe, Sing Karaoke, etc.) puts in the title or album,
+// e.g. "Song Name - Karaoke Version" or an album called "Karaoke Hits". Used
+// to lock guest/kiosk search down to karaoke-only results while a Karaoke
+// block is active on the Music Scheduler (see musicSchedulerActiveIsKaraoke).
+const KARAOKE_PATTERN = /\bkaraoke\b/i;
+function isKaraokeVersion(trackName, albumName) {
+    return KARAOKE_PATTERN.test(trackName || '') || KARAOKE_PATTERN.test(albumName || '');
 }
 
 async function getSpotifyToken() {
@@ -1278,6 +1301,14 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
     if (!query) return res.json({ tracks: [] });
     if (!spotifyAccessToken) await getSpotifyToken();
 
+    // While a Karaoke block is active on the Music Scheduler, guests/kiosk
+    // should only be able to find and request karaoke versions - appending
+    // "karaoke" steers Spotify's own search toward that catalog, and the
+    // isKaraokeVersion() filter below drops anything that slipped through
+    // without actually being one.
+    const karaokeMode = musicSchedulerActiveIsKaraoke(event);
+    const spotifyQuery = karaokeMode ? `${query} karaoke` : query;
+
     try {
         // Spotify's Feb 2026 API changes capped a single search request's `limit`
         // at 10 (down from 50). To still return a longer result list (25, i.e.
@@ -1289,7 +1320,7 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
         for (let offset = 0; offset < TOTAL_RESULTS; offset += PAGE_SIZE) offsets.push(offset);
 
         const responses = await Promise.all(offsets.map(offset =>
-            fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${PAGE_SIZE}&offset=${offset}`, {
+            fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(spotifyQuery)}&type=track&limit=${PAGE_SIZE}&offset=${offset}`, {
                 headers: { 'Authorization': `Bearer ${spotifyAccessToken}` }
             })
         ));
@@ -1315,9 +1346,14 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms),
                 _releaseYear: releaseYear,
-                _primaryArtistId: track.artists?.[0]?.id || null
+                _primaryArtistId: track.artists?.[0]?.id || null,
+                _albumName: track.album?.name || ''
             };
         });
+
+        if (karaokeMode) {
+            tracks = tracks.filter(track => isKaraokeVersion(track.name, track._albumName));
+        }
 
         if (event.systemConfigs.explicitBlockActive) {
             tracks = tracks.filter(track => !track.explicit);
@@ -1358,7 +1394,7 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
             });
         }
 
-        tracks = tracks.map(({ _releaseYear, _primaryArtistId, ...publicFields }) => publicFields);
+        tracks = tracks.map(({ _releaseYear, _primaryArtistId, _albumName, ...publicFields }) => publicFields);
 
         res.json({ tracks });
     } catch (err) {
@@ -1947,7 +1983,8 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         const uriRaw = typeof p.uri === 'string' ? p.uri.trim() : '';
         const id = extractSpotifyPlaylistId(uriRaw);
         if (!label || !id) return null;
-        return { id: typeof p.id === 'string' && p.id ? p.id : crypto.randomUUID(), label, uri: uriRaw };
+        const type = p.type === 'karaoke' ? 'karaoke' : 'crowddj';
+        return { id: typeof p.id === 'string' && p.id ? p.id : crypto.randomUUID(), label, uri: uriRaw, type };
     }).filter(Boolean).slice(0, 50) : event.musicScheduler.playlists;
 
     const validDays = new Set([0, 1, 2, 3, 4, 5, 6]);
