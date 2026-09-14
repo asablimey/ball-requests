@@ -454,7 +454,15 @@
         .tab-content.active-content {
             display: block; /* Visible when tab is selected */
         }
-        
+
+        /* The scheduler frame manages its own internal scrolling (see
+           scheduler.html), so this wrapper just needs to be given a
+           concrete height - set in JS via resizeSchedulerFrame() - for
+           that to have something to fill. No padding/border here so the
+           frame's own card styling reads as part of this page. */
+        #scheduler-frame-wrap { width: 100%; }
+        #scheduler-iframe { display: block; width: 100%; height: 100%; border: 0; border-radius: 12px; background: var(--panel-bg); }
+
         .panel { 
             width: 100%;
             background: var(--panel-bg); 
@@ -849,7 +857,7 @@
         <button type="button" id="sidebar-nav-settings" class="sidebar-nav-item" onclick="switchTab('settings')">Settings</button>
         <button type="button" id="sidebar-nav-stats" class="sidebar-nav-item" onclick="switchTab('stats')">Stats</button>
         <button type="button" id="sidebar-nav-blocked" class="sidebar-nav-item" onclick="switchTab('blocked')">Blocked</button>
-        <a id="sidebar-nav-scheduler" class="sidebar-nav-item" style="display:block; text-decoration:none; box-sizing:border-box;" href="#" onclick="event.preventDefault(); window.open(eventUrl('/admin/scheduler'), '_blank', 'noopener');">Music Scheduler ↗</a>
+        <button type="button" id="sidebar-nav-scheduler" class="sidebar-nav-item" onclick="switchTab('scheduler')">Music Scheduler</button>
     </div>
 
     <div class="header">
@@ -1248,6 +1256,19 @@
         </div>
     </div>
 
+    <!-- The scheduler is its own page (scheduler.html) with its own auth,
+         styling, and drag/resize logic - it's framed in here rather than
+         merged inline because both pages independently define ids like
+         #dashboard, #lock-screen, #toast, .panel, .modal, etc., and
+         merging them into one document would collide. The admin password
+         is relayed over postMessage once the frame loads so the DJ isn't
+         asked to log in a second time (see loadSchedulerFrame below). -->
+    <div id="tab-panel-scheduler" class="tab-content scheduler-tab-content">
+        <div id="scheduler-frame-wrap">
+            <iframe id="scheduler-iframe" title="Music Scheduler" loading="lazy"></iframe>
+        </div>
+    </div>
+
     <script>
         // This page is served at /e/{slug}/admin, so the event's slug is
         // always the second path segment - every relative API call below
@@ -1308,7 +1329,7 @@
         // chip selection before they hit "Save Filters".
         let filtersInitialized = false;
 
-        const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats', 'blocked'];
+        const TAB_NAMES = ['playback', 'queue', 'history', 'settings', 'stats', 'blocked', 'scheduler'];
 
         // --- Sidebar (hamburger menu) ---
         function openSidebar() {
@@ -1330,7 +1351,44 @@
             closeSidebar();
             if (targetTab === 'stats') loadStats();
             if (targetTab === 'blocked') { renderBlockedTabGuests(); renderBlockedEverything(); }
+            if (targetTab === 'scheduler') loadSchedulerFrame();
         }
+
+        // The scheduler frame is only pointed at its URL the first time the
+        // tab is opened (not on page load) so it doesn't fetch/render a
+        // whole second app before the DJ has even asked to see it.
+        let schedulerFrameRequested = false;
+        function loadSchedulerFrame() {
+            const frame = document.getElementById('scheduler-iframe');
+            if (!schedulerFrameRequested) {
+                schedulerFrameRequested = true;
+                frame.addEventListener('load', () => {
+                    // Same-origin, so this just saves the DJ from typing
+                    // the admin password again inside the frame.
+                    frame.contentWindow.postMessage(
+                        { type: 'crowddj-admin-password', password: adminPassword },
+                        window.location.origin
+                    );
+                });
+                frame.src = eventUrl('/admin/scheduler');
+            }
+            resizeSchedulerFrame();
+        }
+
+        // Sizes the frame to fill whatever's left of the viewport below it,
+        // so the scheduler's own internal "only the day-boxes scroll"
+        // layout has a real height to work with instead of an arbitrary
+        // guess. Re-run on resize and whenever the now-playing bar (a
+        // fixed bar that eats into the bottom of the screen) appears or
+        // disappears.
+        function resizeSchedulerFrame() {
+            const wrap = document.getElementById('scheduler-frame-wrap');
+            if (!wrap || !document.getElementById('tab-panel-scheduler').classList.contains('active-content')) return;
+            const top = wrap.getBoundingClientRect().top;
+            const bottomGap = document.body.classList.contains('has-now-playing-bar') ? 76 : 20;
+            wrap.style.height = Math.max(360, window.innerHeight - top - bottomGap) + 'px';
+        }
+        window.addEventListener('resize', resizeSchedulerFrame);
 
         const SETTINGS_CATEGORIES = ['general', 'access', 'spotify', 'kiosk', 'danger'];
         function switchSettingsCategory(category) {
@@ -2627,6 +2685,7 @@ async function verifyPassword() {
                 if (nowPlayingTicker) { clearInterval(nowPlayingTicker); nowPlayingTicker = null; }
                 spotifyUpcomingQueue = [];
                 renderQueueList();
+                resizeSchedulerFrame();
                 return;
             }
 
@@ -2637,6 +2696,7 @@ async function verifyPassword() {
 
             bar.classList.add('is-visible');
             document.body.classList.add('has-now-playing-bar');
+            resizeSchedulerFrame();
 
             nowPlayingState = {
                 progressMs: data.progressMs || 0,
