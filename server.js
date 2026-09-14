@@ -299,16 +299,32 @@ async function spotifyPlayerCommand(event, method, playerPath, query = '') {
 //
 // The tricky part is the playlist switch: switchDjPlaylist() above is
 // immediate and will cut off whatever's currently playing. A schedule
-// boundary firing mid-song should NOT do that. Instead, a due switch is
-// held in schedulerRuntime.pendingSwitchUri until it's actually safe:
+// boundary firing mid-song should NEVER do that - not even by a couple of
+// seconds. Instead, a due switch is held in schedulerRuntime.pendingSwitchUri
+// until it's actually safe:
 //   1. Any guest-requested songs still in the local queue play out first
 //      (they always take priority over the schedule).
 //   2. Once the guest queue is empty, we wait for the track that's
 //      currently playing to actually finish, then switch.
-// "Waiting for it to finish" is done with a one-shot timer sized to the
-// track's remaining duration (recomputed each tick to correct for drift),
-// rather than just polling and switching one tick late - that would let a
-// sliver of the OLD playlist's next track sneak in before we cut over.
+//
+// "Waiting for it to finish" used to be a one-shot timer sized to the
+// track's predicted remaining duration (durationMs - progressMs). That's a
+// PREDICTION of when the track ends, and predictions can be wrong: Spotify
+// crossfade moves the real audible boundary earlier than the reported
+// duration implies, and progressMs is only as fresh as the last poll, so
+// the estimate drifts. Either one lets an entire extra track from the old
+// playlist start - and the switch would then land in the middle of it.
+//
+// This is now reactive instead of predictive: we track the trackId that
+// was playing when the switch became pending (schedulerBoundaryWatch,
+// below) and only fire the switch once a poll observes the trackId has
+// actually changed - i.e. Spotify itself has already moved past that
+// track. There's no more guessing about *when* it'll end. The only
+// remaining source of delay is polling latency itself (we only know a
+// change happened once we next poll), which is why syncAllLoadedEvents
+// polls an event with a pending switch every tick instead of every 4s -
+// see SCHEDULER_FAST_POLL_MS below - to keep that gap as small as
+// possible rather than up to a full normal poll interval late.
 
 // HH:MM -> minutes since midnight. Returns null for anything malformed so
 // callers can just skip a bad rule instead of crashing on it.
@@ -386,18 +402,15 @@ function getActiveScheduleRule(event, now = new Date()) {
     return null;
 }
 
-// Per-slug timer handles for the "wait for the current song to end" step.
-// Deliberately kept out of the event object - a setTimeout handle can't be
-// JSON-serialized/persisted, and it's fine for this to reset on a server
-// restart (the next tick just re-evaluates from scratch).
-const schedulerSwitchTimers = new Map();
+// Per-slug "which trackId are we waiting to finish" state for the reactive
+// boundary check. Deliberately kept out of the event object - it's pure
+// runtime bookkeeping, not something that needs to survive a restart (the
+// next tick just re-observes whatever's currently playing and starts
+// waiting on that instead).
+const schedulerBoundaryWatch = new Map();
 
-function clearSchedulerSwitchTimer(slug) {
-    const handle = schedulerSwitchTimers.get(slug);
-    if (handle) {
-        clearTimeout(handle);
-        schedulerSwitchTimers.delete(slug);
-    }
+function clearSchedulerBoundaryWatch(slug) {
+    schedulerBoundaryWatch.delete(slug);
 }
 
 // Drops any switch the scheduler currently has queued up, without touching
@@ -409,7 +422,7 @@ function clearSchedulerSwitchTimer(slug) {
 //   - the timetable itself gets edited/saved, which can delete or change
 //     the very rule a switch was queued for
 function cancelPendingSchedulerSwitch(event) {
-    clearSchedulerSwitchTimer(event.slug);
+    clearSchedulerBoundaryWatch(event.slug);
     event.schedulerRuntime.pendingSwitchUri = null;
     event.schedulerRuntime.pendingSwitchLabel = null;
 }
@@ -427,6 +440,7 @@ async function fireScheduledSwitch(event) {
         event.systemConfigs.lastSwitchedPlaylist = uri;
         event.schedulerRuntime.pendingSwitchUri = null;
         event.schedulerRuntime.pendingSwitchLabel = null;
+        clearSchedulerBoundaryWatch(event.slug);
         events.scheduleSave(event.slug);
         console.log(`[SCHEDULER] (${event.slug}) Seamless playlist switch complete.`);
     }
@@ -480,46 +494,52 @@ async function tickMusicScheduler(event) {
     }
 
     if (!event.schedulerRuntime.pendingSwitchUri) {
-        clearSchedulerSwitchTimer(event.slug);
+        clearSchedulerBoundaryWatch(event.slug);
         return;
     }
 
     // A guest request is still playing out (or staged next) - hold off and
-    // re-check on the next tick. Don't leave a stale timer armed from a
-    // previous check while we're in this holding pattern.
+    // re-check on the next tick. Don't leave a stale watch armed from a
+    // previous check while we're in this holding pattern - once the queue
+    // clears we need to re-observe whatever's playing THEN, not compare
+    // against a track that was current before the guest request cut in.
     if (event.activeQueue.length > 0 || event.pushedNextTrackId) {
-        clearSchedulerSwitchTimer(event.slug);
+        clearSchedulerBoundaryWatch(event.slug);
         return;
     }
 
     // Nothing playing at all (e.g. paused, or no device) - nothing to wait
     // for, switch right away.
     if (!event.cachedNowPlaying.isPlaying || !event.cachedNowPlaying.trackId) {
-        clearSchedulerSwitchTimer(event.slug);
+        clearSchedulerBoundaryWatch(event.slug);
         await fireScheduledSwitch(event);
         return;
     }
 
     // Something's genuinely playing (the old playlist's own continuation,
-    // since the guest queue is confirmed empty above) - let it finish, then
-    // switch. Recompute the remaining time and re-arm the timer every tick
-    // rather than trusting one estimate for the whole wait, since Spotify's
-    // reported progress can drift between polls.
-    const remainingMs = Math.max(0, (event.cachedNowPlaying.durationMs || 0) - (event.cachedNowPlaying.progressMs || 0));
-    clearSchedulerSwitchTimer(event.slug);
-    if (remainingMs <= 4500) {
-        // Close enough to the next poll tick anyway - just switch now
-        // rather than arm a near-instant timer.
-        await fireScheduledSwitch(event);
-    } else {
-        const handle = setTimeout(() => {
-            schedulerSwitchTimers.delete(event.slug);
-            fireScheduledSwitch(event).catch(err => {
-                console.error(`[SCHEDULER] (${event.slug}) Switch failed:`, err.message);
-            });
-        }, remainingMs);
-        schedulerSwitchTimers.set(event.slug, handle);
+    // since the guest queue is confirmed empty above). We never predict
+    // when it'll end - we only switch once a poll has actually OBSERVED the
+    // boundary: the trackId changing away from whatever was playing when we
+    // started watching. First tick after the switch becomes pending (or
+    // after a guest request finishes ahead of it), there's nothing to
+    // compare against yet, so just record what's currently playing and wait
+    // for the next poll.
+    const watchedTrackId = schedulerBoundaryWatch.get(event.slug);
+    const currentTrackId = event.cachedNowPlaying.trackId;
+    if (watchedTrackId === undefined) {
+        schedulerBoundaryWatch.set(event.slug, currentTrackId);
+        return;
     }
+    if (currentTrackId === watchedTrackId) {
+        // Same track still playing - keep waiting, re-check next tick.
+        return;
+    }
+    // The track actually changed since we started watching - the old
+    // playlist's track is genuinely done (crossfade or not), so this is the
+    // real boundary. Switch now, immediately, before this new track plays
+    // any further.
+    clearSchedulerBoundaryWatch(event.slug);
+    await fireScheduledSwitch(event);
 }
 
 // Turns one rule into the day-segments it actually occupies, unrolling an
@@ -2520,6 +2540,23 @@ async function syncNowPlayingForEvent(event) {
 // when the next setInterval fire comes around, which would otherwise pile
 // up more and more concurrent requests over time rather than just skipping
 // that tick and catching up on the next one.
+// Normal cadence for the "Now Playing" cache - plenty for the UI bar and
+// for the scheduler most of the time.
+const NOW_PLAYING_NORMAL_POLL_MS = 4000;
+// While a scheduler switch is pending AND we're waiting on a currently-
+// playing track to finish (see schedulerBoundaryWatch above), the gap
+// between the real track-change boundary and us noticing it is exactly
+// however long we go between polls of THAT event - so it gets polled every
+// tick instead, to keep the "how much of the wrong track could play before
+// we catch it and switch" window as tight as the process loop allows.
+const SCHEDULER_FAST_POLL_MS = 1000;
+
+// Tracks the last time each event's now-playing was actually polled from
+// Spotify, so the two cadences above can share one process tick without
+// hitting Spotify 4x more often than needed for events that aren't
+// mid-switch. Runtime-only, same reasoning as schedulerBoundaryWatch.
+const nowPlayingLastSyncedAt = new Map();
+
 let isSyncingAllEvents = false;
 async function syncAllLoadedEvents() {
     if (isSyncingAllEvents) return;
@@ -2531,7 +2568,19 @@ async function syncAllLoadedEvents() {
         // Spotify connected. The scheduler tick, though, runs for every
         // loaded event - even one with no Spotify connection yet still has
         // a requests-open/closed setting the timetable can drive.
-        await Promise.allSettled(connected.map(event => syncNowPlayingForEvent(event)));
+        const now = Date.now();
+        const dueForSync = connected.filter(event => {
+            const waitingOnBoundary = !!event.schedulerRuntime?.pendingSwitchUri;
+            const interval = waitingOnBoundary ? SCHEDULER_FAST_POLL_MS : NOW_PLAYING_NORMAL_POLL_MS;
+            const lastSynced = nowPlayingLastSyncedAt.get(event.slug) || 0;
+            return now - lastSynced >= interval;
+        });
+        dueForSync.forEach(event => nowPlayingLastSyncedAt.set(event.slug, now));
+        await Promise.allSettled(dueForSync.map(event => syncNowPlayingForEvent(event)));
+        // The scheduler tick itself is cheap (array scan + comparisons, no
+        // Spotify call unless a switch/volume change is actually due), so
+        // it just runs every process tick for every loaded event rather
+        // than needing its own throttle.
         await Promise.allSettled(loaded.map(event => tickMusicScheduler(event).catch(err => {
             console.error(`[SCHEDULER] (${event.slug}) Tick failed:`, err.message);
         })));
@@ -2539,7 +2588,7 @@ async function syncAllLoadedEvents() {
         isSyncingAllEvents = false;
     }
 }
-setInterval(syncAllLoadedEvents, 4000);
+setInterval(syncAllLoadedEvents, SCHEDULER_FAST_POLL_MS);
 
 // Public (no admin auth) - the guest, kiosk, and admin pages all poll this for
 // the live "Now Playing" bar. Only ever exposes playback state, nothing about
