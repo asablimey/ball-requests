@@ -227,7 +227,13 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         musicScheduler: {
             enabled: false,
             playlists: [], // { id, label, uri }
-            rules: []      // { id, playlistId, days: [0-6], start: "HH:MM", end: "HH:MM", volume: null|0-100, requestsAllowed: null|boolean }
+            rules: [],     // { id, playlistId, days: [0-6], start: "HH:MM", end: "HH:MM", volume: null|0-100, requestsAllowed: null|boolean }
+            // IANA zone (e.g. "Pacific/Auckland") that every rule's HH:MM is
+            // read in - set from the DJ's browser the first time they save
+            // the schedule (see scheduler.html). Null until then, which
+            // tickMusicScheduler in server.js falls back to server-local
+            // time for (almost certainly wrong for the actual venue).
+            timezone: null
         },
 
         // Runtime-only bookkeeping for the scheduler - not meant to be
@@ -332,11 +338,12 @@ const lastAccess = new Map();
 // already there.
 function ensureSchedulerDefaults(event) {
     if (!event.musicScheduler || typeof event.musicScheduler !== 'object') {
-        event.musicScheduler = { enabled: false, playlists: [], rules: [] };
+        event.musicScheduler = { enabled: false, playlists: [], rules: [], timezone: null };
     } else {
         if (!Array.isArray(event.musicScheduler.playlists)) event.musicScheduler.playlists = [];
         if (!Array.isArray(event.musicScheduler.rules)) event.musicScheduler.rules = [];
         if (typeof event.musicScheduler.enabled !== 'boolean') event.musicScheduler.enabled = false;
+        if (typeof event.musicScheduler.timezone !== 'string') event.musicScheduler.timezone = null;
     }
     if (!event.schedulerRuntime || typeof event.schedulerRuntime !== 'object') {
         event.schedulerRuntime = { activeRuleId: null, pendingSwitchUri: null, pendingSwitchLabel: null };
