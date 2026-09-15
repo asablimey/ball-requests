@@ -1677,21 +1677,20 @@ app.post('/e/:slug/api/vote', publicActionLimiter, voterIdentityMiddleware, (req
     if (!track.downvoters) track.downvoters = [];
 
     const clearUp = () => { track.upvoters = track.upvoters.filter(v => v !== voterId); };
-    const clearDown = () => { track.downvoters = track.downvoters.filter(v => v !== voterId); };
 
+    // Downvoting has been removed - guests can only upvote (or take back
+    // their own upvote by pressing it again). This only ever affects the
+    // vote tally/highlight shown to guests (song.ups, the green thumbs-up
+    // for whoever voted) - it does NOT touch the track's real queue
+    // position (`order`), which stays purely a manual/admin-driven thing.
+    // track.downvoters/downs is left in place purely so any votes cast
+    // under the old system still display correctly; nothing can add to it
+    // anymore.
     if (type === 'up') {
         if (track.upvoters.includes(voterId)) {
             clearUp();
         } else {
-            clearDown();
             track.upvoters.push(voterId);
-        }
-    } else if (type === 'down') {
-        if (track.downvoters.includes(voterId)) {
-            clearDown();
-        } else {
-            clearUp();
-            track.downvoters.push(voterId);
         }
     }
 
