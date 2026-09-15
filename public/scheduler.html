@@ -124,12 +124,12 @@
         .layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
 
         .panel {
-            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0;
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 12px; padding: 18px; min-width: 0;
             height: 100%; min-height: 0; display: flex; flex-direction: column;
         }
         .panel h2 { margin: 0 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
 
-        .playlists-panel { flex: 0 0 220px; }
+        .playlists-panel { flex: 0 0 280px; }
         .timetable-panel { flex: 1; min-width: 0; }
 
         .panel-head-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -167,23 +167,28 @@
            its own scroll, timetable takes the rest. */
         @media (max-width: 720px) {
             .layout { flex-direction: column; }
-            .playlists-panel { flex: 0 0 auto; max-height: 280px; overflow-y: auto; }
+            .playlists-panel { flex: 0 0 auto; max-height: 340px; overflow-y: auto; }
             .timetable-panel { flex: 1; min-height: 0; }
         }
 
         /* --- Playlist palette --- */
         .playlist-chip {
-            display: flex; align-items: center; gap: 8px; background: var(--card-bg);
-            border: 1px solid #333; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+            display: flex; align-items: center; gap: 10px; background: var(--card-bg);
+            border: 1px solid #333; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
             cursor: grab; font-size: 0.85rem;
         }
         .playlist-chip:active { cursor: grabbing; }
         .chip-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
         .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chip-type { flex-shrink: 0; font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.3px; }
-        .chip-remove { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1rem; padding: 0 2px; }
+        .chip-remove { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.1rem; padding: 0 2px; flex-shrink: 0; }
         .chip-remove:hover { color: var(--red-action); }
         .chip-hint { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 12px; line-height: 1.4; }
+        .palette-subhead {
+            font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim);
+            margin: 14px 0 8px;
+        }
+        .palette-subhead:first-of-type { margin-top: 4px; }
 
         .add-playlist-form input, .add-playlist-form select {
             width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
@@ -195,8 +200,8 @@
         .palette-divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
         .palette-section-head { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); margin: 0 0 12px; }
         .media-chip {
-            display: flex; align-items: center; gap: 8px; background: var(--card-bg);
-            border: 1px solid #333; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px;
+            display: flex; align-items: center; gap: 10px; background: var(--card-bg);
+            border: 1px solid #333; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px;
             cursor: grab; font-size: 0.85rem;
         }
         .media-chip:active { cursor: grabbing; }
@@ -417,11 +422,24 @@
 
                 <hr class="palette-divider">
                 <h2 class="palette-section-head">Ambient Visuals</h2>
-                <div class="chip-hint">Upload photos/videos, then drag one onto the Ambient Visuals lane. Add more files to that block from its settings once it's on the timeline.</div>
+                <div class="chip-hint">Drag any of these onto the Ambient Visuals lane, then add more to that block from its settings once it's on the timeline.</div>
+
+                <div class="palette-subhead">Presets</div>
+                <div id="ambient-preset-list"></div>
+
+                <div class="palette-subhead">Your Files</div>
                 <div id="ambient-media-list"></div>
                 <div class="upload-btn-row">
                     <label class="upload-label" id="ambient-upload-label" for="ambient-file-input">+ Upload photos/videos</label>
                     <input type="file" id="ambient-file-input" accept="image/*,video/*" multiple onchange="onAmbientFilesChosen(event)">
+                </div>
+
+                <div class="palette-subhead">Text Cards</div>
+                <div id="ambient-text-list"></div>
+                <div class="add-playlist-form">
+                    <input type="text" id="new-text-label" placeholder="Label (e.g. Tag Us)" maxlength="60">
+                    <input type="text" id="new-text-body" placeholder="Card text" maxlength="280">
+                    <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addTextCard()">+ Add text card</button>
                 </div>
             </div>
 
@@ -473,7 +491,7 @@
 
             <div id="modal-ambient-fields">
                 <div class="field-group">
-                    <label>Files in this block</label>
+                    <label>Items in this block</label>
                     <div class="ambient-file-list" id="modal-ambient-file-list"></div>
                     <div class="ambient-add-file-row">
                         <select id="modal-ambient-add-select"></select>
@@ -481,10 +499,10 @@
                     </div>
                 </div>
                 <div class="field-group">
-                    <label>Photo duration</label>
+                    <label>Slide duration</label>
                     <div class="time-row">
                         <div><input type="number" id="modal-photo-duration" min="1" max="120" value="8" style="width:100%; background:var(--card-bg); border:1px solid #333; color:white; padding:8px 10px; border-radius:6px;"></div>
-                        <div style="display:flex; align-items:center; font-size:0.8rem; color:var(--text-dim);">seconds per photo (videos play in full)</div>
+                        <div style="display:flex; align-items:center; font-size:0.8rem; color:var(--text-dim);">seconds per photo/preset/card (videos play in full)</div>
                     </div>
                 </div>
             </div>
@@ -520,7 +538,28 @@
         let adminPassword = '';
         let playlists = [];
         let rules = [];
-        let ambientMedia = []; // { id, url, filename, type: 'photo'|'video', createdAt } - this event's Ambient Visuals library
+        let ambientMedia = []; // { id, filename, type: 'photo'|'video'|'text', url?, text?, createdAt } - this event's Ambient Visuals library
+        // Built-in Ambient Visuals widgets - live data, not uploaded files,
+        // so they're always available and never live in ambientMedia. Their
+        // ids are recognized server-side too (see AMBIENT_PRESET_IDS in
+        // server.js) so a block can reference one without it being a real
+        // library entry. What each actually renders lives in
+        // visual-display.html, not here - this page only lets you drop one
+        // onto the timeline.
+        const AMBIENT_PRESETS = [
+            { id: 'preset:live_queue', label: 'Live Queue', icon: '\u{1F3B6}' },
+            { id: 'preset:now_playing', label: 'Now Playing', icon: '\u25B6\uFE0F' },
+            { id: 'preset:qr_code', label: 'QR Code', icon: '\u{1F4F1}' },
+            { id: 'preset:clock', label: 'Clock', icon: '\u{1F550}' }
+        ];
+        // Looks an id up across presets + the uploaded/text library, so
+        // block titles and the modal's item list don't need two lookups
+        // sprinkled everywhere a mediaId shows up.
+        function findAmbientItem(id) {
+            const preset = AMBIENT_PRESETS.find(p => p.id === id);
+            if (preset) return { id: preset.id, filename: preset.label };
+            return ambientMedia.find(m => m.id === id);
+        }
         let schedulerEnabled = false;
 
         // Direct browser -> Cloudinary upload config. Update these two if
@@ -896,13 +935,25 @@
             e.dataTransfer.setData('text/plain', 'media:' + mediaId);
         }
 
+        function renderAmbientPresets() {
+            const list = document.getElementById('ambient-preset-list');
+            list.innerHTML = AMBIENT_PRESETS.map(p => `
+                <div class="media-chip" draggable="true" data-media-id="${p.id}"
+                     ondragstart="onMediaChipDragStart(event, '${p.id}')">
+                    <span class="media-thumb media-type-icon">${p.icon}</span>
+                    <span class="chip-label">${escapeHtml(p.label)}</span>
+                </div>
+            `).join('');
+        }
+
         function renderAmbientMedia() {
             const list = document.getElementById('ambient-media-list');
-            if (ambientMedia.length === 0) {
+            const files = ambientMedia.filter(m => m.type === 'photo' || m.type === 'video');
+            if (files.length === 0) {
                 list.innerHTML = `<div class="chip-hint">No files yet - upload some below.</div>`;
                 return;
             }
-            list.innerHTML = ambientMedia.map(m => `
+            list.innerHTML = files.map(m => `
                 <div class="media-chip" draggable="true" data-media-id="${escapeHtml(m.id)}"
                      ondragstart="onMediaChipDragStart(event, '${escapeHtml(m.id)}')">
                     ${m.type === 'video'
@@ -912,6 +963,45 @@
                     <button class="chip-remove" onclick="removeAmbientMedia('${escapeHtml(m.id)}')" title="Remove">&times;</button>
                 </div>
             `).join('');
+        }
+
+        function renderAmbientTextCards() {
+            const list = document.getElementById('ambient-text-list');
+            const cards = ambientMedia.filter(m => m.type === 'text');
+            if (cards.length === 0) {
+                list.innerHTML = `<div class="chip-hint">No text cards yet - add one below.</div>`;
+                return;
+            }
+            list.innerHTML = cards.map(m => `
+                <div class="media-chip" draggable="true" data-media-id="${escapeHtml(m.id)}"
+                     ondragstart="onMediaChipDragStart(event, '${escapeHtml(m.id)}')" title="${escapeHtml(m.text || '')}">
+                    <span class="media-thumb media-type-icon">&#128221;</span>
+                    <span class="chip-label">${escapeHtml(m.filename)}</span>
+                    <button class="chip-remove" onclick="removeAmbientMedia('${escapeHtml(m.id)}')" title="Remove">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        async function addTextCard() {
+            const labelInput = document.getElementById('new-text-label');
+            const bodyInput = document.getElementById('new-text-body');
+            const label = labelInput.value.trim();
+            const body = bodyInput.value.trim();
+            if (!body) return showToast('Give the card some text first.', 'error');
+            try {
+                const res = await fetch(eventUrl('/api/admin/ambient-media'), {
+                    method: 'POST',
+                    headers: adminHeaders(),
+                    body: JSON.stringify({ type: 'text', text: body, filename: label })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) return showToast(data.error || 'Could not add that card.', 'error');
+                ambientMedia.push(data.item);
+                labelInput.value = ''; bodyInput.value = '';
+                renderAmbientTextCards();
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
         }
 
         async function onAmbientFilesChosen(e) {
@@ -975,7 +1065,7 @@
         async function removeAmbientMedia(id) {
             const inUse = rules.some(r => r.laneType === 'ambient' && Array.isArray(r.mediaIds) && r.mediaIds.includes(id));
             if (inUse) {
-                const proceed = confirm('This file is used in one or more Ambient Visuals blocks. Removing it will take it out of those blocks too (an emptied block is deleted). Continue?');
+                const proceed = confirm('This item is used in one or more Ambient Visuals blocks. Removing it will take it out of those blocks too (an emptied block is deleted). Continue?');
                 if (!proceed) return;
             }
             try {
@@ -990,6 +1080,7 @@
                 ambientMedia = data.ambientMedia;
                 rules = data.rules;
                 renderAmbientMedia();
+                renderAmbientTextCards();
                 renderDayBoxes();
             } catch (e) {
                 showToast('Could not reach the server. Try again.', 'error');
@@ -1097,7 +1188,7 @@
         function blockTitleFor(rule) {
             if (typeof rule.name === 'string' && rule.name.trim()) return rule.name.trim();
             if (rule.laneType === 'ambient') {
-                const first = ambientMedia.find(m => m.id === rule.mediaIds[0]);
+                const first = findAmbientItem(rule.mediaIds[0]);
                 const firstName = first ? first.filename : 'Untitled';
                 const extra = rule.mediaIds.length - 1;
                 return extra > 0 ? `${firstName} +${extra} more` : firstName;
@@ -1130,7 +1221,9 @@
 
         function renderAll() {
             renderPlaylists();
+            renderAmbientPresets();
             renderAmbientMedia();
+            renderAmbientTextCards();
             renderDayBoxes();
             scrollTimetablesToNow();
         }
@@ -1148,10 +1241,10 @@
 
             if (laneType === 'ambient') {
                 if (!isMediaPayload) {
-                    return showToast('Drag a file from the Ambient Visuals palette onto this lane.', 'error');
+                    return showToast('Drag an item from the Ambient Visuals palette onto this lane.', 'error');
                 }
             } else if (isMediaPayload) {
-                return showToast('Drop that file onto the Ambient Visuals lane instead.', 'error');
+                return showToast('Drop that item onto the Ambient Visuals lane instead.', 'error');
             } else {
                 const playlistId = payload.slice('playlist:'.length);
                 if (!playlists.some(p => p.id === playlistId)) return;
@@ -1383,8 +1476,8 @@
         function renderModalAmbientFileList() {
             const list = document.getElementById('modal-ambient-file-list');
             list.innerHTML = modalAmbientMediaIds.map((mid, idx) => {
-                const m = ambientMedia.find(x => x.id === mid);
-                const name = m ? m.filename : 'Missing file';
+                const item = findAmbientItem(mid);
+                const name = item ? item.filename : 'Missing item';
                 return `
                     <div class="ambient-file-row">
                         <span class="chip-label">${escapeHtml(name)}</span>
@@ -1395,13 +1488,19 @@
                         </div>
                     </div>
                 `;
-            }).join('') || `<div class="chip-hint">No files in this block yet - add one below.</div>`;
+            }).join('') || `<div class="chip-hint">No items in this block yet - add one below.</div>`;
 
             const addSelect = document.getElementById('modal-ambient-add-select');
-            const available = ambientMedia.filter(m => !modalAmbientMediaIds.includes(m.id));
-            addSelect.innerHTML = available.length === 0
-                ? `<option value="">No more files available</option>`
-                : available.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.filename)}</option>`).join('');
+            const availablePresets = AMBIENT_PRESETS.filter(p => !modalAmbientMediaIds.includes(p.id));
+            const availableFiles = ambientMedia.filter(m => (m.type === 'photo' || m.type === 'video') && !modalAmbientMediaIds.includes(m.id));
+            const availableText = ambientMedia.filter(m => m.type === 'text' && !modalAmbientMediaIds.includes(m.id));
+            const groups = [];
+            if (availablePresets.length) groups.push(`<optgroup label="Presets">${availablePresets.map(p => `<option value="${p.id}">${escapeHtml(p.label)}</option>`).join('')}</optgroup>`);
+            if (availableFiles.length) groups.push(`<optgroup label="Files">${availableFiles.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.filename)}</option>`).join('')}</optgroup>`);
+            if (availableText.length) groups.push(`<optgroup label="Text Cards">${availableText.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.filename)}</option>`).join('')}</optgroup>`);
+            addSelect.innerHTML = groups.length === 0
+                ? `<option value="">Nothing else available</option>`
+                : groups.join('');
         }
         function addFileToModalBlock() {
             const id = document.getElementById('modal-ambient-add-select').value;
@@ -1452,7 +1551,7 @@
             }
 
             if (rule.laneType === 'ambient') {
-                if (modalAmbientMediaIds.length === 0) return showToast('Add at least one file to this block.', 'error');
+                if (modalAmbientMediaIds.length === 0) return showToast('Add at least one item to this block.', 'error');
                 rule.mediaIds = [...modalAmbientMediaIds];
                 const duration = parseInt(document.getElementById('modal-photo-duration').value, 10);
                 rule.photoDurationSec = Number.isInteger(duration) && duration >= 1 && duration <= 120 ? duration : 8;
