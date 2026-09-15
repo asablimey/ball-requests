@@ -2063,26 +2063,47 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
             const items = rawItems.map(it => {
                 if (!it || typeof it !== 'object') return null;
                 const itemId = typeof it.id === 'string' && it.id ? it.id : crypto.randomUUID();
-                const type = ['photo', 'video', 'queue', 'clock', 'ad'].includes(it.type) ? it.type : null;
+                const type = ['photo', 'video', 'queue', 'clock', 'ad', 'custom'].includes(it.type) ? it.type : null;
                 if (!type) return null;
                 const durationSec = Number.isInteger(it.durationSec) && it.durationSec >= 1 && it.durationSec <= 120
                     ? it.durationSec : 8;
+                // Shared display-tweak fields every item type can carry -
+                // how it transitions in/out and how bright it renders.
+                // Malformed/missing values fall back to sane defaults
+                // rather than dropping the whole item.
+                const transition = ['fade', 'cut', 'slide'].includes(it.transition) ? it.transition : 'fade';
+                const brightness = Number.isInteger(it.brightness) && it.brightness >= 40 && it.brightness <= 150
+                    ? it.brightness : 100;
                 if (type === 'photo' || type === 'video') {
                     if (typeof it.mediaId !== 'string' || !ambientMediaIds.has(it.mediaId)) return null;
+                    const fit = ['cover', 'contain', 'fill'].includes(it.fit) ? it.fit : 'cover';
+                    const position = ['center', 'top', 'bottom', 'left', 'right'].includes(it.position) ? it.position : 'center';
+                    // Optional per-item overlay text (the mockup's "The Beach
+                    // Vibes" style caption) - shown on the venue screen in
+                    // place of the filename/category when set.
+                    const captionTitle = typeof it.captionTitle === 'string' ? it.captionTitle.trim().slice(0, 60) : '';
+                    const captionSubtitle = typeof it.captionSubtitle === 'string' ? it.captionSubtitle.trim().slice(0, 80) : '';
+                    const base = { id: itemId, type, mediaId: it.mediaId, transition, fit, position, brightness };
+                    if (captionTitle) base.captionTitle = captionTitle;
+                    if (captionSubtitle) base.captionSubtitle = captionSubtitle;
                     // Videos play in full - durationSec is meaningless for
                     // them, so it isn't even stored.
-                    return type === 'photo'
-                        ? { id: itemId, type, mediaId: it.mediaId, durationSec }
-                        : { id: itemId, type, mediaId: it.mediaId };
+                    if (type === 'photo') base.durationSec = durationSec;
+                    return base;
                 }
                 if (type === 'ad') {
                     const adText = typeof it.adText === 'string' ? it.adText.trim().slice(0, 200) : '';
                     const adQrUrl = typeof it.adQrUrl === 'string' ? it.adQrUrl.trim().slice(0, 500) : '';
                     if (!adText && !adQrUrl) return null; // an ad with nothing to show isn't a valid item
-                    return { id: itemId, type, adText, adQrUrl, durationSec };
+                    return { id: itemId, type, adText, adQrUrl, durationSec, transition, brightness };
+                }
+                if (type === 'custom') {
+                    const text = typeof it.text === 'string' ? it.text.trim().slice(0, 40) : '';
+                    if (!text) return null; // a text card with no text isn't a valid item
+                    return { id: itemId, type, text, durationSec, transition, brightness };
                 }
                 // 'queue' or 'clock' - no extra fields, they're rendered live
-                return { id: itemId, type, durationSec };
+                return { id: itemId, type, durationSec, transition, brightness };
             }).filter(Boolean).slice(0, 100);
             if (items.length === 0) return null; // a block with nothing to show isn't a valid block
             return { id, laneType: 'ambient', days, start: r.start, end: r.end, items, ...(name ? { name } : {}) };
@@ -2843,16 +2864,26 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
     const items = (rule.items || []).map(it => {
+        const shared = { transition: it.transition || 'fade', brightness: it.brightness || 100 };
         if (it.type === 'photo' || it.type === 'video') {
             const media = byId.get(it.mediaId);
             if (!media) return null;
-            return { id: it.id, type: it.type, url: media.url, filename: media.filename, durationSec: it.durationSec || 8 };
+            return {
+                id: it.id, type: it.type, url: media.url, filename: media.filename, durationSec: it.durationSec || 8,
+                fit: it.fit || 'cover', position: it.position || 'center',
+                ...(it.captionTitle ? { captionTitle: it.captionTitle } : {}),
+                ...(it.captionSubtitle ? { captionSubtitle: it.captionSubtitle } : {}),
+                ...shared
+            };
         }
         if (it.type === 'ad') {
-            return { id: it.id, type: 'ad', adText: it.adText || '', adQrUrl: it.adQrUrl || '', durationSec: it.durationSec || 8 };
+            return { id: it.id, type: 'ad', adText: it.adText || '', adQrUrl: it.adQrUrl || '', durationSec: it.durationSec || 8, ...shared };
+        }
+        if (it.type === 'custom') {
+            return { id: it.id, type: 'custom', text: it.text || '', durationSec: it.durationSec || 8, ...shared };
         }
         // 'queue' / 'clock' - rendered live from other endpoints, nothing to resolve
-        return { id: it.id, type: it.type, durationSec: it.durationSec || 8 };
+        return { id: it.id, type: it.type, durationSec: it.durationSec || 8, ...shared };
     }).filter(Boolean);
     if (items.length === 0) {
         return res.json({ active: false });
