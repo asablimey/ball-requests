@@ -459,10 +459,8 @@
         }
 
         .vote-btn-up svg { stroke: #666; }
-        .vote-btn-down svg { stroke: #666; }
 
         .vote-node.user-voted-up .vote-btn-up svg { stroke: var(--spotify-green); fill: var(--spotify-green); }
-        .vote-node.user-voted-down .vote-btn-down svg { stroke: var(--red-action); fill: var(--red-action); }
 
         .vote-count {
             font-size: 0.8rem;
@@ -1752,7 +1750,6 @@
 
             const guestRowsHtml = lastGuestQueue.map(song => {
                 const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
-                const isDownvoted = song.downvoters && song.downvoters.includes(voterSignatureToken);
 
                 return `
                     <div class="song-row">
@@ -1772,12 +1769,6 @@
                                     <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
                                 </button>
                                 <span class="vote-count">${song.ups || 0}</span>
-                            </div>
-                            <div class="vote-node ${isDownvoted ? 'user-voted-down' : ''}">
-                                <button class="vote-btn vote-btn-down" onclick="castVote('${song.id}', 'down')">
-                                    <svg viewBox="0 0 24 24"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-                                </button>
-                                <span class="vote-count">${song.downs || 0}</span>
                             </div>
                         </div>
                     </div>
