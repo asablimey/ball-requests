@@ -122,11 +122,14 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             maxQueueLength: 50,
             genreFilter: [],
             decadeFilter: [],
-            // 300m check-in radius around the pinned venue location (see
-            // REQUEST_RADIUS_METERS in server.js). On by default; switching
-            // it off lets anyone request from anywhere, regardless of
-            // distance from the venue.
+            // Check-in radius (meters) around the pinned venue location -
+            // see REQUEST_RADIUS_METERS in server.js, which this overrides
+            // per-event once an admin changes it on the new Location
+            // settings tab. On by default; switching locationLockEnabled
+            // off lets anyone request from anywhere, regardless of distance
+            // from the venue.
             locationLockEnabled: true,
+            locationRadiusMeters: 300,
             guestSpotifyConnectEnabled: false,
             spotifyAutoQueueEnabled: true,
             // Whatever's actually live right now - manual switch or
