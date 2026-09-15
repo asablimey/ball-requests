@@ -374,16 +374,16 @@ function getEventLocalTime(event, now = new Date()) {
     }
 }
 
-// Finds whichever rule should be "on" right now, or null if none match.
-// Supports overnight windows (e.g. 22:00-02:00) by checking the wrapped
-// range separately from the normal same-day range. If two rules somehow
-// overlap, the first match in array order wins - the Scheduler UI is
-// expected to prevent admins from creating overlaps in the first place.
-function getActiveScheduleRule(event, now = new Date()) {
-    const rules = event.musicScheduler?.rules || [];
-    if (rules.length === 0) return null;
+// Finds whichever rule in `candidateRules` should be "on" right now, or null
+// if none match. Supports overnight windows (e.g. 22:00-02:00) by checking
+// the wrapped range separately from the normal same-day range. If two rules
+// somehow overlap, the first match in array order wins - the Scheduler UI is
+// expected to prevent admins from creating overlaps in the first place
+// (within a lane - see findOverlappingRulePair's per-lane grouping).
+function findActiveRuleAmong(candidateRules, event, now) {
+    if (candidateRules.length === 0) return null;
     const { day, minutes } = getEventLocalTime(event, now);
-    for (const rule of rules) {
+    for (const rule of candidateRules) {
         const start = parseHHMM(rule.start);
         const end = parseHHMM(rule.end);
         if (start === null || end === null || !Array.isArray(rule.days) || rule.days.length === 0) continue;
@@ -400,6 +400,26 @@ function getActiveScheduleRule(event, now = new Date()) {
         }
     }
     return null;
+}
+
+// Music-lane rules only (crowdDJ/Karaoke) - this is what actually drives
+// playlist switching, volume, and requests-open/closed, so an Ambient
+// Visuals block (laneType 'ambient') must never be returned here even
+// though it lives in the same `rules` array. Rules saved before laneType
+// existed are music rules by definition (Ambient Visuals didn't exist yet).
+function getActiveScheduleRule(event, now = new Date()) {
+    const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType !== 'ambient');
+    return findActiveRuleAmong(rules, event, now);
+}
+
+// Ambient-lane rules only - parallel to getActiveScheduleRule above, used
+// by whatever eventually renders the Ambient Visuals lane's output (a kiosk
+// screen, a standalone display, etc.) rather than by the audio-switching
+// logic. Can be "on" at the same time as a music rule - visuals and audio
+// aren't mutually exclusive the way two music blocks are.
+function getActiveAmbientRule(event, now = new Date()) {
+    const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType === 'ambient');
+    return findActiveRuleAmong(rules, event, now);
 }
 
 // Whether the block active right now on the Music Scheduler is a Karaoke
@@ -576,9 +596,9 @@ function ruleToDaySegments(rule) {
     return segments;
 }
 
-// Finds the first pair of rules that share any overlapping time on any day,
-// or null if the timetable is clean. O(n^2) in rule count, which is fine -
-// safeRules is capped at 200.
+// Finds the first pair of rules *within the given list* that share any
+// overlapping time on any day, or null if that list is clean. O(n^2) in
+// rule count, which is fine - safeRules is capped at 200.
 function findOverlappingRulePair(rules) {
     const withSegments = rules.map(r => ({ rule: r, segments: ruleToDaySegments(r) }));
     for (let i = 0; i < withSegments.length; i++) {
@@ -593,6 +613,19 @@ function findOverlappingRulePair(rules) {
         }
     }
     return null;
+}
+
+// crowdDJ and Karaoke share one physical output (the venue's speakers), so
+// they're checked as a single "music" group - two music blocks can never
+// overlap regardless of which of those two lanes either one is in (mirrors
+// the existing "share the lane's blocks as solid" behavior). Ambient Visuals
+// is a separate output entirely (a screen, not the speakers), so it gets its
+// own independent overlap check - an ambient block is free to run
+// concurrently with a music block, just not with another ambient block.
+function findOverlappingRuleAcrossLanes(rules) {
+    const musicRules = rules.filter(r => r.laneType !== 'ambient');
+    const ambientRules = rules.filter(r => r.laneType === 'ambient');
+    return findOverlappingRulePair(musicRules) || findOverlappingRulePair(ambientRules);
 }
 
 // Manual queue position, independent of vote count - see the admin reorder
@@ -1947,7 +1980,13 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
         rules: event.musicScheduler.rules,
         timezone: event.musicScheduler.timezone || null,
         activeRuleId: event.schedulerRuntime.activeRuleId,
-        pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel
+        pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel,
+        // The Ambient Visuals media library - not runtime state like the
+        // fields above, but the scheduler page needs it up front to render
+        // the palette and resolve each ambient block's mediaIds to actual
+        // files, so it rides along with this same GET rather than a
+        // separate round-trip.
+        ambientMedia: event.ambientMedia
     });
 });
 
@@ -1989,16 +2028,34 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
 
     const validDays = new Set([0, 1, 2, 3, 4, 5, 6]);
     const playlistIds = new Set(safePlaylists.map(p => p.id));
+    const ambientMediaIds = new Set((event.ambientMedia || []).map(m => m.id));
     const safeRules = Array.isArray(rules) ? rules.map(r => {
         if (!r || typeof r !== 'object') return null;
-        if (!playlistIds.has(r.playlistId)) return null;
         if (parseHHMM(r.start) === null || parseHHMM(r.end) === null) return null;
         const days = Array.isArray(r.days) ? [...new Set(r.days.map(d => parseInt(d, 10)).filter(d => validDays.has(d)))] : [];
         if (days.length === 0) return null;
+        const id = typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID();
+
+        if (r.laneType === 'ambient') {
+            // Dedupe while preserving the admin's chosen order (that order
+            // is exactly the shuffle-source ordering the display side will
+            // read), and drop any id that doesn't point at a real,
+            // still-existing library entry - e.g. a file removed from the
+            // library after this block was built.
+            const mediaIds = Array.isArray(r.mediaIds)
+                ? [...new Set(r.mediaIds.filter(mid => typeof mid === 'string' && ambientMediaIds.has(mid)))]
+                : [];
+            if (mediaIds.length === 0) return null; // a block with nothing to show isn't a valid block
+            const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
+                ? r.photoDurationSec : 8;
+            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec };
+        }
+
+        if (!playlistIds.has(r.playlistId)) return null;
         const volume = Number.isInteger(r.volume) && r.volume >= 0 && r.volume <= 100 ? r.volume : null;
         const requestsAllowed = typeof r.requestsAllowed === 'boolean' ? r.requestsAllowed : null;
         return {
-            id: typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID(),
+            id,
             playlistId: r.playlistId,
             days,
             start: r.start,
@@ -2011,8 +2068,10 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
     // Overlaps are rejected outright rather than silently resolved by
     // first-match-wins - two blocks fighting over the same slot almost
     // always means a dragging mistake, and resolving it silently would
-    // just hide that from the admin instead of letting them fix it.
-    const conflict = findOverlappingRulePair(safeRules);
+    // just hide that from the admin instead of letting them fix it. Ambient
+    // blocks only conflict with other ambient blocks, never with music
+    // blocks - see findOverlappingRuleAcrossLanes.
+    const conflict = findOverlappingRuleAcrossLanes(safeRules);
     if (conflict) {
         return res.status(400).json({
             error: 'Two scheduled blocks overlap - fix the conflict before saving.',
@@ -2034,6 +2093,84 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
     cancelPendingSchedulerSwitch(event);
     events.scheduleSave(event.slug);
     res.json({ success: true, playlists: safePlaylists, rules: safeRules, timezone: safeTimezone });
+});
+
+// --- Ambient Visuals media library ---------------------------------------
+// The browser uploads the actual file bytes straight to Cloudinary using an
+// unsigned upload preset (never touches this server at all - keeps large
+// photo/video payloads off a free-tier Node process entirely). Once that
+// upload finishes, the browser calls this route with just the resulting
+// metadata so it can be attached to the event and reused across blocks.
+// This route deliberately never sees or handles file bytes itself.
+//
+// Only Cloudinary URLs are accepted (not arbitrary URLs) - this metadata
+// ends up rendered as <img>/<video> src on whatever eventually displays the
+// Ambient Visuals lane, so accepting any URL here would turn this into an
+// open way to store/serve arbitrary attacker-hosted content under this
+// event. res.cloudinary.com is Cloudinary's own delivery domain.
+function isCloudinaryUrl(url) {
+    if (typeof url !== 'string') return false;
+    try {
+        const u = new URL(url);
+        return u.protocol === 'https:' && /(^|\.)res\.cloudinary\.com$/.test(u.hostname);
+    } catch (e) {
+        return false;
+    }
+}
+
+app.post('/e/:slug/api/admin/ambient-media', (req, res) => {
+    const event = req.event;
+    const { url, filename, type } = req.body || {};
+    if (!isCloudinaryUrl(url)) {
+        return res.status(400).json({ error: 'That upload URL is not recognized.' });
+    }
+    if (type !== 'photo' && type !== 'video') {
+        return res.status(400).json({ error: 'Media type must be "photo" or "video".' });
+    }
+    if (!Array.isArray(event.ambientMedia)) event.ambientMedia = [];
+    if (event.ambientMedia.length >= 300) {
+        return res.status(400).json({ error: 'This event already has 300 ambient files - delete some before adding more.' });
+    }
+    const safeFilename = typeof filename === 'string' && filename.trim()
+        ? filename.trim().slice(0, 120)
+        : (type === 'video' ? 'Untitled video' : 'Untitled photo');
+    const item = { id: crypto.randomUUID(), url, filename: safeFilename, type, createdAt: Date.now() };
+    event.ambientMedia.push(item);
+    events.scheduleSave(event.slug);
+    res.json({ success: true, item });
+});
+
+// Removes a file from the library and strips it out of every block that
+// referenced it, rather than leaving a dangling id sitting in mediaIds -
+// the next schedule save would drop it anyway (see the mediaIds filter in
+// POST /api/admin/scheduler), but doing it here too means a block doesn't
+// silently lose a file only the next time someone happens to hit Save.
+// The asset itself is left alone in Cloudinary (deleting it there requires
+// the account's signed API secret, which this server never holds) - it just
+// stops being referenced by this event.
+app.delete('/e/:slug/api/admin/ambient-media/:mediaId', (req, res) => {
+    const event = req.event;
+    const { mediaId } = req.params;
+    if (!Array.isArray(event.ambientMedia)) event.ambientMedia = [];
+    const before = event.ambientMedia.length;
+    event.ambientMedia = event.ambientMedia.filter(m => m.id !== mediaId);
+    if (event.ambientMedia.length === before) {
+        return res.status(404).json({ error: 'That file was not found in this event\'s library.' });
+    }
+    const rules = event.musicScheduler?.rules || [];
+    for (const rule of rules) {
+        if (rule.laneType === 'ambient' && Array.isArray(rule.mediaIds)) {
+            rule.mediaIds = rule.mediaIds.filter(id => id !== mediaId);
+        }
+    }
+    // A block that's had every one of its files removed this way is no
+    // longer valid (see the "mediaIds.length === 0 -> drop the rule" check
+    // in POST /api/admin/scheduler) - drop it here too instead of leaving
+    // an empty, unreachable block sitting in the timetable until the next
+    // save happens to clean it up.
+    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.mediaIds.length > 0);
+    events.scheduleSave(event.slug);
+    res.json({ success: true, ambientMedia: event.ambientMedia, rules: event.musicScheduler.rules });
 });
 
 // --- DJ transport controls ---
@@ -2632,6 +2769,36 @@ setInterval(syncAllLoadedEvents, SCHEDULER_FAST_POLL_MS);
 // the connected account itself.
 app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
     res.json(req.event.cachedNowPlaying);
+});
+
+// Public (no admin auth) - whatever eventually renders the Ambient Visuals
+// lane (kiosk, a standalone signage screen, etc.) polls this for "what
+// should be on screen right now". Resolves the active block's mediaIds
+// into full {id, url, filename, type} records here so the display side
+// never has to also fetch/hold the whole library just to look up a few
+// ids. Returns active:false whenever the scheduler is off or no ambient
+// block covers this moment - callers should hold whatever was last showing
+// rather than blank the screen on a brief gap.
+app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
+    const event = req.event;
+    if (!event.musicScheduler?.enabled) {
+        return res.json({ active: false });
+    }
+    const rule = getActiveAmbientRule(event);
+    if (!rule) {
+        return res.json({ active: false });
+    }
+    const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
+    const media = rule.mediaIds.map(id => byId.get(id)).filter(Boolean);
+    if (media.length === 0) {
+        return res.json({ active: false });
+    }
+    res.json({
+        active: true,
+        ruleId: rule.id,
+        photoDurationSec: rule.photoDurationSec || 8,
+        media
+    });
 });
 
 // ============================================================
