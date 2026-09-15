@@ -240,6 +240,26 @@
             line-height: 1;
             white-space: nowrap;
         }
+        .credit-badge-pin-icon {
+            display: none;
+            width: 22px;
+            height: 22px;
+            fill: white;
+        }
+        /* Warm, clearly-different look for "you're not at the venue right
+           now" - swaps the credit count out for a plain map pin instead of
+           showing a number the guest can't currently spend anyway. */
+        .credit-badge.out-of-range {
+            background-color: #F2B705;
+            border-color: #C99404;
+        }
+        .credit-badge.out-of-range .credit-badge-number,
+        .credit-badge.out-of-range .credit-badge-label {
+            display: none;
+        }
+        .credit-badge.out-of-range .credit-badge-pin-icon {
+            display: block;
+        }
 
         /* Spotify attribution now lives inline under the title (see
            .spotify-attribution-inline above) - required whenever we display
@@ -965,6 +985,13 @@
                         <div id="credits-status" class="credit-badge">
                             <div id="credit-badge-number" class="credit-badge-number">--</div>
                             <div id="credit-badge-label" class="credit-badge-label">Credits</div>
+                            <!-- Shown instead of the number/label (see .out-of-range in
+                                 CSS) whenever the guest has drifted outside the venue's
+                                 geofence - a plain "you're not here" cue rather than a
+                                 credit count that can't currently be spent anyway. -->
+                            <svg id="credit-badge-pin-icon" class="credit-badge-pin-icon" viewBox="0 0 24 24">
+                                <path d="M12 2C8.14 2 5 5.14 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.86-3.14-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/>
+                            </svg>
                         </div>
                     </div>
                 </div>
@@ -1472,6 +1499,16 @@
             venueGeoLat = null;
             venueGeoLon = null;
             outOfGeofenceRange = false;
+            updateLocationCreditState();
+        }
+
+        // Swaps the credits badge into its warm-yellow/map-pin "not checked
+        // in" look while outOfGeofenceRange is true. Pure class toggle -
+        // the number/label markup and updateCreditBadge()'s own logic are
+        // untouched, CSS just hides them while this class is present.
+        function updateLocationCreditState() {
+            const badge = document.getElementById('credits-status');
+            if (badge) badge.classList.toggle('out-of-range', outOfGeofenceRange);
         }
 
         if (!localStorage.getItem('voterSignatureToken')) {
@@ -1620,6 +1657,7 @@
                 // once it hits the configured max - each gets its own message.
                 const searchInput = document.getElementById('search-input');
                 const effectivelyOpen = systemRequestsAllowed && !queueIsFull && !outOfGeofenceRange && !isBlockedGuest && hasUsername();
+                updateLocationCreditState();
                 if (!effectivelyOpen) {
                     searchInput.disabled = true;
                     searchInput.value = "";
