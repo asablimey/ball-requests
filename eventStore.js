@@ -238,6 +238,8 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             enabled: false,
             playlists: [], // { id, label, uri, type: 'crowddj'|'karaoke' }
             // { id, laneType, days: [0-6], start: "HH:MM", end: "HH:MM",
+            //   name (optional - admin-chosen label shown on the block
+            //     instead of the auto-generated playlist/filename title),
             //   -- music blocks (laneType 'crowddj'/'karaoke', or omitted
             //      for anything saved before laneType existed) --
             //   playlistId, volume: null|0-100, requestsAllowed: null|boolean,
