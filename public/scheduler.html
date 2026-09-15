@@ -346,6 +346,193 @@
         .day-toggle.active { background: var(--spotify-green); color: white; border-color: var(--spotify-green); }
         .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.85rem; }
         .modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 20px; }
+
+        /* --- Ambient Visuals block editor (dedicated modal) --- */
+        #ambient-modal-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            z-index: 600; align-items: center; justify-content: center; padding: 20px;
+        }
+        #ambient-modal-backdrop.show { display: flex; }
+        .avm {
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 16px;
+            width: 100%; max-width: 1180px; height: 88vh; max-height: 820px;
+            display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        }
+        .avm-header {
+            display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+            padding: 18px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+        }
+        .avm-header-left { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+        .avm-icon {
+            width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+            background: rgba(177,92,222,0.18); color: #cd8bf0;
+            display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
+        }
+        .avm-header h3 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.3px; }
+        .avm-subtitle { color: var(--text-dim); font-size: 0.82rem; margin-top: 3px; }
+        .avm-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .avm-btn-preview {
+            display: flex; align-items: center; gap: 6px; background: var(--card-bg); border: 1px solid #333;
+            color: white; padding: 8px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .avm-btn-preview:hover { border-color: #555; }
+        .avm-close {
+            width: 32px; height: 32px; border-radius: 8px; background: transparent; border: none;
+            color: var(--text-dim); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .avm-close:hover { background: var(--card-bg); color: white; }
+
+        .avm-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+
+        .avm-sidebar { flex: 0 0 210px; border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+        .avm-add-visual-btn {
+            width: 100%; background: var(--spotify-green); color: white; border: none; border-radius: 8px;
+            padding: 10px; font-weight: 700; font-size: 0.82rem; cursor: pointer; margin-bottom: 18px;
+        }
+        .avm-add-visual-btn:hover { filter: brightness(1.1); }
+        .avm-side-section { margin-bottom: 18px; }
+        .avm-side-section:last-child { margin-bottom: 0; }
+        .avm-side-label {
+            font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-dim); margin-bottom: 8px;
+        }
+        .avm-side-item {
+            display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none;
+            border: none; color: white; padding: 7px 8px; border-radius: 6px; font-size: 0.82rem; cursor: pointer;
+        }
+        .avm-side-item:hover { background: var(--card-bg); }
+        .avm-side-icon { width: 18px; text-align: center; flex-shrink: 0; color: var(--text-dim); }
+        .avm-side-thumb { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #111; }
+        .avm-side-item.disabled { opacity: 0.35; cursor: default; }
+        .avm-side-item.disabled:hover { background: none; }
+        .avm-empty-hint-small { color: var(--text-dim); font-size: 0.76rem; padding: 4px 8px; }
+
+        .avm-main { flex: 1; min-width: 0; padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+        .avm-right { flex: 0 0 270px; border-left: 1px solid var(--border); padding: 18px; overflow-y: auto; }
+
+        .avm-preview-row { display: flex; gap: 14px; }
+        .avm-preview-stage {
+            flex: 1; min-width: 0; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; position: relative;
+            background: var(--card-bg); display: flex; align-items: center; justify-content: center;
+        }
+        .avm-preview-stage img, .avm-preview-stage video { width: 100%; height: 100%; object-fit: cover; }
+        .avm-preview-placeholder { color: var(--text-dim); font-size: 2rem; }
+        .avm-preview-caption {
+            position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px;
+            background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+        }
+        .avm-preview-caption .name { font-weight: 800; font-size: 0.95rem; }
+        .avm-preview-caption .type { font-size: 0.7rem; color: #d8d8d8; text-transform: uppercase; letter-spacing: 0.4px; }
+
+        .avm-currently {
+            flex: 0 0 210px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+            padding: 14px; display: flex; flex-direction: column; gap: 10px;
+        }
+        .avm-currently-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+        .avm-currently-item { display: flex; align-items: center; gap: 10px; }
+        .avm-currently-thumb {
+            width: 38px; height: 38px; border-radius: 6px; background: #111; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 1rem; overflow: hidden;
+        }
+        .avm-currently-meta { min-width: 0; }
+        .avm-currently-meta .name { font-weight: 700; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .avm-currently-meta .sub { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .avm-currently-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--text-dim); }
+        .avm-currently-row strong { color: white; font-weight: 700; font-size: 0.85rem; }
+        .avm-currently-nav { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+        .avm-nav-btn {
+            width: 26px; height: 26px; border-radius: 6px; background: var(--panel-bg); border: 1px solid #333;
+            color: white; cursor: pointer; font-size: 0.95rem; line-height: 1;
+        }
+        .avm-nav-btn:hover { border-color: #555; }
+        .avm-nav-btn:disabled { opacity: 0.3; cursor: default; }
+        .avm-nav-count { font-size: 0.74rem; color: var(--text-dim); }
+
+        .avm-seq-head { display: flex; justify-content: space-between; align-items: baseline; }
+        .avm-seq-head h4 { margin: 0; font-size: 0.92rem; }
+        .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); }
+        .avm-seq-list { display: flex; flex-direction: column; gap: 8px; }
+        .avm-seq-row {
+            display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid #2c2c2c;
+            border-radius: 8px; padding: 8px 10px; cursor: pointer;
+        }
+        .avm-seq-row:hover { border-color: #444; }
+        .avm-seq-row.selected { border-color: var(--spotify-green); background: rgba(29,185,84,0.08); }
+        .avm-seq-index { width: 16px; text-align: center; color: var(--text-dim); font-size: 0.76rem; flex-shrink: 0; }
+        .avm-seq-drag { color: #555; flex-shrink: 0; font-size: 0.9rem; }
+        .avm-seq-thumb {
+            width: 32px; height: 32px; border-radius: 6px; object-fit: cover; background: #111; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 0.95rem; overflow: hidden;
+        }
+        .avm-seq-info { flex: 1; min-width: 0; }
+        .avm-seq-info .name { font-weight: 700; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .avm-seq-info .type { font-size: 0.7rem; color: var(--text-dim); }
+        .avm-seq-duration { font-size: 0.72rem; color: var(--text-dim); flex-shrink: 0; white-space: nowrap; }
+        .avm-seq-menu-btn {
+            width: 22px; height: 22px; border-radius: 4px; background: none; border: none;
+            color: var(--text-dim); font-size: 0.8rem; cursor: pointer; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .avm-seq-menu-btn:hover { color: white; background: #2f2f2f; }
+        .avm-seq-menu-btn:disabled { opacity: 0.25; cursor: default; }
+        .avm-seq-menu-btn:disabled:hover { background: none; }
+        .avm-seq-empty { text-align: center; color: var(--text-dim); font-size: 0.84rem; padding: 30px 10px; border: 1px dashed #333; border-radius: 8px; }
+
+        .avm-settings-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+        .avm-settings-thumb {
+            width: 42px; height: 42px; border-radius: 8px; object-fit: cover; background: var(--card-bg); flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 1.1rem; overflow: hidden;
+        }
+        .avm-settings-head .name { font-weight: 700; font-size: 0.85rem; }
+        .avm-settings-head .sub { font-size: 0.7rem; color: var(--text-dim); }
+        .avm-settings-section-label {
+            font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); margin-bottom: 10px;
+        }
+        .avm-settings-field { margin-bottom: 12px; }
+        .avm-settings-field label { display: block; font-size: 0.76rem; color: var(--text-dim); margin-bottom: 5px; }
+        .avm-settings-field input[type="number"], .avm-settings-field input[type="text"] {
+            width: 100%; background: var(--panel-bg); border: 1px solid #333; color: white;
+            padding: 8px 10px; border-radius: 6px; font-size: 0.84rem; outline: none;
+        }
+        .avm-settings-field input:focus { border-color: var(--spotify-green); }
+        .avm-settings-note {
+            font-size: 0.78rem; color: var(--text-dim); background: var(--panel-bg); border: 1px solid var(--border);
+            border-radius: 6px; padding: 9px 10px; margin-bottom: 12px;
+        }
+        .avm-settings-remove {
+            width: 100%; margin-top: 6px; background: rgba(233,20,41,0.12); border: 1px solid var(--red-action);
+            color: #ffb4bb; border-radius: 8px; padding: 9px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .avm-settings-remove:hover { filter: brightness(1.15); }
+        .avm-settings-empty { color: var(--text-dim); font-size: 0.82rem; text-align: center; padding: 30px 10px; }
+
+        .avm-footer { border-top: 1px solid var(--border); flex-shrink: 0; }
+        .avm-schedule-toggle { display: flex; align-items: center; gap: 10px; padding: 14px 20px; cursor: pointer; }
+        .avm-schedule-icon { color: var(--text-dim); font-size: 0.95rem; }
+        .avm-schedule-text { flex: 1; min-width: 0; }
+        .avm-schedule-text .t1 { font-size: 0.84rem; font-weight: 700; }
+        .avm-schedule-text .t2 { font-size: 0.74rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .avm-schedule-chevron { color: var(--text-dim); transition: transform 0.15s; display: inline-block; }
+        .avm-schedule-chevron.open { transform: rotate(90deg); }
+        .avm-schedule-panel { display: none; padding: 0 20px 18px; }
+        .avm-schedule-panel.open { display: block; }
+        .avm-footer-actions {
+            display: flex; justify-content: space-between; align-items: center; padding: 14px 20px;
+            border-top: 1px solid var(--border);
+        }
+        .avm-delete-link { background: none; border: none; color: #ff6b6b; font-size: 0.8rem; cursor: pointer; padding: 6px 4px; }
+        .avm-delete-link:hover { text-decoration: underline; }
+
+        @media (max-width: 860px) {
+            .avm { height: 94vh; max-height: none; }
+            .avm-body { flex-direction: column; overflow-y: auto; }
+            .avm-sidebar { flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 180px; }
+            .avm-right { flex: 0 0 auto; border-left: none; border-top: 1px solid var(--border); }
+            .avm-preview-row { flex-direction: column; }
+            .avm-currently { flex: 0 0 auto; }
+        }
+
         .toast {
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: var(--card-bg); border: 1px solid #333; color: white;
@@ -464,26 +651,6 @@
                 </div>
             </div>
 
-            <div id="modal-ambient-fields">
-                <div class="field-group">
-                    <label>Display items (plays in order)</label>
-                    <div class="ambient-file-list" id="modal-ambient-file-list"></div>
-                    <div class="ambient-add-file-row">
-                        <select id="modal-ambient-add-select"></select>
-                        <button class="btn btn-ghost btn-small" onclick="addFileToModalBlock()">+ Add File</button>
-                    </div>
-                    <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
-                        <button class="btn btn-ghost btn-small" onclick="addWidgetToModalBlock('queue')">+ Live Queue</button>
-                        <button class="btn btn-ghost btn-small" onclick="addWidgetToModalBlock('clock')">+ Clock &amp; Date</button>
-                        <button class="btn btn-ghost btn-small" onclick="addWidgetToModalBlock('ad')">+ Ad (QR + Text)</button>
-                    </div>
-                    <div class="upload-btn-row" style="margin-top:10px;">
-                        <label class="upload-label" id="modal-ambient-upload-label" for="modal-ambient-file-input">+ Upload photos/videos</label>
-                        <input type="file" id="modal-ambient-file-input" accept="image/*,video/*" multiple onchange="onModalAmbientFilesChosen(event)">
-                    </div>
-                </div>
-            </div>
-
             <div class="field-group">
                 <label>Time Range</label>
                 <div class="time-row">
@@ -500,6 +667,118 @@
                 <div style="display:flex; gap:8px;">
                     <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
                     <button class="btn btn-primary" onclick="applyModal()">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="ambient-modal-backdrop">
+        <div class="avm">
+            <div class="avm-header">
+                <div class="avm-header-left">
+                    <div class="avm-icon">&#128250;</div>
+                    <div>
+                        <h3 id="avm-title">Ambient Visuals</h3>
+                        <div class="avm-subtitle">What loops on your venue screens while this block is running</div>
+                    </div>
+                </div>
+                <div class="avm-header-actions">
+                    <button type="button" class="avm-btn-preview" onclick="avmPreviewCurrent()">&#9654; Preview</button>
+                    <button type="button" class="avm-close" onclick="closeModal()">&times;</button>
+                </div>
+            </div>
+
+            <div class="avm-body">
+                <div class="avm-sidebar">
+                    <button type="button" class="avm-add-visual-btn" onclick="document.getElementById('modal-ambient-file-input').click()">+ Add Visual</button>
+
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Media Library</div>
+                        <div id="avm-media-list"></div>
+                        <div class="upload-btn-row" style="margin-top:8px;">
+                            <label class="upload-label" id="modal-ambient-upload-label" for="modal-ambient-file-input" style="padding:8px; font-size:0.75rem;">+ Upload photos/videos</label>
+                            <input type="file" id="modal-ambient-file-input" accept="image/*,video/*" multiple onchange="onModalAmbientFilesChosen(event)">
+                        </div>
+                    </div>
+
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Live</div>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('queue')"><span class="avm-side-icon">&#128250;</span> Live Queue</button>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('clock')"><span class="avm-side-icon">&#128337;</span> Clock &amp; Date</button>
+                    </div>
+
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Other</div>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('ad')"><span class="avm-side-icon">&#128227;</span> Advertisement</button>
+                    </div>
+                </div>
+
+                <div class="avm-main">
+                    <div class="avm-preview-row">
+                        <div class="avm-preview-stage" id="avm-preview-stage"></div>
+                        <div class="avm-currently">
+                            <div class="avm-currently-label">Currently Previewing</div>
+                            <div class="avm-currently-item">
+                                <div class="avm-currently-thumb" id="avm-currently-thumb"></div>
+                                <div class="avm-currently-meta">
+                                    <div class="name" id="avm-currently-name">&mdash;</div>
+                                    <div class="sub" id="avm-currently-sub">&mdash;</div>
+                                </div>
+                            </div>
+                            <div class="avm-currently-row"><span>Duration</span></div>
+                            <div class="avm-currently-row"><strong id="avm-currently-duration">&mdash;</strong></div>
+                            <div class="avm-currently-nav">
+                                <button type="button" class="avm-nav-btn" onclick="avmStepPreview(-1)">&lsaquo;</button>
+                                <span class="avm-nav-count" id="avm-nav-count">0 / 0</span>
+                                <button type="button" class="avm-nav-btn" onclick="avmStepPreview(1)">&rsaquo;</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="avm-seq-head">
+                            <h4>Visual Sequence</h4>
+                            <span class="avm-seq-meta" id="avm-seq-meta">0 items</span>
+                        </div>
+                        <div class="avm-seq-list" id="avm-seq-list" style="margin-top:10px;"></div>
+                    </div>
+                </div>
+
+                <div class="avm-right" id="avm-settings-panel"></div>
+            </div>
+
+            <div class="avm-footer">
+                <div class="avm-schedule-toggle" onclick="avmToggleSchedule()">
+                    <span class="avm-schedule-icon">&#128197;</span>
+                    <div class="avm-schedule-text">
+                        <div class="t1">Schedule</div>
+                        <div class="t2" id="avm-schedule-summary">Set when this visual block runs</div>
+                    </div>
+                    <span class="avm-schedule-chevron" id="avm-schedule-chevron">&rsaquo;</span>
+                </div>
+                <div class="avm-schedule-panel" id="avm-schedule-panel">
+                    <div class="field-group">
+                        <label>Block Name (optional)</label>
+                        <input type="text" id="ambient-modal-block-name" maxlength="60" placeholder="e.g. Cocktail Hour Visuals">
+                    </div>
+                    <div class="field-group">
+                        <label>Time Range</label>
+                        <div class="time-row">
+                            <div><input type="time" id="ambient-modal-start" onchange="avmUpdateScheduleSummary()"></div>
+                            <div><input type="time" id="ambient-modal-end" onchange="avmUpdateScheduleSummary()"></div>
+                        </div>
+                    </div>
+                    <div class="field-group" style="margin-bottom:0;">
+                        <label>Days</label>
+                        <div class="days-grid" id="ambient-modal-days"></div>
+                    </div>
+                </div>
+                <div class="avm-footer-actions">
+                    <button type="button" class="avm-delete-link" onclick="deleteModalRule()">Delete block</button>
+                    <div style="display:flex; gap:8px;">
+                        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="applyModal()">Save Changes</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1368,41 +1647,42 @@
         // only written back onto the rule itself in applyModal, same as
         // every other field in this modal (Cancel discards it).
         let modalAmbientItems = [];
+        // Which item in modalAmbientItems is currently selected/previewed in
+        // the Ambient Visuals editor - drives the preview stage, the
+        // "Currently Previewing" card, and the right-hand settings panel.
+        let avmSelectedIndex = -1;
 
         function openModal(ruleId) {
             const rule = rules.find(r => r.id === ruleId);
             if (!rule) return;
-            modalRuleId = ruleId;
-            const isAmbient = rule.laneType === 'ambient';
 
-            document.getElementById('modal-title').textContent = isAmbient ? 'Edit Ambient Visuals Block' : 'Edit Block';
-            document.getElementById('modal-block-name').value = rule.name || '';
-            document.getElementById('modal-music-fields').style.display = isAmbient ? 'none' : '';
-            document.getElementById('modal-ambient-fields').style.display = isAmbient ? '' : 'none';
-
-            if (isAmbient) {
-                modalAmbientItems = (rule.items || []).map(it => ({ ...it }));
-                renderModalAmbientFileList();
-            } else {
-                // Only offer playlists of this block's own type - reassigning
-                // a Karaoke block to a crowdDJ playlist (or vice versa) would
-                // move it to a different lane out from under the admin, so
-                // that switch isn't offered here at all.
-                const laneType = playlistType(rule.playlistId);
-                const playlistSelect = document.getElementById('modal-playlist');
-                playlistSelect.innerHTML = playlists.filter(p => playlistType(p.id) === laneType)
-                    .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
-                playlistSelect.value = rule.playlistId;
-
-                const volEnabled = document.getElementById('modal-volume-enabled');
-                volEnabled.checked = typeof rule.volume === 'number';
-                document.getElementById('modal-volume').value = typeof rule.volume === 'number' ? rule.volume : 50;
-                document.getElementById('modal-volume-readout').textContent = (typeof rule.volume === 'number' ? rule.volume : 50) + '%';
-                toggleModalVolume();
-
-                const reqSelect = document.getElementById('modal-requests');
-                reqSelect.value = rule.requestsAllowed === true ? 'open' : rule.requestsAllowed === false ? 'closed' : 'nochange';
+            if (rule.laneType === 'ambient') {
+                openAmbientBlockModal(rule);
+                return;
             }
+
+            modalRuleId = ruleId;
+            document.getElementById('modal-title').textContent = 'Edit Block';
+            document.getElementById('modal-block-name').value = rule.name || '';
+
+            // Only offer playlists of this block's own type - reassigning a
+            // Karaoke block to a crowdDJ playlist (or vice versa) would move
+            // it to a different lane out from under the admin, so that
+            // switch isn't offered here at all.
+            const laneType = playlistType(rule.playlistId);
+            const playlistSelect = document.getElementById('modal-playlist');
+            playlistSelect.innerHTML = playlists.filter(p => playlistType(p.id) === laneType)
+                .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+            playlistSelect.value = rule.playlistId;
+
+            const volEnabled = document.getElementById('modal-volume-enabled');
+            volEnabled.checked = typeof rule.volume === 'number';
+            document.getElementById('modal-volume').value = typeof rule.volume === 'number' ? rule.volume : 50;
+            document.getElementById('modal-volume-readout').textContent = (typeof rule.volume === 'number' ? rule.volume : 50) + '%';
+            toggleModalVolume();
+
+            const reqSelect = document.getElementById('modal-requests');
+            reqSelect.value = rule.requestsAllowed === true ? 'open' : rule.requestsAllowed === false ? 'closed' : 'nochange';
 
             document.getElementById('modal-start').value = rule.start;
             document.getElementById('modal-end').value = rule.end;
@@ -1414,17 +1694,54 @@
 
             document.getElementById('modal-backdrop').classList.add('show');
         }
+
+        function openAmbientBlockModal(rule) {
+            modalRuleId = rule.id;
+            modalAmbientItems = (rule.items || []).map(it => ({ ...it }));
+            avmSelectedIndex = modalAmbientItems.length ? 0 : -1;
+
+            document.getElementById('avm-title').textContent = rule.name || 'Ambient Visuals';
+            document.getElementById('ambient-modal-block-name').value = rule.name || '';
+            document.getElementById('ambient-modal-start').value = rule.start;
+            document.getElementById('ambient-modal-end').value = rule.end;
+
+            const daysWrap = document.getElementById('ambient-modal-days');
+            daysWrap.innerHTML = DAY_NAMES.map((name, idx) => `
+                <button type="button" class="day-toggle${rule.days.includes(idx) ? ' active' : ''}" data-day="${idx}" onclick="this.classList.toggle('active'); avmUpdateScheduleSummary();">${name}</button>
+            `).join('');
+            avmUpdateScheduleSummary();
+            document.getElementById('avm-schedule-panel').classList.remove('open');
+            document.getElementById('avm-schedule-chevron').classList.remove('open');
+
+            renderModalAmbientFileList();
+            document.getElementById('ambient-modal-backdrop').classList.add('show');
+        }
+
+        function avmToggleSchedule() {
+            document.getElementById('avm-schedule-panel').classList.toggle('open');
+            document.getElementById('avm-schedule-chevron').classList.toggle('open');
+        }
+        function avmUpdateScheduleSummary() {
+            const start = document.getElementById('ambient-modal-start').value;
+            const end = document.getElementById('ambient-modal-end').value;
+            const activeDays = [...document.querySelectorAll('#ambient-modal-days .day-toggle.active')].map(b => b.textContent);
+            const el = document.getElementById('avm-schedule-summary');
+            if (!start || !end || activeDays.length === 0) {
+                el.textContent = 'Set when this visual block runs';
+                return;
+            }
+            const dayPart = activeDays.length === 7 ? 'Every day' : activeDays.join(', ');
+            el.textContent = `${dayPart} \u2022 ${start}\u2013${end}`;
+        }
         function toggleModalVolume() {
             const enabled = document.getElementById('modal-volume-enabled').checked;
             document.getElementById('modal-volume').style.opacity = enabled ? '1' : '0.35';
             document.getElementById('modal-volume').disabled = !enabled;
         }
 
-        // Renders the block's ordered display-item list (media files plus
-        // widgets like Live Queue / Clock & Date / Ad), each with its own
-        // duration (videos always play in full, so they get no duration
-        // input), and the "add another file" dropdown, which only offers
-        // files NOT already in this block.
+        // Shared lookup for how a display item should be labeled/iconed -
+        // used by the sidebar, the sequence list, the preview stage and the
+        // settings panel alike.
         function itemDisplayMeta(item) {
             if (item.type === 'photo' || item.type === 'video') {
                 const m = ambientMedia.find(x => x.id === item.mediaId);
@@ -1432,64 +1749,210 @@
             }
             if (item.type === 'queue') return { icon: '&#128250;', label: 'Live Queue' };
             if (item.type === 'clock') return { icon: '&#128337;', label: 'Clock & Date' };
-            if (item.type === 'ad') return { icon: '&#128227;', label: 'Ad (QR + Text)' };
+            if (item.type === 'ad') return { icon: '&#128227;', label: 'Advertisement' };
             return { icon: '&#10067;', label: 'Unknown' };
         }
+        function itemCategoryLabel(item) {
+            if (item.type === 'photo') return 'Photo';
+            if (item.type === 'video') return 'Video';
+            if (item.type === 'ad') return 'Advertisement';
+            return 'Live widget';
+        }
+        function itemDurationText(item) {
+            return item.type === 'video' ? 'Full video' : `${item.durationSec || 8}s`;
+        }
+        function itemThumbHtml(item, cls) {
+            const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
+            if (item.type === 'photo' && media) {
+                return `<img class="${cls}" src="${escapeHtml(media.url)}" alt="">`;
+            }
+            const meta = itemDisplayMeta(item);
+            return `<span class="${cls}">${meta.icon}</span>`;
+        }
+
+        // Re-renders every piece of the Ambient Visuals editor that depends
+        // on modalAmbientItems/avmSelectedIndex - called after any add,
+        // remove, reorder, or selection change.
         function renderModalAmbientFileList() {
-            const list = document.getElementById('modal-ambient-file-list');
+            renderAvmSidebarMedia();
+            renderAvmSequenceList();
+            renderAvmPreview();
+            renderAvmSettingsPanel();
+        }
+
+        function renderAvmSidebarMedia() {
+            const list = document.getElementById('avm-media-list');
+            if (!list) return;
+            if (ambientMedia.length === 0) {
+                list.innerHTML = `<div class="avm-empty-hint-small">No media uploaded yet.</div>`;
+                return;
+            }
+            const usedIds = modalAmbientItems.filter(it => it.mediaId).map(it => it.mediaId);
+            list.innerHTML = ambientMedia.map(m => {
+                const used = usedIds.includes(m.id);
+                const thumb = m.type === 'photo'
+                    ? `<img class="avm-side-thumb" src="${escapeHtml(m.url)}" alt="">`
+                    : `<span class="avm-side-thumb" style="display:flex; align-items:center; justify-content:center;">&#127909;</span>`;
+                return used
+                    ? `<button type="button" class="avm-side-item disabled" disabled title="Already in this block">${thumb}<span class="chip-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.filename)}</span></button>`
+                    : `<button type="button" class="avm-side-item" onclick="addMediaFileToModalBlock('${escapeHtml(m.id)}')">${thumb}<span class="chip-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.filename)}</span></button>`;
+            }).join('');
+        }
+
+        function renderAvmSequenceList() {
+            const list = document.getElementById('avm-seq-list');
+            const meta = document.getElementById('avm-seq-meta');
+            if (modalAmbientItems.length === 0) {
+                list.innerHTML = `<div class="avm-seq-empty">Nothing in this block yet - add a file or widget from the left.</div>`;
+                meta.textContent = '0 items';
+                return;
+            }
+            meta.textContent = `${modalAmbientItems.length} item${modalAmbientItems.length === 1 ? '' : 's'}`;
             list.innerHTML = modalAmbientItems.map((item, idx) => {
-                const meta = itemDisplayMeta(item);
-                const durationField = item.type === 'video'
-                    ? `<span style="color:var(--text-dim); font-size:0.75rem; flex-shrink:0;">Full length</span>`
-                    : `<span style="display:flex; align-items:center; gap:3px; flex-shrink:0;">
-                         <input type="number" min="1" max="120" value="${item.durationSec || 8}"
-                                style="width:48px; background:var(--card-bg); border:1px solid #333; color:white; border-radius:4px; padding:3px 4px; font-size:0.75rem;"
-                                onchange="updateModalItemDuration(${idx}, this.value)">
-                         <span style="font-size:0.72rem; color:var(--text-dim);">sec</span>
-                       </span>`;
-                const adFields = item.type === 'ad' ? `
-                    <div style="display:flex; gap:6px; margin-top:6px; width:100%;">
-                        <input type="text" placeholder="Ad text" value="${escapeHtml(item.adText || '')}"
-                               style="flex:1; background:var(--card-bg); border:1px solid #333; color:white; border-radius:4px; padding:5px 7px; font-size:0.78rem;"
-                               onchange="updateModalAdField(${idx}, 'adText', this.value)">
-                        <input type="text" placeholder="QR link (https://...)" value="${escapeHtml(item.adQrUrl || '')}"
-                               style="flex:1; background:var(--card-bg); border:1px solid #333; color:white; border-radius:4px; padding:5px 7px; font-size:0.78rem;"
-                               onchange="updateModalAdField(${idx}, 'adQrUrl', this.value)">
-                    </div>` : '';
+                const m = itemDisplayMeta(item);
                 return `
-                    <div class="ambient-file-row" style="flex-wrap:wrap;">
-                        <span class="media-type-icon">${meta.icon}</span>
-                        <span class="chip-label">${escapeHtml(meta.label)}</span>
-                        ${durationField}
-                        <div class="ambient-file-row-btns">
-                            <button onclick="moveFileInModalBlock(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move earlier">&uarr;</button>
-                            <button onclick="moveFileInModalBlock(${idx}, 1)" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''} title="Move later">&darr;</button>
-                            <button onclick="removeFileFromModalBlock(${idx})" title="Remove">&times;</button>
+                    <div class="avm-seq-row${idx === avmSelectedIndex ? ' selected' : ''}" onclick="avmSelectItem(${idx})">
+                        <span class="avm-seq-index">${idx + 1}</span>
+                        <span class="avm-seq-drag">&#8942;&#8942;</span>
+                        ${itemThumbHtml(item, 'avm-seq-thumb')}
+                        <div class="avm-seq-info">
+                            <div class="name">${escapeHtml(m.label)}</div>
+                            <div class="type">${itemCategoryLabel(item)}</div>
                         </div>
-                        ${adFields}
+                        <span class="avm-seq-duration">${itemDurationText(item)}</span>
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move earlier">&uarr;</button>
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, 1)" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''} title="Move later">&darr;</button>
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); removeFileFromModalBlock(${idx})" title="Remove">&times;</button>
                     </div>
                 `;
-            }).join('') || `<div style="color:var(--text-dim); font-size:0.8rem;">Nothing in this block yet - add a file or widget below.</div>`;
-
-            const addSelect = document.getElementById('modal-ambient-add-select');
-            const usedMediaIds = modalAmbientItems.filter(it => it.mediaId).map(it => it.mediaId);
-            const available = ambientMedia.filter(m => !usedMediaIds.includes(m.id));
-            addSelect.innerHTML = available.length === 0
-                ? `<option value="">No more files available</option>`
-                : available.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.filename)}</option>`).join('');
+            }).join('');
         }
-        function addFileToModalBlock() {
-            const id = document.getElementById('modal-ambient-add-select').value;
-            if (!id) return;
+
+        function renderAvmPreview() {
+            const stage = document.getElementById('avm-preview-stage');
+            const thumbEl = document.getElementById('avm-currently-thumb');
+            const nameEl = document.getElementById('avm-currently-name');
+            const subEl = document.getElementById('avm-currently-sub');
+            const durEl = document.getElementById('avm-currently-duration');
+            const countEl = document.getElementById('avm-nav-count');
+
+            if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
+                stage.innerHTML = `<span class="avm-preview-placeholder">&#128250;</span>`;
+                thumbEl.innerHTML = '';
+                nameEl.textContent = '\u2014';
+                subEl.textContent = 'Nothing to preview yet';
+                durEl.textContent = '\u2014';
+                countEl.textContent = '0 / 0';
+                return;
+            }
+
+            const idx = Math.max(0, Math.min(avmSelectedIndex, modalAmbientItems.length - 1));
+            const item = modalAmbientItems[idx];
+            const m = itemDisplayMeta(item);
+            const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
+
+            if (item.type === 'photo' && media) {
+                stage.innerHTML = `<img src="${escapeHtml(media.url)}" alt=""><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Photo</div></div>`;
+                thumbEl.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:cover;">`;
+            } else if (item.type === 'video' && media) {
+                stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Video</div></div>`;
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#127909;</span>`;
+            } else {
+                stage.innerHTML = `<span class="avm-preview-placeholder">${m.icon}</span><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">${m.icon}</span>`;
+            }
+
+            nameEl.textContent = m.label;
+            subEl.textContent = itemCategoryLabel(item);
+            durEl.textContent = item.type === 'video' ? 'Full video' : `${item.durationSec || 8} seconds`;
+            countEl.textContent = `${idx + 1} / ${modalAmbientItems.length}`;
+        }
+
+        function renderAvmSettingsPanel() {
+            const panel = document.getElementById('avm-settings-panel');
+            if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
+                panel.innerHTML = `<div class="avm-settings-empty">Select an item in the sequence to edit its settings.</div>`;
+                return;
+            }
+            const idx = Math.max(0, Math.min(avmSelectedIndex, modalAmbientItems.length - 1));
+            const item = modalAmbientItems[idx];
+            const m = itemDisplayMeta(item);
+
+            let fieldsHtml = '';
+            if (item.type === 'video') {
+                fieldsHtml = `<div class="avm-settings-note">Videos always play in full - there's no duration to set.</div>`;
+            } else {
+                fieldsHtml = `
+                    <div class="avm-settings-field">
+                        <label>Duration (seconds)</label>
+                        <input type="number" min="1" max="120" value="${item.durationSec || 8}"
+                               onchange="updateModalItemDuration(${idx}, this.value); renderAvmSequenceList(); renderAvmPreview();">
+                    </div>
+                `;
+            }
+            if (item.type === 'ad') {
+                fieldsHtml += `
+                    <div class="avm-settings-field">
+                        <label>Ad text</label>
+                        <input type="text" placeholder="What should it say?" value="${escapeHtml(item.adText || '')}"
+                               onchange="updateModalAdField(${idx}, 'adText', this.value)">
+                    </div>
+                    <div class="avm-settings-field">
+                        <label>QR link</label>
+                        <input type="text" placeholder="https://..." value="${escapeHtml(item.adQrUrl || '')}"
+                               onchange="updateModalAdField(${idx}, 'adQrUrl', this.value)">
+                    </div>
+                `;
+            }
+
+            panel.innerHTML = `
+                <div class="avm-settings-head">
+                    ${itemThumbHtml(item, 'avm-settings-thumb')}
+                    <div>
+                        <div class="name">${escapeHtml(m.label)}</div>
+                        <div class="sub">${itemCategoryLabel(item)}</div>
+                    </div>
+                </div>
+                <div class="avm-settings-section-label">Settings</div>
+                ${fieldsHtml}
+                <button type="button" class="avm-settings-remove" onclick="removeFileFromModalBlock(${idx})">Remove from sequence</button>
+            `;
+        }
+
+        function avmSelectItem(idx) {
+            avmSelectedIndex = idx;
+            renderModalAmbientFileList();
+        }
+        function avmStepPreview(dir) {
+            if (modalAmbientItems.length === 0) return;
+            avmSelectedIndex = (avmSelectedIndex < 0 ? 0 : avmSelectedIndex + dir + modalAmbientItems.length) % modalAmbientItems.length;
+            renderModalAmbientFileList();
+        }
+        function avmPreviewCurrent() {
+            if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
+                return showToast('Add something to the sequence first.', 'error');
+            }
+            const item = modalAmbientItems[avmSelectedIndex];
+            const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
+            if (media) {
+                window.open(media.url, '_blank', 'noopener');
+            } else {
+                showToast("Live widgets don't have a separate preview - what's shown here is what plays on the venue screen.", 'error');
+            }
+        }
+
+        function addMediaFileToModalBlock(id) {
             const media = ambientMedia.find(m => m.id === id);
             if (!media) return;
             modalAmbientItems.push({ id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: id, durationSec: 8 });
+            avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
         function addWidgetToModalBlock(kind) {
             const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10 };
             if (kind === 'ad') { item.adText = ''; item.adQrUrl = ''; }
             modalAmbientItems.push(item);
+            avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
         function updateModalItemDuration(idx, val) {
@@ -1502,19 +1965,25 @@
         }
         function removeFileFromModalBlock(idx) {
             modalAmbientItems.splice(idx, 1);
+            if (modalAmbientItems.length === 0) {
+                avmSelectedIndex = -1;
+            } else if (avmSelectedIndex >= idx) {
+                avmSelectedIndex = Math.max(0, Math.min(avmSelectedIndex - (avmSelectedIndex > idx ? 1 : 0), modalAmbientItems.length - 1));
+            }
             renderModalAmbientFileList();
         }
         function moveFileInModalBlock(idx, dir) {
             const target = idx + dir;
             if (target < 0 || target >= modalAmbientItems.length) return;
             [modalAmbientItems[idx], modalAmbientItems[target]] = [modalAmbientItems[target], modalAmbientItems[idx]];
+            if (avmSelectedIndex === idx) avmSelectedIndex = target;
+            else if (avmSelectedIndex === target) avmSelectedIndex = idx;
             renderModalAmbientFileList();
         }
 
         // Lets an admin upload new photos/videos without leaving the block
-        // editor - uploads land in the shared library (same as the palette's
-        // upload button) and the "add another file" dropdown above picks
-        // them up immediately.
+        // editor - uploads land in the shared library (same as the
+        // palette's upload button) and show up in the sidebar immediately.
         async function onModalAmbientFilesChosen(e) {
             const files = [...e.target.files];
             e.target.value = '';
@@ -1539,18 +2008,26 @@
 
         function closeModal() {
             document.getElementById('modal-backdrop').classList.remove('show');
+            const ambientBackdrop = document.getElementById('ambient-modal-backdrop');
+            if (ambientBackdrop) ambientBackdrop.classList.remove('show');
             modalRuleId = null;
             modalAmbientItems = [];
+            avmSelectedIndex = -1;
         }
         function applyModal() {
             const rule = rules.find(r => r.id === modalRuleId);
             if (!rule) return closeModal();
+            const isAmbient = rule.laneType === 'ambient';
+            const nameId = isAmbient ? 'ambient-modal-block-name' : 'modal-block-name';
+            const startId = isAmbient ? 'ambient-modal-start' : 'modal-start';
+            const endId = isAmbient ? 'ambient-modal-end' : 'modal-end';
+            const daysId = isAmbient ? 'ambient-modal-days' : 'modal-days';
 
-            const start = document.getElementById('modal-start').value;
-            const end = document.getElementById('modal-end').value;
+            const start = document.getElementById(startId).value;
+            const end = document.getElementById(endId).value;
             if (!start || !end) return showToast('Set both a start and end time.', 'error');
 
-            const days = [...document.querySelectorAll('#modal-days .day-toggle.active')].map(b => parseInt(b.dataset.day, 10));
+            const days = [...document.querySelectorAll(`#${daysId} .day-toggle.active`)].map(b => parseInt(b.dataset.day, 10));
             if (days.length === 0) return showToast('Pick at least one day.', 'error');
 
             rule.start = start;
@@ -1561,18 +2038,18 @@
             // (playlist label / first ambient file) rather than storing a
             // blank string, so blockTitleFor's fallback logic keeps working
             // for anyone who never bothers naming a block.
-            const nameVal = document.getElementById('modal-block-name').value.trim().slice(0, 60);
+            const nameVal = document.getElementById(nameId).value.trim().slice(0, 60);
             if (nameVal) {
                 rule.name = nameVal;
             } else {
                 delete rule.name;
             }
 
-            if (rule.laneType === 'ambient') {
+            if (isAmbient) {
                 if (modalAmbientItems.length === 0) return showToast('Add at least one file or widget to this block.', 'error');
                 for (const it of modalAmbientItems) {
                     if (it.type === 'ad' && !(it.adText || '').trim() && !(it.adQrUrl || '').trim()) {
-                        return showToast('Give each Ad item some text or a QR link.', 'error');
+                        return showToast('Give each Advertisement item some text or a QR link.', 'error');
                     }
                 }
                 rule.items = modalAmbientItems.map(it => ({ ...it }));
