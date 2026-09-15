@@ -443,6 +443,11 @@
         <div class="modal">
             <h3 id="modal-title">Edit Block</h3>
 
+            <div class="field-group">
+                <label>Block Name (optional)</label>
+                <input type="text" id="modal-block-name" maxlength="60" placeholder="e.g. Happy Hour, Sunset Set...">
+            </div>
+
             <div id="modal-music-fields">
                 <div class="field-group">
                     <label>Playlist</label>
@@ -1090,6 +1095,7 @@
         }
 
         function blockTitleFor(rule) {
+            if (typeof rule.name === 'string' && rule.name.trim()) return rule.name.trim();
             if (rule.laneType === 'ambient') {
                 const first = ambientMedia.find(m => m.id === rule.mediaIds[0]);
                 const firstName = first ? first.filename : 'Untitled';
@@ -1326,6 +1332,7 @@
             const isAmbient = rule.laneType === 'ambient';
 
             document.getElementById('modal-title').textContent = isAmbient ? 'Edit Ambient Visuals Block' : 'Edit Block';
+            document.getElementById('modal-block-name').value = rule.name || '';
             document.getElementById('modal-music-fields').style.display = isAmbient ? 'none' : '';
             document.getElementById('modal-ambient-fields').style.display = isAmbient ? '' : 'none';
 
@@ -1432,6 +1439,17 @@
             rule.start = start;
             rule.end = end;
             rule.days = days;
+
+            // An empty name falls back to the auto-generated title
+            // (playlist label / first ambient file) rather than storing a
+            // blank string, so blockTitleFor's fallback logic keeps working
+            // for anyone who never bothers naming a block.
+            const nameVal = document.getElementById('modal-block-name').value.trim().slice(0, 60);
+            if (nameVal) {
+                rule.name = nameVal;
+            } else {
+                delete rule.name;
+            }
 
             if (rule.laneType === 'ambient') {
                 if (modalAmbientMediaIds.length === 0) return showToast('Add at least one file to this block.', 'error');
