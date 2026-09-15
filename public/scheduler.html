@@ -412,10 +412,8 @@
                         <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addPlaylist()">+ Add Playlist</button>
                     </div>
                     <div id="new-ambient-fields" style="display:none;">
-                        <div class="upload-btn-row" style="margin-top:0;">
-                            <label class="upload-label" id="ambient-upload-label" for="ambient-file-input">+ Upload photos/videos</label>
-                            <input type="file" id="ambient-file-input" accept="image/*,video/*" multiple onchange="onAmbientFilesChosen(event)">
-                        </div>
+                        <button class="btn btn-ghost btn-small" style="width:100%;" onclick="openAddVisualModal()">+ Add Visual</button>
+                        <input type="file" id="ambient-file-input" accept="image/*,video/*" multiple style="display:none;" onchange="onAmbientFilesChosen(event)">
                     </div>
                 </div>
             </div>
@@ -503,6 +501,23 @@
                     <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
                     <button class="btn btn-primary" onclick="applyModal()">Apply</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-visual-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10001; align-items:center; justify-content:center;">
+        <div style="background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; padding:20px; width:90%; max-width:320px;">
+            <h3 style="margin:0 0 12px;">Add Visual</h3>
+            <div class="field-group">
+                <label>Type</label>
+                <select id="add-visual-type" style="width:100%; background:var(--card-bg); border:1px solid #333; color:white; padding:8px 10px; border-radius:6px;">
+                    <option value="photo">Photo</option>
+                    <option value="video">Video</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:14px;">
+                <button class="btn btn-ghost" style="flex:1;" onclick="closeAddVisualModal()">Cancel</button>
+                <button class="btn btn-primary" style="flex:1;" onclick="confirmAddVisual()">Choose File(s)</button>
             </div>
         </div>
     </div>
@@ -840,6 +855,22 @@
         }
 
         // ---------- Library panel (playlists + ambient visuals, merged) ----------
+        // "+ Add Visual" opens this small popup instead of uploading
+        // straight away - the dropdown picks photo vs video, then the
+        // actual file picker opens on confirm.
+        function openAddVisualModal() {
+            document.getElementById('add-visual-backdrop').style.display = 'flex';
+        }
+        function closeAddVisualModal() {
+            document.getElementById('add-visual-backdrop').style.display = 'none';
+        }
+        function confirmAddVisual() {
+            const type = document.getElementById('add-visual-type').value;
+            document.getElementById('ambient-file-input').accept = type === 'video' ? 'video/*' : 'image/*';
+            closeAddVisualModal();
+            document.getElementById('ambient-file-input').click();
+        }
+
         function onNewItemTypeChange() {
             const type = document.getElementById('new-item-type').value;
             document.getElementById('new-music-fields').style.display = type === 'ambient' ? 'none' : '';
@@ -912,8 +943,7 @@
             const files = [...e.target.files];
             e.target.value = ''; // lets the same file be picked again later
             if (files.length === 0) return;
-            const label = document.getElementById('ambient-upload-label');
-            label.textContent = `Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`;
+            showToast(`Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`);
             let failures = 0;
             for (const file of files) {
                 try {
@@ -923,7 +953,6 @@
                     console.error('Ambient upload failed:', err);
                 }
             }
-            label.textContent = '+ Upload photos/videos';
             if (failures > 0) {
                 showToast(`${failures} file${failures === 1 ? '' : 's'} failed to upload. Try again.`, 'error');
             }
