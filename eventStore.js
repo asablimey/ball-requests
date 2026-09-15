@@ -224,10 +224,26 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         // server.js). `playlists` is the small named palette an admin builds
         // up on the Scheduler page (label + Spotify playlist URI); `rules`
         // are the actual timeline blocks, each referencing a playlist by id.
+        //
+        // Ambient Visuals rules are a second, independent kind of block on
+        // the same `rules` array (see `laneType` below) - they don't play
+        // music at all, so they never reference `playlists`/`playlistId`.
+        // Instead each one directly owns an ordered list of media ids
+        // (pointing into `ambientMedia` below) plus how long to hold each
+        // photo on screen. They're free to run at the same time as a
+        // crowdDJ/Karaoke block since visuals and audio aren't competing
+        // for the same output - see the separate per-lane overlap check in
+        // the POST /api/admin/scheduler route in server.js.
         musicScheduler: {
             enabled: false,
-            playlists: [], // { id, label, uri }
-            rules: [],     // { id, playlistId, days: [0-6], start: "HH:MM", end: "HH:MM", volume: null|0-100, requestsAllowed: null|boolean }
+            playlists: [], // { id, label, uri, type: 'crowddj'|'karaoke' }
+            // { id, laneType, days: [0-6], start: "HH:MM", end: "HH:MM",
+            //   -- music blocks (laneType 'crowddj'/'karaoke', or omitted
+            //      for anything saved before laneType existed) --
+            //   playlistId, volume: null|0-100, requestsAllowed: null|boolean,
+            //   -- ambient blocks (laneType 'ambient') --
+            //   mediaIds: [ambientMedia id, ...], photoDurationSec: number }
+            rules: [],
             // IANA zone (e.g. "Pacific/Auckland") that every rule's HH:MM is
             // read in - set from the DJ's browser the first time they save
             // the schedule (see scheduler.html). Null until then, which
@@ -235,6 +251,14 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             // time for (almost certainly wrong for the actual venue).
             timezone: null
         },
+
+        // Media library backing Ambient Visuals blocks - every photo/video
+        // an admin has ever uploaded for this event, regardless of which (if
+        // any) block currently uses it. Uploaded directly from the browser
+        // to Cloudinary (see the ambient-media routes in server.js), so
+        // this only ever stores the resulting metadata, never file bytes.
+        // { id, url, filename, type: 'photo'|'video', createdAt }
+        ambientMedia: [],
 
         // Runtime-only bookkeeping for the scheduler - not meant to be
         // edited by hand, just persisted so a server restart mid-transition
@@ -347,6 +371,12 @@ function ensureSchedulerDefaults(event) {
     }
     if (!event.schedulerRuntime || typeof event.schedulerRuntime !== 'object') {
         event.schedulerRuntime = { activeRuleId: null, pendingSwitchUri: null, pendingSwitchLabel: null };
+    }
+    // Events saved before Ambient Visuals existed won't have this at all -
+    // back it in as an empty library rather than making every ambient-media
+    // route null-check event.ambientMedia before touching it.
+    if (!Array.isArray(event.ambientMedia)) {
+        event.ambientMedia = [];
     }
     // Events saved before the fallback/scheduled split existed only have
     // lastSwitchedPlaylist. Seed fallbackPlaylistUri from it once so a gap
