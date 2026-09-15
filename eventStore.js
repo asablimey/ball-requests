@@ -247,7 +247,7 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             //      for anything saved before laneType existed) --
             //   playlistId, volume: null|0-100, requestsAllowed: null|boolean,
             //   -- ambient blocks (laneType 'ambient') --
-            //   mediaIds: [ambientMedia id, ...], photoDurationSec: number }
+            //   items: [{ id, type: 'photo'|'video'|'queue'|'clock'|'ad', mediaId?, durationSec?, adText?, adQrUrl? }] }
             rules: [],
             // IANA zone (e.g. "Pacific/Auckland") that every rule's HH:MM is
             // read in - set from the DJ's browser the first time they save
