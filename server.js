@@ -725,6 +725,8 @@ const SONG_REQUEST_GAP = 20;
 // town can't request. Events created without a venue pin (venueLatitude/
 // venueLongitude are both null - see new-event.html's optional map picker)
 // have nothing to check distance against, so they're never gated by this.
+// This is only the fallback default now - each event can override it via
+// systemConfigs.locationRadiusMeters on the admin's Location settings tab.
 const REQUEST_RADIUS_METERS = 300;
 
 function haversineMeters(lat1, lng1, lat2, lng2) {
@@ -1489,7 +1491,8 @@ function buildRequestHandler(isKiosk) {
                 return res.status(403).json({ error: "Location needed to request a song here.", locationRequired: true });
             }
             const distanceMeters = haversineMeters(lat, lng, event.venueLatitude, event.venueLongitude);
-            if (distanceMeters > REQUEST_RADIUS_METERS) {
+            const radiusMeters = event.systemConfigs.locationRadiusMeters || REQUEST_RADIUS_METERS;
+            if (distanceMeters > radiusMeters) {
                 return res.status(403).json({
                     error: `You're too far from the venue to request a song here (${Math.round(distanceMeters / 1000 * 10) / 10}km away).`,
                     locationTooFar: true,
@@ -1715,6 +1718,7 @@ app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) 
         // keeping the guest UI in sync with the actual rule in effect.
         venueLatitude: event.systemConfigs.locationLockEnabled !== false ? event.venueLatitude : null,
         venueLongitude: event.systemConfigs.locationLockEnabled !== false ? event.venueLongitude : null,
+        venueRadiusMeters: event.systemConfigs.locationRadiusMeters || REQUEST_RADIUS_METERS,
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
@@ -1771,6 +1775,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         guestSpotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
         spotifyAutoQueueEnabled: event.systemConfigs.spotifyAutoQueueEnabled,
         locationLockEnabled: event.systemConfigs.locationLockEnabled !== false,
+        locationRadiusMeters: event.systemConfigs.locationRadiusMeters || REQUEST_RADIUS_METERS,
         djSpotifyQueueConnected: !!event.spotify.djRefreshToken,
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         fallbackPlaylistUri: event.systemConfigs.fallbackPlaylistUri || '',
@@ -2268,6 +2273,20 @@ app.post('/e/:slug/api/admin/toggle-location-lock', (req, res) => {
     if (typeof enabled === 'boolean') req.event.systemConfigs.locationLockEnabled = enabled;
     events.scheduleSave(req.event.slug);
     res.json({ success: true });
+});
+
+// Lets an admin loosen/tighten the check-in radius per event instead of
+// every event being stuck with the hardcoded REQUEST_RADIUS_METERS default.
+// Clamped to a sane range - under 10m is unusable given normal GPS drift,
+// and over 5km stops meaning anything as a "you're at the venue" check.
+app.post('/e/:slug/api/admin/location-radius', (req, res) => {
+    const meters = parseInt(req.body.meters, 10);
+    if (!Number.isInteger(meters) || meters < 10 || meters > 5000) {
+        return res.status(400).json({ error: 'Distance must be between 10 and 5000 meters.' });
+    }
+    req.event.systemConfigs.locationRadiusMeters = meters;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, locationRadiusMeters: meters });
 });
 
 app.post('/e/:slug/api/admin/kiosk/toggle', (req, res) => {
