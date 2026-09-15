@@ -1993,7 +1993,7 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
         pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel,
         // The Ambient Visuals media library - not runtime state like the
         // fields above, but the scheduler page needs it up front to render
-        // the palette and resolve each ambient block's mediaIds to actual
+        // the palette and resolve each ambient block's items to actual
         // files, so it rides along with this same GET rather than a
         // separate round-trip.
         ambientMedia: event.ambientMedia
@@ -2053,18 +2053,39 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 60) : null;
 
         if (r.laneType === 'ambient') {
-            // Dedupe while preserving the admin's chosen order (that order
-            // is exactly the shuffle-source ordering the display side will
-            // read), and drop any id that doesn't point at a real,
-            // still-existing library entry - e.g. a file removed from the
-            // library after this block was built.
-            const mediaIds = Array.isArray(r.mediaIds)
-                ? [...new Set(r.mediaIds.filter(mid => typeof mid === 'string' && ambientMediaIds.has(mid)))]
-                : [];
-            if (mediaIds.length === 0) return null; // a block with nothing to show isn't a valid block
-            const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
-                ? r.photoDurationSec : 8;
-            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec, ...(name ? { name } : {}) };
+            // Each display item plays in the order given here - photos and
+            // the "queue"/"clock"/"ad" widgets hold for their own
+            // durationSec, videos always play to completion. Anything that
+            // doesn't validate (bad type, dangling mediaId, an ad with
+            // nothing to show) is dropped rather than failing the whole
+            // block, same spirit as the rest of this validator.
+            const rawItems = Array.isArray(r.items) ? r.items : [];
+            const items = rawItems.map(it => {
+                if (!it || typeof it !== 'object') return null;
+                const itemId = typeof it.id === 'string' && it.id ? it.id : crypto.randomUUID();
+                const type = ['photo', 'video', 'queue', 'clock', 'ad'].includes(it.type) ? it.type : null;
+                if (!type) return null;
+                const durationSec = Number.isInteger(it.durationSec) && it.durationSec >= 1 && it.durationSec <= 120
+                    ? it.durationSec : 8;
+                if (type === 'photo' || type === 'video') {
+                    if (typeof it.mediaId !== 'string' || !ambientMediaIds.has(it.mediaId)) return null;
+                    // Videos play in full - durationSec is meaningless for
+                    // them, so it isn't even stored.
+                    return type === 'photo'
+                        ? { id: itemId, type, mediaId: it.mediaId, durationSec }
+                        : { id: itemId, type, mediaId: it.mediaId };
+                }
+                if (type === 'ad') {
+                    const adText = typeof it.adText === 'string' ? it.adText.trim().slice(0, 200) : '';
+                    const adQrUrl = typeof it.adQrUrl === 'string' ? it.adQrUrl.trim().slice(0, 500) : '';
+                    if (!adText && !adQrUrl) return null; // an ad with nothing to show isn't a valid item
+                    return { id: itemId, type, adText, adQrUrl, durationSec };
+                }
+                // 'queue' or 'clock' - no extra fields, they're rendered live
+                return { id: itemId, type, durationSec };
+            }).filter(Boolean).slice(0, 100);
+            if (items.length === 0) return null; // a block with nothing to show isn't a valid block
+            return { id, laneType: 'ambient', days, start: r.start, end: r.end, items, ...(name ? { name } : {}) };
         }
 
         if (!playlistIds.has(r.playlistId)) return null;
@@ -2158,8 +2179,8 @@ app.post('/e/:slug/api/admin/ambient-media', (req, res) => {
 });
 
 // Removes a file from the library and strips it out of every block that
-// referenced it, rather than leaving a dangling id sitting in mediaIds -
-// the next schedule save would drop it anyway (see the mediaIds filter in
+// referenced it, rather than leaving a dangling id sitting in a block's
+// items - the next schedule save would drop it anyway (see the items filter in
 // POST /api/admin/scheduler), but doing it here too means a block doesn't
 // silently lose a file only the next time someone happens to hit Save.
 // The asset itself is left alone in Cloudinary (deleting it there requires
@@ -2176,16 +2197,16 @@ app.delete('/e/:slug/api/admin/ambient-media/:mediaId', (req, res) => {
     }
     const rules = event.musicScheduler?.rules || [];
     for (const rule of rules) {
-        if (rule.laneType === 'ambient' && Array.isArray(rule.mediaIds)) {
-            rule.mediaIds = rule.mediaIds.filter(id => id !== mediaId);
+        if (rule.laneType === 'ambient' && Array.isArray(rule.items)) {
+            rule.items = rule.items.filter(it => it.mediaId !== mediaId);
         }
     }
-    // A block that's had every one of its files removed this way is no
-    // longer valid (see the "mediaIds.length === 0 -> drop the rule" check
+    // A block that's had every one of its items removed this way is no
+    // longer valid (see the "items.length === 0 -> drop the rule" check
     // in POST /api/admin/scheduler) - drop it here too instead of leaving
     // an empty, unreachable block sitting in the timetable until the next
     // save happens to clean it up.
-    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.mediaIds.length > 0);
+    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.items.length > 0);
     events.scheduleSave(event.slug);
     res.json({ success: true, ambientMedia: event.ambientMedia, rules: event.musicScheduler.rules });
 });
@@ -2804,8 +2825,9 @@ app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
 
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
 // lane (kiosk, a standalone signage screen, etc.) polls this for "what
-// should be on screen right now". Resolves the active block's mediaIds
-// into full {id, url, filename, type} records here so the display side
+// should be on screen right now". Resolves the active block's items into
+// full records here (photo/video items get their {url, filename} looked up;
+// queue/clock/ad items are already self-contained) so the display side
 // never has to also fetch/hold the whole library just to look up a few
 // ids. Returns active:false whenever the scheduler is off or no ambient
 // block covers this moment - callers should hold whatever was last showing
@@ -2820,15 +2842,25 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
         return res.json({ active: false });
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
-    const media = rule.mediaIds.map(id => byId.get(id)).filter(Boolean);
-    if (media.length === 0) {
+    const items = (rule.items || []).map(it => {
+        if (it.type === 'photo' || it.type === 'video') {
+            const media = byId.get(it.mediaId);
+            if (!media) return null;
+            return { id: it.id, type: it.type, url: media.url, filename: media.filename, durationSec: it.durationSec || 8 };
+        }
+        if (it.type === 'ad') {
+            return { id: it.id, type: 'ad', adText: it.adText || '', adQrUrl: it.adQrUrl || '', durationSec: it.durationSec || 8 };
+        }
+        // 'queue' / 'clock' - rendered live from other endpoints, nothing to resolve
+        return { id: it.id, type: it.type, durationSec: it.durationSec || 8 };
+    }).filter(Boolean);
+    if (items.length === 0) {
         return res.json({ active: false });
     }
     res.json({
         active: true,
         ruleId: rule.id,
-        photoDurationSec: rule.photoDurationSec || 8,
-        media
+        items
     });
 });
 
