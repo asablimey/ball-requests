@@ -41,6 +41,32 @@
             font-family: 'Khula', sans-serif; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
         }
 
+        /* ---------- Ambient widget slides: clock, live queue, ad ---------- */
+        .amb-clock {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; background: var(--spotify-black); color: white;
+        }
+        .amb-clock-time {
+            font-family: 'Khula', sans-serif; font-weight: 700; font-size: 9rem; letter-spacing: -2px; line-height: 1;
+        }
+        .amb-clock-date { color: #a7a7a7; font-size: 1.6rem; margin-top: 18px; }
+
+        .amb-queue {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            color: white; padding: 40px 56px; background: var(--spotify-black);
+        }
+        .amb-queue .qv-header { text-align: center; margin-bottom: 24px; }
+
+        .amb-ad {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            gap: 48px; background: var(--spotify-black); color: white; padding: 60px;
+        }
+        .amb-ad-qr { width: 320px; height: 320px; border-radius: 16px; background: white; padding: 16px; flex-shrink: 0; }
+        .amb-ad-qr img { width: 100%; height: 100%; object-fit: contain; }
+        .amb-ad-text {
+            font-family: 'Khula', sans-serif; font-weight: 700; font-size: 2.6rem; max-width: 640px; line-height: 1.3;
+        }
+
         /* ---------- Queue view: fallback "up next" board ---------- */
         #queue-view {
             position: fixed; inset: 0; display: none; flex-direction: column;
@@ -156,8 +182,9 @@
         /* =========================================================
            Ambient Visuals slideshow
            - Polls /api/ambient-visuals. When active, cycles through the
-             resolved media list: photos hold for photoDurationSec, videos
-             play to completion, then it advances to the next item and loops.
+             resolved item list: photos/queue/clock/ad hold for their own
+             durationSec, videos play to completion, then it advances to the
+             next item and loops.
            - A single active:false reply is NOT treated as "off" - the
              scheduler API deliberately returns that for any brief gap
              between blocks, and blanking the screen on every gap would be
@@ -165,13 +192,21 @@
              after a few consecutive inactive polls does this fall back to
              the queue view.
            ========================================================= */
-        let ambientMedia = [];
+        let ambientItems = [];
         let ambientRuleId = null;
-        let ambientPhotoDurationSec = 8;
         let ambientIndex = 0;
         let ambientAdvanceTimer = null;
         let ambientInactiveStreak = 0;
         const AMBIENT_INACTIVE_TOLERANCE = 2; // consecutive misses before falling back
+
+        // Anything a widget slide (clock/queue) sets up while it's on
+        // screen - a ticking clock or a refreshing queue poll - gets torn
+        // down the moment the slide changes so it doesn't keep running
+        // (and fighting the next slide's own timers) underneath.
+        let slideCleanup = null;
+        function clearSlideCleanup() {
+            if (slideCleanup) { slideCleanup(); slideCleanup = null; }
+        }
 
         let activeLayer = 'a';
         function layerEl(which) { return document.getElementById(`ambient-layer-${which}`); }
@@ -185,16 +220,128 @@
             if (ambientAdvanceTimer) { clearTimeout(ambientAdvanceTimer); ambientAdvanceTimer = null; }
         }
 
+        function renderClockInto(el) {
+            el.innerHTML = `
+                <div class="amb-clock">
+                    <div class="amb-clock-time" id="amb-clock-time"></div>
+                    <div class="amb-clock-date" id="amb-clock-date"></div>
+                </div>`;
+            const timeEl = el.querySelector('#amb-clock-time');
+            const dateEl = el.querySelector('#amb-clock-date');
+            const tick = () => {
+                const now = new Date();
+                timeEl.textContent = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            };
+            tick();
+            const intervalId = setInterval(tick, 1000);
+            return () => clearInterval(intervalId);
+        }
+
+        function renderQueueInto(el) {
+            el.innerHTML = `
+                <div class="amb-queue">
+                    <div class="qv-header">
+                        <h1 class="qv-event-name" id="amb-qv-event-name">Now Playing</h1>
+                        <div class="qv-venue-name" id="amb-qv-venue-name"></div>
+                    </div>
+                    <div class="qv-now-playing" id="amb-qv-now-playing" style="display:none;">
+                        <img class="qv-artwork" id="amb-qv-artwork" src="" alt="">
+                        <div class="qv-np-text">
+                            <p class="qv-np-label"><span class="qv-live-dot" id="amb-qv-live-dot"></span> Now Playing</p>
+                            <p class="qv-np-title" id="amb-qv-np-title"></p>
+                            <p class="qv-np-artist" id="amb-qv-np-artist"></p>
+                        </div>
+                    </div>
+                    <div class="qv-upnext-label">Up Next</div>
+                    <div class="qv-list" id="amb-qv-list"></div>
+                </div>`;
+
+            const refresh = async () => {
+                try {
+                    const [kioskRes, npRes] = await Promise.all([
+                        fetch(eventUrl('/kiosk-data')),
+                        fetch(eventUrl('/api/now-playing'))
+                    ]);
+                    if (kioskRes.ok) {
+                        const data = await kioskRes.json();
+                        const nameEl = el.querySelector('#amb-qv-event-name');
+                        const venueEl = el.querySelector('#amb-qv-venue-name');
+                        if (nameEl) nameEl.innerText = data.eventName || 'Now Playing';
+                        if (venueEl) venueEl.innerText = data.venueName || '';
+                        const list = el.querySelector('#amb-qv-list');
+                        const top = (data.queue || []).slice(0, 8);
+                        if (list) {
+                            list.innerHTML = top.length === 0
+                                ? '<div class="qv-empty">No requests queued right now</div>'
+                                : top.map((song, idx) => `
+                                    <div class="qv-row">
+                                        <div class="qv-row-rank">${idx + 1}</div>
+                                        <img src="${escapeHtml(song.artwork || '')}" alt="">
+                                        <div class="qv-row-text">
+                                            <div class="qv-row-title">${escapeHtml(song.title)}</div>
+                                            <div class="qv-row-artist">${escapeHtml(song.artist)}</div>
+                                        </div>
+                                        <div class="qv-row-votes">+${(song.ups || 0) - (song.downs || 0)}</div>
+                                    </div>
+                                `).join('');
+                        }
+                    }
+                    if (npRes.ok) {
+                        const np = await npRes.json();
+                        const card = el.querySelector('#amb-qv-now-playing');
+                        if (card) {
+                            if (np && np.connected && np.title) {
+                                card.style.display = 'flex';
+                                el.querySelector('#amb-qv-artwork').src = np.artwork || '';
+                                el.querySelector('#amb-qv-np-title').innerText = np.title;
+                                el.querySelector('#amb-qv-np-artist').innerText = np.artist || '';
+                                el.querySelector('#amb-qv-live-dot').classList.toggle('is-paused', !np.isPlaying);
+                            } else {
+                                card.style.display = 'none';
+                            }
+                        }
+                    }
+                } catch (e) { /* keep showing whatever's already there */ }
+            };
+            refresh();
+            const intervalId = setInterval(refresh, 4000);
+            return () => clearInterval(intervalId);
+        }
+
+        function renderAdInto(el, item) {
+            const qrSrc = item.adQrUrl
+                ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(item.adQrUrl)}`
+                : '';
+            el.innerHTML = `
+                <div class="amb-ad">
+                    ${qrSrc ? `<div class="amb-ad-qr"><img src="${escapeHtml(qrSrc)}" alt="QR code"></div>` : ''}
+                    ${item.adText ? `<div class="amb-ad-text">${escapeHtml(item.adText)}</div>` : ''}
+                </div>`;
+            return null;
+        }
+
         function renderAmbientSlide() {
-            if (ambientMedia.length === 0) return;
-            const item = ambientMedia[ambientIndex % ambientMedia.length];
+            if (ambientItems.length === 0) return;
+            const item = ambientItems[ambientIndex % ambientItems.length];
             const incoming = activeLayer === 'a' ? 'b' : 'a';
             const outgoing = activeLayer;
             const incomingEl = layerEl(incoming);
 
-            incomingEl.innerHTML = item.type === 'video'
-                ? `<video src="${escapeHtml(item.url)}" autoplay muted playsinline></video>`
-                : `<img src="${escapeHtml(item.url)}" alt="">`;
+            clearAmbientAdvanceTimer();
+            clearSlideCleanup();
+
+            if (item.type === 'video') {
+                incomingEl.innerHTML = `<video src="${escapeHtml(item.url)}" autoplay muted playsinline></video>`;
+            } else if (item.type === 'photo') {
+                incomingEl.innerHTML = `<img src="${escapeHtml(item.url)}" alt="">`;
+            } else if (item.type === 'clock') {
+                slideCleanup = renderClockInto(incomingEl);
+            } else if (item.type === 'queue') {
+                slideCleanup = renderQueueInto(incomingEl);
+            } else if (item.type === 'ad') {
+                renderAdInto(incomingEl, item);
+            }
 
             // Crossfade: bring the new layer in, then drop the old one out.
             requestAnimationFrame(() => {
@@ -203,7 +350,6 @@
             });
             activeLayer = incoming;
 
-            clearAmbientAdvanceTimer();
             if (item.type === 'video') {
                 const videoEl = incomingEl.querySelector('video');
                 videoEl.onended = advanceAmbientSlide;
@@ -211,12 +357,12 @@
                 // file, stalled network) - don't let the slideshow get stuck.
                 ambientAdvanceTimer = setTimeout(advanceAmbientSlide, 90000);
             } else {
-                ambientAdvanceTimer = setTimeout(advanceAmbientSlide, ambientPhotoDurationSec * 1000);
+                ambientAdvanceTimer = setTimeout(advanceAmbientSlide, (item.durationSec || 8) * 1000);
             }
         }
 
         function advanceAmbientSlide() {
-            ambientIndex = (ambientIndex + 1) % ambientMedia.length;
+            ambientIndex = (ambientIndex + 1) % ambientItems.length;
             renderAmbientSlide();
         }
 
@@ -230,7 +376,8 @@
                     ambientInactiveStreak++;
                     if (ambientInactiveStreak >= AMBIENT_INACTIVE_TOLERANCE) {
                         clearAmbientAdvanceTimer();
-                        ambientMedia = [];
+                        clearSlideCleanup();
+                        ambientItems = [];
                         ambientRuleId = null;
                         showView('queue');
                     }
@@ -240,18 +387,17 @@
 
                 const ruleChanged = data.ruleId !== ambientRuleId;
                 ambientRuleId = data.ruleId;
-                ambientPhotoDurationSec = data.photoDurationSec || 8;
 
-                if (ruleChanged || ambientMedia.length === 0) {
-                    ambientMedia = data.media || [];
+                if (ruleChanged || ambientItems.length === 0) {
+                    ambientItems = data.items || [];
                     ambientIndex = 0;
                     showView('ambient');
                     renderAmbientSlide();
                 } else {
-                    // Same block still active - just keep its media list fresh
+                    // Same block still active - just keep its item list fresh
                     // in case a file was added/removed, without restarting
                     // whatever is currently on screen.
-                    ambientMedia = data.media || [];
+                    ambientItems = data.items || [];
                     showView('ambient');
                 }
             } catch (e) { /* keep showing whatever's already on screen */ }
