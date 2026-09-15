@@ -969,6 +969,9 @@
                     <button type="button" id="settings-nav-access" class="settings-nav-item" onclick="switchSettingsCategory('access')">
                         Access &amp; Guests
                     </button>
+                    <button type="button" id="settings-nav-location" class="settings-nav-item" onclick="switchSettingsCategory('location')">
+                        Location
+                    </button>
                     <button type="button" id="settings-nav-spotify" class="settings-nav-item" onclick="switchSettingsCategory('spotify')">
                         Spotify
                     </button>
@@ -1058,11 +1061,7 @@
                                 <button id="toggle-explicit" class="toggle-btn open-status" onclick="toggleExplicitLock()">Explicit: ALLOWED</button>
                                 <button id="toggle-radio-edits" class="toggle-btn open-status" onclick="toggleRadioEditsOnly()">Radio Edits Only: OFF</button>
                                 <button id="toggle-guest-spotify" class="toggle-btn closed-status" onclick="toggleGuestSpotify()">Guest Spotify Connect: OFF</button>
-                                <button id="toggle-location-lock" class="toggle-btn open-status" onclick="toggleLocationLock()">Location Lock: ON</button>
                             </div>
-                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                                When on, guests must be within 300m of the pinned venue location to request a song. Turn it off to let anyone check in and request from anywhere, regardless of distance.
-                            </p>
                         </div>
 
                         <div class="settings-card">
@@ -1092,6 +1091,32 @@
                             <div class="settings-section-label">Blocked Guests</div>
                             <p class="settings-card-hint" style="margin-top: 0;">Block a guest's device from the Stats tab's "Recent Requests" list. A blocked guest can't request or vote for the rest of this event.</p>
                             <div id="blocked-guests-list" class="stat-box-body"></div>
+                        </div>
+                    </div>
+
+                    <div id="settings-category-location" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Location Lock</div>
+                            <div class="control-bar">
+                                <button id="toggle-location-lock" class="toggle-btn open-status" onclick="toggleLocationLock()">Location Lock: ON</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                When on, guests must be within the distance set below of the pinned venue location to request a song. Turn it off to let anyone check in and request from anywhere, regardless of distance.
+                            </p>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Check-In Distance</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                How close (in meters) a guest's phone has to be to the pinned venue location for Location Lock to let them request a song. Loosen this for a venue that spans a big building or parking lot; tighten it for a small room.
+                            </p>
+                            <div class="config-dashboard">
+                                <div class="input-group">
+                                    <label>Distance (Meters)</label>
+                                    <input type="number" id="input-location-radius" min="10" max="5000" step="10">
+                                </div>
+                                <button class="save-config-btn" onclick="saveLocationRadius()">Update Distance</button>
+                            </div>
                         </div>
                     </div>
 
@@ -1362,7 +1387,7 @@
             window.open(eventUrl('/admin/scheduler'), '_blank');
         }
 
-        const SETTINGS_CATEGORIES = ['general', 'access', 'spotify', 'kiosk', 'danger'];
+        const SETTINGS_CATEGORIES = ['general', 'access', 'location', 'spotify', 'kiosk', 'danger'];
         function switchSettingsCategory(category) {
             SETTINGS_CATEGORIES.forEach(name => {
                 const isActive = name === category;
@@ -1716,6 +1741,24 @@ async function verifyPassword() {
             });
             updateDashboard();
         }
+        async function saveLocationRadius() {
+            if (!isAuthorized) return;
+            const meters = parseInt(document.getElementById('input-location-radius').value, 10);
+            if (!Number.isInteger(meters) || meters < 10 || meters > 5000) {
+                return showToast('Distance must be between 10 and 5000 meters.', 'error');
+            }
+            const res = await fetch(eventUrl('/api/admin/location-radius'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ meters })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast('Check-in distance updated.', 'success');
+            } else {
+                showToast(data.error || 'Could not update distance.', 'error');
+            }
+        }
 
         function openKioskPage() {
             window.open(eventUrl('/kiosk'), '_blank', 'noopener');
@@ -2010,6 +2053,10 @@ async function verifyPassword() {
                 locationLockEnabled = data.locationLockEnabled !== false;
                 locationLockBtn.innerText = locationLockEnabled ? "Location Lock: ON" : "Location Lock: OFF";
                 locationLockBtn.className = locationLockEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                if (document.activeElement !== document.getElementById('input-location-radius')) {
+                    document.getElementById('input-location-radius').value = data.locationRadiusMeters || 300;
+                }
 
                 const relayBtn = document.getElementById('spotify-relay-status');
                 djSpotifyQueueConnected = !!data.djSpotifyQueueConnected;
