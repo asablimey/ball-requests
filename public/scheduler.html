@@ -191,6 +191,47 @@
         }
         .add-playlist-form input:focus, .add-playlist-form select:focus { border-color: var(--spotify-green); }
 
+        /* --- Ambient Visuals palette section --- */
+        .palette-divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+        .palette-section-head { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); margin: 0 0 12px; }
+        .media-chip {
+            display: flex; align-items: center; gap: 8px; background: var(--card-bg);
+            border: 1px solid #333; border-radius: 8px; padding: 6px 10px; margin-bottom: 8px;
+            cursor: grab; font-size: 0.85rem;
+        }
+        .media-chip:active { cursor: grabbing; }
+        .media-chip.uploading { opacity: 0.5; cursor: default; }
+        .media-thumb {
+            width: 28px; height: 28px; border-radius: 5px; flex-shrink: 0; object-fit: cover;
+            background: #111; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;
+        }
+        .media-type-icon { font-size: 0.9rem; }
+        .media-chip .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .upload-btn-row { margin-top: 4px; }
+        .upload-btn-row input[type="file"] { display: none; }
+        .upload-label {
+            display: block; text-align: center; background: var(--card-bg); border: 1px dashed #444; color: white;
+            padding: 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .upload-label:hover { border-color: #666; }
+
+        /* --- Ambient block editor (inside the shared modal) --- */
+        .ambient-file-list { max-height: 180px; overflow-y: auto; margin-bottom: 10px; }
+        .ambient-file-row {
+            display: flex; align-items: center; gap: 8px; background: var(--card-bg);
+            border: 1px solid #333; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; font-size: 0.8rem;
+        }
+        .ambient-file-row .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ambient-file-row-btns { display: flex; gap: 2px; flex-shrink: 0; }
+        .ambient-file-row-btns button {
+            width: 22px; height: 22px; border-radius: 4px; background: #2f2f2f; border: 1px solid #3a3a3a;
+            color: white; font-size: 0.75rem; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center;
+        }
+        .ambient-file-row-btns button:hover { border-color: #666; }
+        .ambient-file-row-btns button:disabled { opacity: 0.3; cursor: default; }
+        .ambient-add-file-row { display: flex; gap: 6px; }
+        .ambient-add-file-row select { flex: 1; }
+
         /* --- Timetable --- */
         /* overflow-x only - there's nothing to overflow vertically inside
            one day box (its height is just its lane rows stacked), so
@@ -373,6 +414,15 @@
                     </select>
                     <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addPlaylist()">+ Add Playlist</button>
                 </div>
+
+                <hr class="palette-divider">
+                <h2 class="palette-section-head">Ambient Visuals</h2>
+                <div class="chip-hint">Upload photos/videos, then drag one onto the Ambient Visuals lane. Add more files to that block from its settings once it's on the timeline.</div>
+                <div id="ambient-media-list"></div>
+                <div class="upload-btn-row">
+                    <label class="upload-label" id="ambient-upload-label" for="ambient-file-input">+ Upload photos/videos</label>
+                    <input type="file" id="ambient-file-input" accept="image/*,video/*" multiple onchange="onAmbientFilesChosen(event)">
+                </div>
             </div>
 
             <div class="panel timetable-panel">
@@ -391,11 +441,49 @@
 
     <div id="modal-backdrop">
         <div class="modal">
-            <h3>Edit Block</h3>
-            <div class="field-group">
-                <label>Playlist</label>
-                <select id="modal-playlist"></select>
+            <h3 id="modal-title">Edit Block</h3>
+
+            <div id="modal-music-fields">
+                <div class="field-group">
+                    <label>Playlist</label>
+                    <select id="modal-playlist"></select>
+                </div>
+                <div class="field-group">
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="modal-volume-enabled" onchange="toggleModalVolume()">
+                        <label style="margin:0; text-transform:none;">Set volume for this block</label>
+                    </div>
+                    <input type="range" id="modal-volume" min="0" max="100" value="50" style="width:100%;" oninput="document.getElementById('modal-volume-readout').textContent = this.value + '%'">
+                    <div style="text-align:right; font-size:0.75rem; color:var(--text-dim);" id="modal-volume-readout">50%</div>
+                </div>
+                <div class="field-group">
+                    <label>Requests</label>
+                    <select id="modal-requests">
+                        <option value="nochange">No change</option>
+                        <option value="open">Force requests ON</option>
+                        <option value="closed">Force requests OFF</option>
+                    </select>
+                </div>
             </div>
+
+            <div id="modal-ambient-fields">
+                <div class="field-group">
+                    <label>Files in this block</label>
+                    <div class="ambient-file-list" id="modal-ambient-file-list"></div>
+                    <div class="ambient-add-file-row">
+                        <select id="modal-ambient-add-select"></select>
+                        <button class="btn btn-ghost btn-small" onclick="addFileToModalBlock()">+ Add</button>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <label>Photo duration</label>
+                    <div class="time-row">
+                        <div><input type="number" id="modal-photo-duration" min="1" max="120" value="8" style="width:100%; background:var(--card-bg); border:1px solid #333; color:white; padding:8px 10px; border-radius:6px;"></div>
+                        <div style="display:flex; align-items:center; font-size:0.8rem; color:var(--text-dim);">seconds per photo (videos play in full)</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="field-group">
                 <label>Time Range</label>
                 <div class="time-row">
@@ -406,22 +494,6 @@
             <div class="field-group">
                 <label>Days</label>
                 <div class="days-grid" id="modal-days"></div>
-            </div>
-            <div class="field-group">
-                <div class="checkbox-row">
-                    <input type="checkbox" id="modal-volume-enabled" onchange="toggleModalVolume()">
-                    <label style="margin:0; text-transform:none;">Set volume for this block</label>
-                </div>
-                <input type="range" id="modal-volume" min="0" max="100" value="50" style="width:100%;" oninput="document.getElementById('modal-volume-readout').textContent = this.value + '%'">
-                <div style="text-align:right; font-size:0.75rem; color:var(--text-dim);" id="modal-volume-readout">50%</div>
-            </div>
-            <div class="field-group">
-                <label>Requests</label>
-                <select id="modal-requests">
-                    <option value="nochange">No change</option>
-                    <option value="open">Force requests ON</option>
-                    <option value="closed">Force requests OFF</option>
-                </select>
             </div>
             <div class="modal-actions">
                 <button class="btn btn-ghost" style="background:var(--red-action); border-color:var(--red-action);" onclick="deleteModalRule()">Delete</button>
@@ -443,7 +515,18 @@
         let adminPassword = '';
         let playlists = [];
         let rules = [];
+        let ambientMedia = []; // { id, url, filename, type: 'photo'|'video', createdAt } - this event's Ambient Visuals library
         let schedulerEnabled = false;
+
+        // Direct browser -> Cloudinary upload config. Update these two if
+        // the Cloudinary account backing Ambient Visuals ever changes -
+        // there's no server-side config layer for a static page like this
+        // one, so they're just constants here. CLOUD_UPLOAD_PRESET must be
+        // an UNSIGNED preset (Settings -> Upload -> Upload presets on the
+        // Cloudinary dashboard) - that's what lets the browser upload
+        // directly without this server ever holding Cloudinary's API secret.
+        const CLOUD_NAME = 'zqywiwqr';
+        const CLOUD_UPLOAD_PRESET = 'dylhzuki';
         let eventTimezone = null; // whatever's actually saved server-side, or null if never set
         let selectedRuleId = null; // single-click-selected block - outlined white, deleted with Backspace
         let lastBlockClickTime = 0; // for manual double-click detection - see attachBlockDrag
@@ -484,17 +567,28 @@
         // needing to check each block's label.
         const LANE_TYPES = {
             crowddj: { label: 'crowdDJ Music', color: '#1DB954' },
-            karaoke: { label: 'Karaoke', color: '#5B8DEF' }
+            karaoke: { label: 'Karaoke', color: '#5B8DEF' },
+            ambient: { label: 'Ambient Visuals', color: '#B15CDE' }
         };
         const TRACK_MINUTES = 1440;
         const LANE_LABEL_WIDTH = 108;
-        // Placeholder lanes: not wired to anything yet, shown so the layout
-        // is ready for them. crowdDJ Music and Karaoke are rendered
-        // separately below since they're backed by real data.
+        // One placeholder lane left, reserved for a future feature that
+        // isn't wired to anything yet - Ambient Visuals used to be here too
+        // but is now a real, data-backed lane like crowdDJ/Karaoke.
         const PLACEHOLDER_LANES = [
-            { label: 'Ambient Visuals' },
             { label: '' }
         ];
+        // Which overlap/collision GROUP a rule belongs to. crowdDJ and
+        // Karaoke share one physical output (the venue's speakers) and so
+        // are checked as a single "music" group - two music blocks can
+        // never overlap regardless of which of those two lanes either is
+        // in. Ambient Visuals is a separate output (a screen), so it's
+        // free to run at the same time as a music block; it only has to
+        // avoid overlapping OTHER ambient blocks. Mirrors
+        // findOverlappingRuleAcrossLanes in server.js.
+        function ruleLaneGroup(rule) {
+            return rule.laneType === 'ambient' ? 'ambient' : 'music';
+        }
         const HOUR_PX_MIN = 20;
         const HOUR_PX_MAX = 72;
         const HOUR_PX_STEP = 8;
@@ -521,6 +615,7 @@
                     const data = await res.json();
                     playlists = data.playlists || [];
                     rules = data.rules || [];
+                    ambientMedia = data.ambientMedia || [];
                     schedulerEnabled = !!data.enabled;
                     eventTimezone = typeof data.timezone === 'string' && data.timezone ? data.timezone : null;
                     document.getElementById('scheduler-enabled-toggle').checked = schedulerEnabled;
@@ -599,6 +694,15 @@
         function playlistColor(playlistId) {
             return LANE_TYPES[playlistType(playlistId)].color;
         }
+        // Which of the three LANE_TYPES keys a rule belongs in - unlike
+        // playlistType above, this works for ambient rules too (they have
+        // no playlistId to look up).
+        function ruleLaneType(rule) {
+            return rule.laneType === 'ambient' ? 'ambient' : playlistType(rule.playlistId);
+        }
+        function ruleColor(rule) {
+            return LANE_TYPES[ruleLaneType(rule)].color;
+        }
         function genId() { return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
 
         // ---------- Overlap detection (mirrors findOverlappingRulePair server-side) ----------
@@ -623,11 +727,15 @@
         // Returns a Set of rule ids involved in at least one overlap, so
         // conflicting blocks can be outlined on the timetable and Save can
         // be blocked until they're fixed.
+        // Only compares rules within the same lane GROUP (see ruleLaneGroup) -
+        // an ambient block overlapping a music block isn't a conflict, since
+        // they play out on different outputs at the same time.
         function findConflictingRuleIds() {
-            const withSegments = rules.map(r => ({ id: r.id, segments: ruleToDaySegments(r) }));
+            const withSegments = rules.map(r => ({ id: r.id, group: ruleLaneGroup(r), segments: ruleToDaySegments(r) }));
             const conflicting = new Set();
             for (let i = 0; i < withSegments.length; i++) {
                 for (let j = i + 1; j < withSegments.length; j++) {
+                    if (withSegments[i].group !== withSegments[j].group) continue;
                     for (const segA of withSegments[i].segments) {
                         for (const segB of withSegments[j].segments) {
                             if (segA.day === segB.day && segA.start < segB.end && segB.start < segA.end) {
@@ -643,13 +751,15 @@
 
         // ---------- Physical collision bounds (drag/resize/drop can't cross these) ----------
         // Sorted [start,end) minute ranges occupied on one day by every
-        // OTHER rule, across BOTH lanes - crowdDJ and Karaoke share the
-        // same speakers so a block being dragged has to treat the other
-        // lane's blocks as solid too, not just its own lane's.
-        function occupiedRangesForDay(dayIdx, excludeRuleId) {
+        // OTHER rule in the SAME lane group - crowdDJ and Karaoke share the
+        // same speakers so a music block being dragged has to treat the
+        // other music lane's blocks as solid too, not just its own lane's.
+        // Ambient blocks only collide with other ambient blocks.
+        function occupiedRangesForDay(dayIdx, excludeRuleId, laneGroup) {
             const ranges = [];
             rules.forEach(r => {
                 if (excludeRuleId && r.id === excludeRuleId) return;
+                if (ruleLaneGroup(r) !== laneGroup) return;
                 ruleToDaySegments(r).forEach(seg => {
                     if (seg.day === dayIdx) ranges.push([seg.start, seg.end]);
                 });
@@ -662,10 +772,10 @@
         // already sits inside on one day, and returns how far its start
         // can move left/right before it touches whatever is on either
         // side of that gap.
-        function gapBoundsForDay(dayIdx, curStart, duration, excludeRuleId) {
+        function gapBoundsForDay(dayIdx, curStart, duration, excludeRuleId, laneGroup) {
             const curEnd = curStart + duration;
             let prevEnd = 0, nextStart = TRACK_MINUTES;
-            occupiedRangesForDay(dayIdx, excludeRuleId).forEach(([s, e]) => {
+            occupiedRangesForDay(dayIdx, excludeRuleId, laneGroup).forEach(([s, e]) => {
                 if (e <= curStart && e > prevEnd) prevEnd = e;
                 if (s >= curEnd && s < nextStart) nextStart = s;
             });
@@ -675,13 +785,14 @@
         // A dragged block's start/end apply to every day it's assigned to
         // at once, so the allowed range while moving it is the
         // intersection of the gap on EACH of those days - it can't be
-        // dragged past a neighbor on any one of them.
+        // dragged past a neighbor (in its own lane group) on any one of them.
         function computeMoveBounds(rule, excludeId) {
             const duration = hhmmToMinutes(rule.end) - hhmmToMinutes(rule.start);
             const curStart = hhmmToMinutes(rule.start);
+            const laneGroup = ruleLaneGroup(rule);
             let minStart = 0, maxStart = TRACK_MINUTES - duration;
             rule.days.forEach(d => {
-                const bounds = gapBoundsForDay(d, curStart, duration, excludeId);
+                const bounds = gapBoundsForDay(d, curStart, duration, excludeId, laneGroup);
                 minStart = Math.max(minStart, bounds.minStart);
                 maxStart = Math.min(maxStart, bounds.maxStart);
             });
@@ -689,12 +800,14 @@
         }
 
         // Same idea for resizing (right-edge only): how far can `end`
-        // grow on each of the rule's days before it hits the next block.
+        // grow on each of the rule's days before it hits the next block
+        // in the same lane group.
         function computeResizeMaxEnd(rule, excludeId) {
             const start = hhmmToMinutes(rule.start);
+            const laneGroup = ruleLaneGroup(rule);
             let maxEnd = TRACK_MINUTES;
             rule.days.forEach(d => {
-                occupiedRangesForDay(d, excludeId).forEach(([s]) => {
+                occupiedRangesForDay(d, excludeId, laneGroup).forEach(([s]) => {
                     if (s >= start && s < maxEnd) maxEnd = s;
                 });
             });
@@ -702,12 +815,13 @@
         }
 
         // Mirror of the above for the left edge: how far can `start`
-        // shrink back before it hits the previous block.
+        // shrink back before it hits the previous block in the same lane group.
         function computeResizeMinStart(rule, excludeId) {
             const end = hhmmToMinutes(rule.end);
+            const laneGroup = ruleLaneGroup(rule);
             let minStart = 0;
             rule.days.forEach(d => {
-                occupiedRangesForDay(d, excludeId).forEach(([, e]) => {
+                occupiedRangesForDay(d, excludeId, laneGroup).forEach(([, e]) => {
                     if (e <= end && e > minStart) minStart = e;
                 });
             });
@@ -764,8 +878,117 @@
             renderPlaylists();
         }
 
+        // ---------- Ambient media palette ----------
+        // Drag payloads are prefixed ('media:'/'playlist:') so onTrackDrop
+        // can tell a media chip apart from a playlist chip without needing
+        // a second dataTransfer key (Safari/Firefox drag-and-drop support
+        // for multiple custom MIME types is inconsistent, so this sticks
+        // to the one 'text/plain' slot every browser handles the same way).
         function onChipDragStart(e, playlistId) {
-            e.dataTransfer.setData('text/plain', playlistId);
+            e.dataTransfer.setData('text/plain', 'playlist:' + playlistId);
+        }
+        function onMediaChipDragStart(e, mediaId) {
+            e.dataTransfer.setData('text/plain', 'media:' + mediaId);
+        }
+
+        function renderAmbientMedia() {
+            const list = document.getElementById('ambient-media-list');
+            if (ambientMedia.length === 0) {
+                list.innerHTML = `<div class="chip-hint">No files yet - upload some below.</div>`;
+                return;
+            }
+            list.innerHTML = ambientMedia.map(m => `
+                <div class="media-chip" draggable="true" data-media-id="${escapeHtml(m.id)}"
+                     ondragstart="onMediaChipDragStart(event, '${escapeHtml(m.id)}')">
+                    ${m.type === 'video'
+                        ? `<span class="media-thumb media-type-icon">&#127909;</span>`
+                        : `<img class="media-thumb" src="${escapeHtml(m.url)}" alt="">`}
+                    <span class="chip-label">${escapeHtml(m.filename)}</span>
+                    <button class="chip-remove" onclick="removeAmbientMedia('${escapeHtml(m.id)}')" title="Remove">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        async function onAmbientFilesChosen(e) {
+            const files = [...e.target.files];
+            e.target.value = ''; // lets the same file be picked again later
+            if (files.length === 0) return;
+            const label = document.getElementById('ambient-upload-label');
+            label.textContent = `Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`;
+            let failures = 0;
+            for (const file of files) {
+                try {
+                    await uploadOneAmbientFile(file);
+                } catch (err) {
+                    failures++;
+                    console.error('Ambient upload failed:', err);
+                }
+            }
+            label.textContent = '+ Upload photos/videos';
+            if (failures > 0) {
+                showToast(`${failures} file${failures === 1 ? '' : 's'} failed to upload. Try again.`, 'error');
+            }
+        }
+
+        // Uploads straight to Cloudinary from the browser (the file bytes
+        // never pass through this server), then registers just the
+        // resulting URL/metadata with the event via the admin API. Uses
+        // Cloudinary's "auto" resource type endpoint so one upload URL
+        // handles both images and videos.
+        async function uploadOneAmbientFile(file) {
+            const isVideo = file.type.startsWith('video/');
+            const form = new FormData();
+            form.append('file', file);
+            form.append('upload_preset', CLOUD_UPLOAD_PRESET);
+
+            const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`, {
+                method: 'POST',
+                body: form
+            });
+            const cloudData = await cloudRes.json();
+            if (!cloudRes.ok || !cloudData.secure_url) {
+                throw new Error((cloudData.error && cloudData.error.message) || 'Cloudinary upload failed');
+            }
+
+            const res = await fetch(eventUrl('/api/admin/ambient-media'), {
+                method: 'POST',
+                headers: adminHeaders(),
+                body: JSON.stringify({
+                    url: cloudData.secure_url,
+                    filename: file.name,
+                    type: isVideo ? 'video' : 'photo'
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Could not save the uploaded file.');
+            }
+            ambientMedia.push(data.item);
+            renderAmbientMedia();
+        }
+
+        async function removeAmbientMedia(id) {
+            const inUse = rules.some(r => r.laneType === 'ambient' && Array.isArray(r.mediaIds) && r.mediaIds.includes(id));
+            if (inUse) {
+                const proceed = confirm('This file is used in one or more Ambient Visuals blocks. Removing it will take it out of those blocks too (an emptied block is deleted). Continue?');
+                if (!proceed) return;
+            }
+            try {
+                const res = await fetch(eventUrl(`/api/admin/ambient-media/${encodeURIComponent(id)}`), {
+                    method: 'DELETE',
+                    headers: adminHeaders()
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    return showToast(data.error || 'Could not remove that file.', 'error');
+                }
+                ambientMedia = data.ambientMedia;
+                rules = data.rules;
+                renderAmbientMedia();
+                renderDayBoxes();
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
         }
 
         // ---------- Timetable ----------
@@ -815,11 +1038,13 @@
             const trackWidth = hourPx * 24;
 
             container.innerHTML = DAY_NAMES.map((dayName, dayIdx) => {
-                const laneEmptyHint = laneType => rules.some(r => r.days.includes(dayIdx) && playlistType(r.playlistId) === laneType)
+                const laneEmptyHint = laneType => rules.some(r => r.days.includes(dayIdx) && ruleLaneType(r) === laneType)
                     ? ''
-                    : `<div class="empty-hint">Nothing scheduled - drag a ${LANE_TYPES[laneType].label} playlist in from the left.</div>`;
+                    : laneType === 'ambient'
+                        ? `<div class="empty-hint">Nothing scheduled - drag a file in from the left.</div>`
+                        : `<div class="empty-hint">Nothing scheduled - drag a ${LANE_TYPES[laneType].label} playlist in from the left.</div>`;
 
-                const liveLanesHtml = ['crowddj', 'karaoke'].map(laneType => `
+                const liveLanesHtml = ['crowddj', 'karaoke', 'ambient'].map(laneType => `
                     <div class="lane-row">
                         <div class="lane-label" style="width:${LANE_LABEL_WIDTH}px;">${escapeHtml(LANE_TYPES[laneType].label)}</div>
                         <div class="day-track" style="width:${trackWidth}px; --hourpx:${hourPx}px;" data-day="${dayIdx}" data-lane="${laneType}"
@@ -857,26 +1082,36 @@
             // even if the underlying data got edited some other way.
             DAY_NAMES.forEach((_, dayIdx) => {
                 rules.filter(r => r.days.includes(dayIdx)).forEach(rule => {
-                    const laneType = playlistType(rule.playlistId);
+                    const laneType = ruleLaneType(rule);
                     const track = container.querySelector(`.day-track[data-day="${dayIdx}"][data-lane="${laneType}"]`);
                     if (track) track.appendChild(buildBlockEl(rule, conflictingIds.has(rule.id)));
                 });
             });
         }
 
+        function blockTitleFor(rule) {
+            if (rule.laneType === 'ambient') {
+                const first = ambientMedia.find(m => m.id === rule.mediaIds[0]);
+                const firstName = first ? first.filename : 'Untitled';
+                const extra = rule.mediaIds.length - 1;
+                return extra > 0 ? `${firstName} +${extra} more` : firstName;
+            }
+            const playlist = playlists.find(p => p.id === rule.playlistId);
+            return playlist ? playlist.label : 'Unknown';
+        }
+
         function buildBlockEl(rule, isConflicting) {
             const start = hhmmToMinutes(rule.start);
             const end = hhmmToMinutes(rule.end);
-            const playlist = playlists.find(p => p.id === rule.playlistId);
             const el = document.createElement('div');
             el.className = 'schedule-block' + (isConflicting ? ' conflict' : '') + (rule.id === selectedRuleId ? ' selected' : '');
             el.dataset.ruleId = rule.id;
             el.style.left = ((start / TRACK_MINUTES) * hourPx * 24) + 'px';
             el.style.width = Math.max(10, ((end - start) / TRACK_MINUTES) * hourPx * 24) + 'px';
-            el.style.background = playlistColor(rule.playlistId);
+            el.style.background = ruleColor(rule);
             el.title = isConflicting ? 'Overlaps with another block - drag to fix before saving.' : '';
             el.innerHTML = `
-                <div class="block-title">${escapeHtml(playlist ? playlist.label : 'Unknown')}</div>
+                <div class="block-title">${escapeHtml(blockTitleFor(rule))}</div>
                 <div class="block-time">${rule.start}&ndash;${rule.end}</div>
                 <div class="resize-handle resize-handle-left" data-rule-id="${rule.id}"></div>
                 <div class="resize-handle resize-handle-right" data-rule-id="${rule.id}"></div>
@@ -889,6 +1124,7 @@
 
         function renderAll() {
             renderPlaylists();
+            renderAmbientMedia();
             renderDayBoxes();
             scrollTimetablesToNow();
         }
@@ -899,23 +1135,39 @@
         function onTrackDrop(e, dayIdx, laneType) {
             e.preventDefault();
             e.currentTarget.classList.remove('drag-over');
-            const playlistId = e.dataTransfer.getData('text/plain');
-            if (!playlists.some(p => p.id === playlistId)) return;
-            if (playlistType(playlistId) !== laneType) {
-                return showToast(`That's a ${LANE_TYPES[playlistType(playlistId)].label} playlist - drop it on the ${LANE_TYPES[playlistType(playlistId)].label} lane instead.`, 'error');
+            const payload = e.dataTransfer.getData('text/plain');
+            const isMediaPayload = payload.startsWith('media:');
+            const isPlaylistPayload = payload.startsWith('playlist:');
+            if (!isMediaPayload && !isPlaylistPayload) return;
+
+            if (laneType === 'ambient') {
+                if (!isMediaPayload) {
+                    return showToast('Drag a file from the Ambient Visuals palette onto this lane.', 'error');
+                }
+            } else if (isMediaPayload) {
+                return showToast('Drop that file onto the Ambient Visuals lane instead.', 'error');
+            } else {
+                const playlistId = payload.slice('playlist:'.length);
+                if (!playlists.some(p => p.id === playlistId)) return;
+                if (playlistType(playlistId) !== laneType) {
+                    return showToast(`That's a ${LANE_TYPES[playlistType(playlistId)].label} playlist - drop it on the ${LANE_TYPES[playlistType(playlistId)].label} lane instead.`, 'error');
+                }
             }
+
             const rect = e.currentTarget.getBoundingClientRect();
             const x = e.clientX - rect.left;
             let minutes = Math.round((x / rect.width) * TRACK_MINUTES);
             minutes = Math.round(minutes / 15) * 15;
             minutes = Math.max(0, Math.min(TRACK_MINUTES - 15, minutes));
 
-            // A new block can't be dropped on top of anything else -
-            // clamp it into whatever open gap exists at the drop point,
-            // across both lanes on this day. If there isn't 15 minutes
-            // of room there, refuse the drop entirely.
+            // A new block can't be dropped on top of anything else in its
+            // own lane group - clamp it into whatever open gap exists at
+            // the drop point. If there isn't 15 minutes of room there,
+            // refuse the drop entirely. An ambient block is only checked
+            // against other ambient blocks (see occupiedRangesForDay).
+            const laneGroup = laneType === 'ambient' ? 'ambient' : 'music';
             let gapStart = 0, gapEnd = TRACK_MINUTES;
-            occupiedRangesForDay(dayIdx, null).forEach(([s, e2]) => {
+            occupiedRangesForDay(dayIdx, null, laneGroup).forEach(([s, e2]) => {
                 if (e2 <= minutes && e2 > gapStart) gapStart = e2;
                 if (s >= minutes && s < gapEnd) gapEnd = s;
             });
@@ -925,15 +1177,25 @@
             const start = Math.max(gapStart, Math.min(minutes, gapEnd - 15));
             const end = Math.min(gapEnd, start + 60);
 
-            const rule = {
-                id: genId(),
-                playlistId,
-                days: [dayIdx],
-                start: minutesToHHMM(start),
-                end: minutesToHHMM(end),
-                volume: null,
-                requestsAllowed: null
-            };
+            const rule = laneType === 'ambient'
+                ? {
+                    id: genId(),
+                    laneType: 'ambient',
+                    mediaIds: [payload.slice('media:'.length)],
+                    photoDurationSec: 8,
+                    days: [dayIdx],
+                    start: minutesToHHMM(start),
+                    end: minutesToHHMM(end)
+                }
+                : {
+                    id: genId(),
+                    playlistId: payload.slice('playlist:'.length),
+                    days: [dayIdx],
+                    start: minutesToHHMM(start),
+                    end: minutesToHHMM(end),
+                    volume: null,
+                    requestsAllowed: null
+                };
             rules.push(rule);
             renderDayBoxes();
             openModal(rule.id);
@@ -1051,20 +1313,46 @@
 
         // ---------- Edit modal ----------
         let modalRuleId = null;
+        // Working copy of the ambient block's file order while the modal is
+        // open - edited freely by the add/remove/reorder buttons below and
+        // only written back onto the rule itself in applyModal, same as
+        // every other field in this modal (Cancel discards it).
+        let modalAmbientMediaIds = [];
+
         function openModal(ruleId) {
             const rule = rules.find(r => r.id === ruleId);
             if (!rule) return;
             modalRuleId = ruleId;
+            const isAmbient = rule.laneType === 'ambient';
 
-            // Only offer playlists of this block's own type - reassigning a
-            // Karaoke block to a crowdDJ playlist (or vice versa) would move
-            // it to a different lane out from under the admin, so that
-            // switch isn't offered here at all.
-            const laneType = playlistType(rule.playlistId);
-            const playlistSelect = document.getElementById('modal-playlist');
-            playlistSelect.innerHTML = playlists.filter(p => playlistType(p.id) === laneType)
-                .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
-            playlistSelect.value = rule.playlistId;
+            document.getElementById('modal-title').textContent = isAmbient ? 'Edit Ambient Visuals Block' : 'Edit Block';
+            document.getElementById('modal-music-fields').style.display = isAmbient ? 'none' : '';
+            document.getElementById('modal-ambient-fields').style.display = isAmbient ? '' : 'none';
+
+            if (isAmbient) {
+                modalAmbientMediaIds = [...rule.mediaIds];
+                document.getElementById('modal-photo-duration').value = rule.photoDurationSec || 8;
+                renderModalAmbientFileList();
+            } else {
+                // Only offer playlists of this block's own type - reassigning
+                // a Karaoke block to a crowdDJ playlist (or vice versa) would
+                // move it to a different lane out from under the admin, so
+                // that switch isn't offered here at all.
+                const laneType = playlistType(rule.playlistId);
+                const playlistSelect = document.getElementById('modal-playlist');
+                playlistSelect.innerHTML = playlists.filter(p => playlistType(p.id) === laneType)
+                    .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+                playlistSelect.value = rule.playlistId;
+
+                const volEnabled = document.getElementById('modal-volume-enabled');
+                volEnabled.checked = typeof rule.volume === 'number';
+                document.getElementById('modal-volume').value = typeof rule.volume === 'number' ? rule.volume : 50;
+                document.getElementById('modal-volume-readout').textContent = (typeof rule.volume === 'number' ? rule.volume : 50) + '%';
+                toggleModalVolume();
+
+                const reqSelect = document.getElementById('modal-requests');
+                reqSelect.value = rule.requestsAllowed === true ? 'open' : rule.requestsAllowed === false ? 'closed' : 'nochange';
+            }
 
             document.getElementById('modal-start').value = rule.start;
             document.getElementById('modal-end').value = rule.end;
@@ -1074,15 +1362,6 @@
                 <button type="button" class="day-toggle${rule.days.includes(idx) ? ' active' : ''}" data-day="${idx}" onclick="this.classList.toggle('active')">${name}</button>
             `).join('');
 
-            const volEnabled = document.getElementById('modal-volume-enabled');
-            volEnabled.checked = typeof rule.volume === 'number';
-            document.getElementById('modal-volume').value = typeof rule.volume === 'number' ? rule.volume : 50;
-            document.getElementById('modal-volume-readout').textContent = (typeof rule.volume === 'number' ? rule.volume : 50) + '%';
-            toggleModalVolume();
-
-            const reqSelect = document.getElementById('modal-requests');
-            reqSelect.value = rule.requestsAllowed === true ? 'open' : rule.requestsAllowed === false ? 'closed' : 'nochange';
-
             document.getElementById('modal-backdrop').classList.add('show');
         }
         function toggleModalVolume() {
@@ -1090,9 +1369,54 @@
             document.getElementById('modal-volume').style.opacity = enabled ? '1' : '0.35';
             document.getElementById('modal-volume').disabled = !enabled;
         }
+
+        // Renders both the current file list (with remove/reorder buttons)
+        // and the "add another file" dropdown, which only offers files NOT
+        // already in this block.
+        function renderModalAmbientFileList() {
+            const list = document.getElementById('modal-ambient-file-list');
+            list.innerHTML = modalAmbientMediaIds.map((mid, idx) => {
+                const m = ambientMedia.find(x => x.id === mid);
+                const name = m ? m.filename : 'Missing file';
+                return `
+                    <div class="ambient-file-row">
+                        <span class="chip-label">${escapeHtml(name)}</span>
+                        <div class="ambient-file-row-btns">
+                            <button onclick="moveFileInModalBlock(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move earlier">&uarr;</button>
+                            <button onclick="moveFileInModalBlock(${idx}, 1)" ${idx === modalAmbientMediaIds.length - 1 ? 'disabled' : ''} title="Move later">&darr;</button>
+                            <button onclick="removeFileFromModalBlock(${idx})" title="Remove">&times;</button>
+                        </div>
+                    </div>
+                `;
+            }).join('') || `<div class="chip-hint">No files in this block yet - add one below.</div>`;
+
+            const addSelect = document.getElementById('modal-ambient-add-select');
+            const available = ambientMedia.filter(m => !modalAmbientMediaIds.includes(m.id));
+            addSelect.innerHTML = available.length === 0
+                ? `<option value="">No more files available</option>`
+                : available.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.filename)}</option>`).join('');
+        }
+        function addFileToModalBlock() {
+            const id = document.getElementById('modal-ambient-add-select').value;
+            if (!id) return;
+            modalAmbientMediaIds.push(id);
+            renderModalAmbientFileList();
+        }
+        function removeFileFromModalBlock(idx) {
+            modalAmbientMediaIds.splice(idx, 1);
+            renderModalAmbientFileList();
+        }
+        function moveFileInModalBlock(idx, dir) {
+            const target = idx + dir;
+            if (target < 0 || target >= modalAmbientMediaIds.length) return;
+            [modalAmbientMediaIds[idx], modalAmbientMediaIds[target]] = [modalAmbientMediaIds[target], modalAmbientMediaIds[idx]];
+            renderModalAmbientFileList();
+        }
+
         function closeModal() {
             document.getElementById('modal-backdrop').classList.remove('show');
             modalRuleId = null;
+            modalAmbientMediaIds = [];
         }
         function applyModal() {
             const rule = rules.find(r => r.id === modalRuleId);
@@ -1105,13 +1429,21 @@
             const days = [...document.querySelectorAll('#modal-days .day-toggle.active')].map(b => parseInt(b.dataset.day, 10));
             if (days.length === 0) return showToast('Pick at least one day.', 'error');
 
-            rule.playlistId = document.getElementById('modal-playlist').value;
             rule.start = start;
             rule.end = end;
             rule.days = days;
-            rule.volume = document.getElementById('modal-volume-enabled').checked ? parseInt(document.getElementById('modal-volume').value, 10) : null;
-            const reqVal = document.getElementById('modal-requests').value;
-            rule.requestsAllowed = reqVal === 'open' ? true : reqVal === 'closed' ? false : null;
+
+            if (rule.laneType === 'ambient') {
+                if (modalAmbientMediaIds.length === 0) return showToast('Add at least one file to this block.', 'error');
+                rule.mediaIds = [...modalAmbientMediaIds];
+                const duration = parseInt(document.getElementById('modal-photo-duration').value, 10);
+                rule.photoDurationSec = Number.isInteger(duration) && duration >= 1 && duration <= 120 ? duration : 8;
+            } else {
+                rule.playlistId = document.getElementById('modal-playlist').value;
+                rule.volume = document.getElementById('modal-volume-enabled').checked ? parseInt(document.getElementById('modal-volume').value, 10) : null;
+                const reqVal = document.getElementById('modal-requests').value;
+                rule.requestsAllowed = reqVal === 'open' ? true : reqVal === 'closed' ? false : null;
+            }
 
             closeModal();
             renderDayBoxes();
