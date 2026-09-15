@@ -247,7 +247,12 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             //      for anything saved before laneType existed) --
             //   playlistId, volume: null|0-100, requestsAllowed: null|boolean,
             //   -- ambient blocks (laneType 'ambient') --
-            //   items: [{ id, type: 'photo'|'video'|'queue'|'clock'|'ad', mediaId?, durationSec?, adText?, adQrUrl? }] }
+            //   items: [{ id, type: 'photo'|'video'|'queue'|'clock'|'ad'|'custom',
+            //     mediaId?, durationSec?, adText?, adQrUrl?, text? (custom),
+            //     transition: 'fade'|'cut'|'slide', brightness: 40-150,
+            //     -- photo/video only -- fit: 'cover'|'contain'|'fill',
+            //     position: 'center'|'top'|'bottom'|'left'|'right',
+            //     captionTitle?, captionSubtitle? }] }
             rules: [],
             // IANA zone (e.g. "Pacific/Auckland") that every rule's HH:MM is
             // read in - set from the DJ's browser the first time they save
