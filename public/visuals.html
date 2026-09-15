@@ -32,6 +32,7 @@
             opacity: 0; transition: opacity 1.2s ease;
         }
         .ambient-layer.is-active { opacity: 1; }
+        .ambient-layer.no-fade { transition: none; }
         .ambient-layer img, .ambient-layer video {
             width: 100%; height: 100%; object-fit: cover;
         }
@@ -40,6 +41,17 @@
             color: rgba(255,255,255,0.55); font-size: 0.95rem; font-weight: 600;
             font-family: 'Khula', sans-serif; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
         }
+        .amb-caption {
+            position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 56px 40px;
+            background: linear-gradient(to top, rgba(0,0,0,0.75), transparent); color: white;
+        }
+        .amb-caption .t1 { font-family: 'Khula', sans-serif; font-weight: 700; font-size: 2.4rem; }
+        .amb-caption .t2 { font-size: 1.1rem; color: #d8d8d8; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+        .amb-custom {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, var(--spotify-green), #0d7a38); color: white; padding: 60px; text-align: center;
+        }
+        .amb-custom-text { font-family: 'Khula', sans-serif; font-weight: 700; font-size: 4rem; line-height: 1.15; }
 
         /* ---------- Ambient widget slides: clock, live queue, ad ---------- */
         .amb-clock {
@@ -331,19 +343,30 @@
             clearAmbientAdvanceTimer();
             clearSlideCleanup();
 
+            const caption = (item.captionTitle || '').trim() || (item.captionSubtitle || '').trim()
+                ? `<div class="amb-caption">${item.captionTitle ? `<div class="t1">${escapeHtml(item.captionTitle)}</div>` : ''}${item.captionSubtitle ? `<div class="t2">${escapeHtml(item.captionSubtitle)}</div>` : ''}</div>`
+                : '';
+            const mediaStyle = `object-fit:${item.fit || 'cover'}; object-position:${item.position || 'center'}; filter:brightness(${item.brightness || 100}%);`;
+
             if (item.type === 'video') {
-                incomingEl.innerHTML = `<video src="${escapeHtml(item.url)}" autoplay muted playsinline></video>`;
+                incomingEl.innerHTML = `<video src="${escapeHtml(item.url)}" autoplay muted playsinline style="${mediaStyle}"></video>${caption}`;
             } else if (item.type === 'photo') {
-                incomingEl.innerHTML = `<img src="${escapeHtml(item.url)}" alt="">`;
+                incomingEl.innerHTML = `<img src="${escapeHtml(item.url)}" alt="" style="${mediaStyle}">${caption}`;
             } else if (item.type === 'clock') {
                 slideCleanup = renderClockInto(incomingEl);
             } else if (item.type === 'queue') {
                 slideCleanup = renderQueueInto(incomingEl);
             } else if (item.type === 'ad') {
                 renderAdInto(incomingEl, item);
+            } else if (item.type === 'custom') {
+                incomingEl.innerHTML = `<div class="amb-custom" style="filter:brightness(${item.brightness || 100}%);"><div class="amb-custom-text">${escapeHtml(item.text || '')}</div></div>`;
             }
 
             // Crossfade: bring the new layer in, then drop the old one out.
+            // A 'cut' transition skips the fade entirely for an instant swap.
+            const skipFade = item.transition === 'cut';
+            incomingEl.classList.toggle('no-fade', skipFade);
+            layerEl(outgoing).classList.toggle('no-fade', skipFade);
             requestAnimationFrame(() => {
                 incomingEl.classList.add('is-active');
                 layerEl(outgoing).classList.remove('is-active');
