@@ -1463,13 +1463,18 @@
         let lastGuestQueue = [];
         let spotifyUpcomingQueue = [];
 
-        // --- 300m geofence (mirrors the server's own REQUEST_RADIUS_METERS
-        // check on /api/request) - this just gives an upfront, always-on
-        // "you're too far away" state on the search bar itself, instead of
-        // only finding out via an error toast after trying to submit. Only
-        // active once we know the venue's pinned coordinates (from /data)
-        // and the venue actually has one set.
-        const GEOFENCE_RADIUS_KM = 0.3;
+        // --- Geofence (mirrors the server's own check-in radius check on
+        // /api/request, event.systemConfigs.locationRadiusMeters) - this
+        // just gives an upfront, always-on "you're too far away" state on
+        // the search bar itself, instead of only finding out via an error
+        // toast after trying to submit. Only active once we know the
+        // venue's pinned coordinates (from /data) and the venue actually
+        // has one set. GEOFENCE_RADIUS_KM starts at the server's own
+        // default and is kept in sync with whatever the admin has actually
+        // set every time fresh state comes in (see fetchSystemState below),
+        // so this never drifts out of sync with the real rule being
+        // enforced server-side.
+        let GEOFENCE_RADIUS_KM = 0.3;
         let venueGeoLat = null;
         let venueGeoLon = null;
         let geofenceWatchId = null;
@@ -1615,6 +1620,9 @@
                 if (typeof data.venueLatitude === 'number' && typeof data.venueLongitude === 'number') {
                     venueGeoLat = data.venueLatitude;
                     venueGeoLon = data.venueLongitude;
+                    if (typeof data.venueRadiusMeters === 'number' && data.venueRadiusMeters > 0) {
+                        GEOFENCE_RADIUS_KM = data.venueRadiusMeters / 1000;
+                    }
                     startGeofenceWatch();
                 } else {
                     stopGeofenceWatch();
