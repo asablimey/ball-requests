@@ -450,8 +450,8 @@
         .avm-nav-count { font-size: 0.74rem; color: var(--text-dim); }
 
         .avm-seq-head { display: flex; justify-content: space-between; align-items: baseline; }
-        .avm-seq-head h4 { margin: 0; font-size: 0.92rem; }
-        .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); }
+        .avm-seq-head h4 { margin: 0; font-size: 0.92rem; display: flex; align-items: baseline; gap: 8px; }
+        .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); font-weight: 400; }
         .avm-seq-list { display: flex; flex-direction: column; gap: 8px; }
         .avm-seq-row {
             display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid #2c2c2c;
@@ -506,6 +506,64 @@
         }
         .avm-settings-remove:hover { filter: brightness(1.15); }
         .avm-settings-empty { color: var(--text-dim); font-size: 0.82rem; text-align: center; padding: 30px 10px; }
+        .avm-settings-field select {
+            width: 100%; background: var(--panel-bg); border: 1px solid #333; color: white;
+            padding: 8px 10px; border-radius: 6px; font-size: 0.84rem; outline: none; appearance: none;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23a7a7a7'/></svg>");
+            background-repeat: no-repeat; background-position: right 10px center;
+        }
+        .avm-settings-field select:focus { border-color: var(--spotify-green); }
+        .avm-settings-row {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 0.76rem; color: var(--text-dim);
+        }
+        .avm-settings-row .avm-icon-sm { width: 14px; text-align: center; flex-shrink: 0; }
+        .avm-range-row { display: flex; align-items: center; gap: 10px; }
+        .avm-range-row input[type="range"] {
+            flex: 1; accent-color: var(--spotify-green); height: 4px; cursor: pointer;
+        }
+        .avm-range-value { font-size: 0.78rem; color: var(--text-dim); width: 38px; text-align: right; flex-shrink: 0; }
+
+        .avm-advanced { margin-top: 4px; border-top: 1px solid var(--border); padding-top: 12px; }
+        .avm-advanced-toggle {
+            display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+            font-size: 0.82rem; font-weight: 700; color: white;
+        }
+        .avm-advanced-chevron { color: var(--text-dim); transition: transform 0.15s; display: inline-block; }
+        .avm-advanced-chevron.open { transform: rotate(90deg); }
+        .avm-advanced-panel { display: none; margin-top: 12px; }
+        .avm-advanced-panel.open { display: block; }
+        .avm-advanced-hint { font-size: 0.72rem; color: var(--text-dim); margin: -2px 0 10px; line-height: 1.4; }
+
+        .avm-seq-menu-wrap { position: relative; flex-shrink: 0; }
+        .avm-seq-menu {
+            display: none; position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
+            background: var(--card-bg); border: 1px solid #333; border-radius: 8px; padding: 4px;
+            min-width: 140px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        .avm-seq-menu.open { display: block; }
+        .avm-seq-menu button {
+            display: block; width: 100%; text-align: left; background: none; border: none; color: white;
+            padding: 7px 10px; border-radius: 5px; font-size: 0.78rem; cursor: pointer;
+        }
+        .avm-seq-menu button:hover { background: var(--panel-bg); }
+        .avm-seq-menu button:disabled { opacity: 0.35; cursor: default; }
+        .avm-seq-menu button:disabled:hover { background: none; }
+        .avm-seq-menu button.danger { color: #ffb4bb; }
+
+        .avm-seq-total { font-size: 0.74rem; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+        .avm-seq-total-btn {
+            width: 22px; height: 22px; border-radius: 5px; background: none; border: none; color: var(--text-dim);
+            cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.85rem;
+        }
+        .avm-seq-total-btn:hover { color: white; background: #2f2f2f; }
+
+        .avm-currently-stat { display: flex; align-items: center; gap: 10px; }
+        .avm-currently-stat-icon {
+            width: 26px; height: 26px; border-radius: 6px; background: var(--panel-bg); flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 0.85rem; color: var(--text-dim);
+        }
+        .avm-currently-stat-label { font-size: 0.72rem; color: var(--text-dim); }
+        .avm-currently-stat-value { font-size: 0.85rem; font-weight: 700; }
 
         .avm-footer { border-top: 1px solid var(--border); flex-shrink: 0; }
         .avm-schedule-toggle { display: flex; align-items: center; gap: 10px; padding: 14px 20px; cursor: pointer; }
@@ -708,8 +766,14 @@
                     </div>
 
                     <div class="avm-side-section">
+                        <div class="avm-side-label">Custom</div>
+                        <button type="button" class="avm-side-item" onclick="addCustomVisualToModalBlock()"><span class="avm-side-icon">&#10024;</span> Custom Visual</button>
+                    </div>
+
+                    <div class="avm-side-section">
                         <div class="avm-side-label">Other</div>
                         <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('ad')"><span class="avm-side-icon">&#128227;</span> Advertisement</button>
+                        <button type="button" class="avm-side-item" onclick="document.getElementById('modal-ambient-file-input').click()"><span class="avm-side-icon">&#8942;</span> More&hellip;</button>
                     </div>
                 </div>
 
@@ -725,8 +789,20 @@
                                     <div class="sub" id="avm-currently-sub">&mdash;</div>
                                 </div>
                             </div>
-                            <div class="avm-currently-row"><span>Duration</span></div>
-                            <div class="avm-currently-row"><strong id="avm-currently-duration">&mdash;</strong></div>
+                            <div class="avm-currently-stat">
+                                <span class="avm-currently-stat-icon">&#128337;</span>
+                                <div>
+                                    <div class="avm-currently-stat-label">Duration</div>
+                                    <div class="avm-currently-stat-value" id="avm-currently-duration">&mdash;</div>
+                                </div>
+                            </div>
+                            <div class="avm-currently-stat">
+                                <span class="avm-currently-stat-icon">&#8646;</span>
+                                <div>
+                                    <div class="avm-currently-stat-label">Transition</div>
+                                    <div class="avm-currently-stat-value" id="avm-currently-transition">&mdash;</div>
+                                </div>
+                            </div>
                             <div class="avm-currently-nav">
                                 <button type="button" class="avm-nav-btn" onclick="avmStepPreview(-1)">&lsaquo;</button>
                                 <span class="avm-nav-count" id="avm-nav-count">0 / 0</span>
@@ -737,8 +813,11 @@
 
                     <div>
                         <div class="avm-seq-head">
-                            <h4>Visual Sequence</h4>
-                            <span class="avm-seq-meta" id="avm-seq-meta">0 items</span>
+                            <h4>Visual Sequence <span class="avm-seq-meta" id="avm-seq-meta">0 items</span></h4>
+                            <div class="avm-seq-total">
+                                <span>Total Duration (approx.) <strong id="avm-seq-total-val">0s</strong></span>
+                                <button type="button" class="avm-seq-total-btn" onclick="avmPreviewCurrent()" title="Preview">&#8599;</button>
+                            </div>
                         </div>
                         <div class="avm-seq-list" id="avm-seq-list" style="margin-top:10px;"></div>
                     </div>
@@ -1750,12 +1829,14 @@
             if (item.type === 'queue') return { icon: '&#128250;', label: 'Live Queue' };
             if (item.type === 'clock') return { icon: '&#128337;', label: 'Clock & Date' };
             if (item.type === 'ad') return { icon: '&#128227;', label: 'Advertisement' };
+            if (item.type === 'custom') return { icon: '&#10024;', label: item.text ? item.text : 'Custom Visual' };
             return { icon: '&#10067;', label: 'Unknown' };
         }
         function itemCategoryLabel(item) {
             if (item.type === 'photo') return 'Photo';
             if (item.type === 'video') return 'Video';
             if (item.type === 'ad') return 'Advertisement';
+            if (item.type === 'custom') return 'Custom';
             return 'Live widget';
         }
         function itemDurationText(item) {
@@ -1765,6 +1846,9 @@
             const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
             if (item.type === 'photo' && media) {
                 return `<img class="${cls}" src="${escapeHtml(media.url)}" alt="">`;
+            }
+            if (item.type === 'custom') {
+                return `<span class="${cls}" style="background: linear-gradient(135deg, var(--spotify-green), #0d7a38); color: white; font-weight: 800; font-size: 0.6rem; text-align: center; line-height: 1.1; padding: 2px;">${escapeHtml((item.text || 'CUSTOM').slice(0, 10).toUpperCase())}</span>`;
             }
             const meta = itemDisplayMeta(item);
             return `<span class="${cls}">${meta.icon}</span>`;
@@ -1799,15 +1883,31 @@
             }).join('');
         }
 
+        // Videos play in full, so their real screen time isn't known here -
+        // the total only counts timed items and flags how many videos ride
+        // along on top of that, same spirit as the mockup's "approx." label.
+        function avmTotalDurationText() {
+            let seconds = 0, videoCount = 0;
+            modalAmbientItems.forEach(it => {
+                if (it.type === 'video') videoCount++;
+                else seconds += (it.durationSec || 8);
+            });
+            const m = Math.floor(seconds / 60), s = seconds % 60;
+            const base = m > 0 ? `${m}m ${s}s` : `${s}s`;
+            return videoCount ? `${base} + ${videoCount} video${videoCount === 1 ? '' : 's'}` : base;
+        }
         function renderAvmSequenceList() {
             const list = document.getElementById('avm-seq-list');
             const meta = document.getElementById('avm-seq-meta');
+            const totalEl = document.getElementById('avm-seq-total-val');
             if (modalAmbientItems.length === 0) {
                 list.innerHTML = `<div class="avm-seq-empty">Nothing in this block yet - add a file or widget from the left.</div>`;
                 meta.textContent = '0 items';
+                if (totalEl) totalEl.textContent = '0s';
                 return;
             }
             meta.textContent = `${modalAmbientItems.length} item${modalAmbientItems.length === 1 ? '' : 's'}`;
+            if (totalEl) totalEl.textContent = avmTotalDurationText();
             list.innerHTML = modalAmbientItems.map((item, idx) => {
                 const m = itemDisplayMeta(item);
                 return `
@@ -1820,13 +1920,30 @@
                             <div class="type">${itemCategoryLabel(item)}</div>
                         </div>
                         <span class="avm-seq-duration">${itemDurationText(item)}</span>
-                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move earlier">&uarr;</button>
-                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, 1)" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''} title="Move later">&darr;</button>
-                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); removeFileFromModalBlock(${idx})" title="Remove">&times;</button>
+                        <div class="avm-seq-menu-wrap">
+                            <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); avmToggleSeqMenu(${idx})" title="More">&#8942;</button>
+                            <div class="avm-seq-menu" id="avm-seq-menu-${idx}">
+                                <button type="button" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, -1); avmCloseSeqMenus();" ${idx === 0 ? 'disabled' : ''}>&uarr; Move earlier</button>
+                                <button type="button" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, 1); avmCloseSeqMenus();" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''}>&darr; Move later</button>
+                                <button type="button" class="danger" onclick="event.stopPropagation(); removeFileFromModalBlock(${idx}); avmCloseSeqMenus();">&times; Remove</button>
+                            </div>
+                        </div>
                     </div>
                 `;
             }).join('');
         }
+        function avmToggleSeqMenu(idx) {
+            const menu = document.getElementById(`avm-seq-menu-${idx}`);
+            const wasOpen = menu.classList.contains('open');
+            avmCloseSeqMenus();
+            if (!wasOpen) menu.classList.add('open');
+        }
+        function avmCloseSeqMenus() {
+            document.querySelectorAll('.avm-seq-menu.open').forEach(m => m.classList.remove('open'));
+        }
+        document.addEventListener('click', avmCloseSeqMenus);
+
+        const TRANSITION_LABELS = { fade: 'Fade', cut: 'Cut', slide: 'Slide' };
 
         function renderAvmPreview() {
             const stage = document.getElementById('avm-preview-stage');
@@ -1834,6 +1951,7 @@
             const nameEl = document.getElementById('avm-currently-name');
             const subEl = document.getElementById('avm-currently-sub');
             const durEl = document.getElementById('avm-currently-duration');
+            const transEl = document.getElementById('avm-currently-transition');
             const countEl = document.getElementById('avm-nav-count');
 
             if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
@@ -1842,6 +1960,7 @@
                 nameEl.textContent = '\u2014';
                 subEl.textContent = 'Nothing to preview yet';
                 durEl.textContent = '\u2014';
+                transEl.textContent = '\u2014';
                 countEl.textContent = '0 / 0';
                 return;
             }
@@ -1850,13 +1969,19 @@
             const item = modalAmbientItems[idx];
             const m = itemDisplayMeta(item);
             const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
+            const mediaStyle = `object-fit:${item.fit || 'cover'}; object-position:${item.position || 'center'}; filter:brightness(${item.brightness || 100}%);`;
+            const captionName = (item.captionTitle || '').trim() || m.label;
+            const captionType = (item.captionSubtitle || '').trim() || itemCategoryLabel(item);
 
             if (item.type === 'photo' && media) {
-                stage.innerHTML = `<img src="${escapeHtml(media.url)}" alt=""><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Photo</div></div>`;
+                stage.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="${mediaStyle}"><div class="avm-preview-caption"><div class="name">${escapeHtml(captionName)}</div><div class="type">${escapeHtml(captionType)}</div></div>`;
                 thumbEl.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:cover;">`;
             } else if (item.type === 'video' && media) {
-                stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Video</div></div>`;
+                stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="${mediaStyle}"></video><div class="avm-preview-caption"><div class="name">${escapeHtml(captionName)}</div><div class="type">${escapeHtml(captionType)}</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#127909;</span>`;
+            } else if (item.type === 'custom') {
+                stage.innerHTML = `<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--spotify-green), #0d7a38); filter:brightness(${item.brightness || 100}%);"><span style="font-weight:800; font-size:1.6rem; letter-spacing:0.5px; text-align:center; padding:0 20px;">${escapeHtml(item.text || 'GOOD VIBES')}</span></div>`;
+                thumbEl.innerHTML = `<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--spotify-green), #0d7a38); color:white; font-size:0.6rem; font-weight:800; text-align:center; line-height:1.1; padding:2px;">${escapeHtml((item.text || 'CUSTOM').slice(0, 10).toUpperCase())}</div>`;
             } else {
                 stage.innerHTML = `<span class="avm-preview-placeholder">${m.icon}</span><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">${m.icon}</span>`;
@@ -1865,6 +1990,7 @@
             nameEl.textContent = m.label;
             subEl.textContent = itemCategoryLabel(item);
             durEl.textContent = item.type === 'video' ? 'Full video' : `${item.durationSec || 8} seconds`;
+            transEl.textContent = TRANSITION_LABELS[item.transition] || 'Fade';
             countEl.textContent = `${idx + 1} / ${modalAmbientItems.length}`;
         }
 
@@ -1878,6 +2004,7 @@
             const item = modalAmbientItems[idx];
             const m = itemDisplayMeta(item);
 
+            const isVisualMedia = item.type === 'photo' || item.type === 'video';
             let fieldsHtml = '';
             if (item.type === 'video') {
                 fieldsHtml = `<div class="avm-settings-note">Videos always play in full - there's no duration to set.</div>`;
@@ -1904,6 +2031,69 @@
                     </div>
                 `;
             }
+            if (item.type === 'custom') {
+                fieldsHtml += `
+                    <div class="avm-settings-field">
+                        <label>Text</label>
+                        <input type="text" placeholder="e.g. GOOD VIBES" maxlength="40" value="${escapeHtml(item.text || '')}"
+                               onchange="updateModalItemField(${idx}, 'text', this.value); renderAvmSequenceList(); renderAvmPreview();">
+                    </div>
+                `;
+            }
+
+            fieldsHtml += `
+                <div class="avm-settings-field">
+                    <label>Transition</label>
+                    <select onchange="updateModalItemField(${idx}, 'transition', this.value); renderAvmPreview();">
+                        ${['fade', 'cut', 'slide'].map(v => `<option value="${v}" ${(item.transition || 'fade') === v ? 'selected' : ''}>${TRANSITION_LABELS[v]}</option>`).join('')}
+                    </select>
+                </div>
+            `;
+            if (isVisualMedia) {
+                fieldsHtml += `
+                    <div class="avm-settings-field">
+                        <label>Fit</label>
+                        <select onchange="updateModalItemField(${idx}, 'fit', this.value); renderAvmPreview();">
+                            ${['cover', 'contain', 'fill'].map(v => `<option value="${v}" ${(item.fit || 'cover') === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="avm-settings-field">
+                        <label>Position</label>
+                        <select onchange="updateModalItemField(${idx}, 'position', this.value); renderAvmPreview();">
+                            ${['center', 'top', 'bottom', 'left', 'right'].map(v => `<option value="${v}" ${(item.position || 'center') === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`).join('')}
+                        </select>
+                    </div>
+                `;
+            }
+            fieldsHtml += `
+                <div class="avm-settings-field">
+                    <label>Brightness</label>
+                    <div class="avm-range-row">
+                        <input type="range" min="40" max="150" value="${item.brightness || 100}"
+                               oninput="this.nextElementSibling.textContent = this.value + '%'; updateModalItemField(${idx}, 'brightness', parseInt(this.value, 10)); renderAvmPreview();">
+                        <span class="avm-range-value">${item.brightness || 100}%</span>
+                    </div>
+                </div>
+            `;
+
+            let advancedHtml = '';
+            if (isVisualMedia) {
+                advancedHtml = `
+                    <div class="avm-advanced-hint">Overrides the name and category shown on the venue screen for this item only.</div>
+                    <div class="avm-settings-field">
+                        <label>Overlay title</label>
+                        <input type="text" placeholder="${escapeHtml(m.label)}" maxlength="60" value="${escapeHtml(item.captionTitle || '')}"
+                               onchange="updateModalItemField(${idx}, 'captionTitle', this.value); renderAvmPreview();">
+                    </div>
+                    <div class="avm-settings-field" style="margin-bottom:0;">
+                        <label>Overlay subtitle</label>
+                        <input type="text" placeholder="${escapeHtml(itemCategoryLabel(item))}" maxlength="80" value="${escapeHtml(item.captionSubtitle || '')}"
+                               onchange="updateModalItemField(${idx}, 'captionSubtitle', this.value); renderAvmPreview();">
+                    </div>
+                `;
+            } else {
+                advancedHtml = `<div class="avm-advanced-hint" style="margin-bottom:0;">No advanced options for this item type yet.</div>`;
+            }
 
             panel.innerHTML = `
                 <div class="avm-settings-head">
@@ -1915,8 +2105,22 @@
                 </div>
                 <div class="avm-settings-section-label">Settings</div>
                 ${fieldsHtml}
+                <div class="avm-advanced">
+                    <div class="avm-advanced-toggle" onclick="avmToggleAdvanced()">
+                        <span>Advanced</span>
+                        <span class="avm-advanced-chevron" id="avm-advanced-chevron">&rsaquo;</span>
+                    </div>
+                    <div class="avm-advanced-panel" id="avm-advanced-panel">${advancedHtml}</div>
+                </div>
                 <button type="button" class="avm-settings-remove" onclick="removeFileFromModalBlock(${idx})">Remove from sequence</button>
             `;
+        }
+        function avmToggleAdvanced() {
+            document.getElementById('avm-advanced-panel').classList.toggle('open');
+            document.getElementById('avm-advanced-chevron').classList.toggle('open');
+        }
+        function updateModalItemField(idx, field, val) {
+            if (modalAmbientItems[idx]) modalAmbientItems[idx][field] = val;
         }
 
         function avmSelectItem(idx) {
@@ -1944,14 +2148,22 @@
         function addMediaFileToModalBlock(id) {
             const media = ambientMedia.find(m => m.id === id);
             if (!media) return;
-            modalAmbientItems.push({ id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: id, durationSec: 8 });
+            modalAmbientItems.push({
+                id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: id, durationSec: 8,
+                transition: 'fade', fit: 'cover', position: 'center', brightness: 100
+            });
             avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
         function addWidgetToModalBlock(kind) {
-            const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10 };
+            const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10, transition: 'fade', brightness: 100 };
             if (kind === 'ad') { item.adText = ''; item.adQrUrl = ''; }
             modalAmbientItems.push(item);
+            avmSelectedIndex = modalAmbientItems.length - 1;
+            renderModalAmbientFileList();
+        }
+        function addCustomVisualToModalBlock() {
+            modalAmbientItems.push({ id: genId(), type: 'custom', text: 'GOOD VIBES', durationSec: 10, transition: 'fade', brightness: 100 });
             avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
@@ -2050,6 +2262,9 @@
                 for (const it of modalAmbientItems) {
                     if (it.type === 'ad' && !(it.adText || '').trim() && !(it.adQrUrl || '').trim()) {
                         return showToast('Give each Advertisement item some text or a QR link.', 'error');
+                    }
+                    if (it.type === 'custom' && !(it.text || '').trim()) {
+                        return showToast('Give each Custom Visual some text to display.', 'error');
                     }
                 }
                 rule.items = modalAmbientItems.map(it => ({ ...it }));
