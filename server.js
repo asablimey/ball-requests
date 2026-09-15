@@ -1171,6 +1171,12 @@ app.get('/e/:slug/admin', (req, res) => {
 app.get('/e/:slug/kiosk', voterIdentityMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
 });
+// Signage screen (Ambient Visuals slideshow, falling back to an "up next"
+// board) - unauthenticated like the kiosk page, since this is meant to run
+// unattended on a TV/tablet at the venue rather than be logged into.
+app.get('/e/:slug/visuals', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'visuals.html'));
+});
 
 // Constant-time compare against the master password. Hashing both sides
 // first (instead of comparing the raw strings/buffers directly) means a
