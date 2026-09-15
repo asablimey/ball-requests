@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Khula:wght@600;700&display=swap">
+    <title>Visuals Display</title>
+    <style>
+        :root {
+            --spotify-green: #1DB954;
+            --spotify-black: #121212;
+            --panel-bg: #181818;
+            --card-bg: #242424;
+        }
+        html, body {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            overflow: hidden; background-color: var(--spotify-black);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        * { box-sizing: border-box; }
+
+        /* ---------- Ambient view: full-bleed photo/video slideshow ---------- */
+        #ambient-view {
+            position: fixed; inset: 0; display: none; background: #000;
+        }
+        #ambient-view.is-visible { display: block; }
+        .ambient-layer {
+            position: absolute; inset: 0;
+            opacity: 0; transition: opacity 1.2s ease;
+        }
+        .ambient-layer.is-active { opacity: 1; }
+        .ambient-layer img, .ambient-layer video {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .ambient-venue-tag {
+            position: absolute; left: 24px; bottom: 20px; z-index: 5;
+            color: rgba(255,255,255,0.55); font-size: 0.95rem; font-weight: 600;
+            font-family: 'Khula', sans-serif; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+        }
+
+        /* ---------- Queue view: fallback "up next" board ---------- */
+        #queue-view {
+            position: fixed; inset: 0; display: none; flex-direction: column;
+            color: white; padding: 40px 56px;
+        }
+        #queue-view.is-visible { display: flex; }
+        .qv-header { text-align: center; margin-bottom: 28px; }
+        .qv-event-name {
+            font-family: 'Khula', sans-serif; font-weight: 700;
+            font-size: 2.6rem; margin: 0; letter-spacing: -0.5px;
+        }
+        .qv-venue-name { color: #a7a7a7; font-size: 1.1rem; margin-top: 6px; }
+
+        .qv-now-playing {
+            display: flex; align-items: center; gap: 24px;
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 18px;
+            padding: 24px 28px; margin-bottom: 32px;
+        }
+        .qv-artwork {
+            width: 110px; height: 110px; border-radius: 10px; object-fit: cover;
+            background: var(--card-bg); flex-shrink: 0;
+        }
+        .qv-np-text { flex: 1; min-width: 0; }
+        .qv-np-label {
+            color: var(--spotify-green); font-size: 0.85rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 6px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .qv-live-dot {
+            width: 9px; height: 9px; border-radius: 50%; background: var(--spotify-green);
+            animation: qv-pulse 1.5s ease-in-out infinite;
+        }
+        .qv-live-dot.is-paused { animation: none; opacity: 0.3; }
+        @keyframes qv-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        .qv-np-title {
+            font-size: 1.7rem; font-weight: 700; margin: 0 0 4px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .qv-np-artist { color: #a7a7a7; font-size: 1.15rem; margin: 0; }
+        .qv-progress-track {
+            width: 100%; height: 5px; background: #333; border-radius: 3px; margin-top: 14px; overflow: hidden;
+        }
+        .qv-progress-fill { height: 100%; background: var(--spotify-green); width: 0%; }
+
+        .qv-upnext-label {
+            font-family: 'Khula', sans-serif; font-size: 1.2rem; font-weight: 700;
+            color: #a7a7a7; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 16px;
+        }
+        .qv-list { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+        .qv-row {
+            display: flex; align-items: center; gap: 18px;
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 12px;
+            padding: 14px 18px;
+        }
+        .qv-row-rank {
+            font-family: 'Khula', sans-serif; font-size: 1.4rem; font-weight: 700;
+            color: #555; width: 34px; text-align: center; flex-shrink: 0;
+        }
+        .qv-row img { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--card-bg); }
+        .qv-row-text { flex: 1; min-width: 0; }
+        .qv-row-title { font-size: 1.15rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .qv-row-artist { color: #a7a7a7; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .qv-row-votes { color: var(--spotify-green); font-weight: 700; font-size: 1.1rem; flex-shrink: 0; }
+
+        .qv-empty {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: #666; font-size: 1.3rem; text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Ambient Visuals: driven entirely by the Music Scheduler's Ambient
+         Visuals blocks. Two stacked layers crossfade between slides so a
+         photo/video change never hard-cuts to black. -->
+    <div id="ambient-view">
+        <div class="ambient-layer" id="ambient-layer-a"></div>
+        <div class="ambient-layer" id="ambient-layer-b"></div>
+        <div class="ambient-venue-tag" id="ambient-venue-tag"></div>
+    </div>
+
+    <!-- Fallback board: shown whenever no Ambient Visuals block is currently
+         scheduled, so the screen is never just dead/black between blocks. -->
+    <div id="queue-view">
+        <div class="qv-header">
+            <h1 class="qv-event-name" id="qv-event-name">Now Playing</h1>
+            <div class="qv-venue-name" id="qv-venue-name"></div>
+        </div>
+        <div class="qv-now-playing" id="qv-now-playing" style="display:none;">
+            <img class="qv-artwork" id="qv-artwork" src="" alt="">
+            <div class="qv-np-text">
+                <p class="qv-np-label"><span class="qv-live-dot" id="qv-live-dot"></span> Now Playing</p>
+                <p class="qv-np-title" id="qv-np-title"></p>
+                <p class="qv-np-artist" id="qv-np-artist"></p>
+                <div class="qv-progress-track"><div class="qv-progress-fill" id="qv-progress-fill"></div></div>
+            </div>
+        </div>
+        <div class="qv-upnext-label">Up Next</div>
+        <div class="qv-list" id="qv-list"></div>
+    </div>
+
+    <script>
+        const EVENT_SLUG = location.pathname.split('/')[2] || '';
+        function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        /* =========================================================
+           Ambient Visuals slideshow
+           - Polls /api/ambient-visuals. When active, cycles through the
+             resolved media list: photos hold for photoDurationSec, videos
+             play to completion, then it advances to the next item and loops.
+           - A single active:false reply is NOT treated as "off" - the
+             scheduler API deliberately returns that for any brief gap
+             between blocks, and blanking the screen on every gap would be
+             worse than just holding the last slide a little longer. Only
+             after a few consecutive inactive polls does this fall back to
+             the queue view.
+           ========================================================= */
+        let ambientMedia = [];
+        let ambientRuleId = null;
+        let ambientPhotoDurationSec = 8;
+        let ambientIndex = 0;
+        let ambientAdvanceTimer = null;
+        let ambientInactiveStreak = 0;
+        const AMBIENT_INACTIVE_TOLERANCE = 2; // consecutive misses before falling back
+
+        let activeLayer = 'a';
+        function layerEl(which) { return document.getElementById(`ambient-layer-${which}`); }
+
+        function showView(name) {
+            document.getElementById('ambient-view').classList.toggle('is-visible', name === 'ambient');
+            document.getElementById('queue-view').classList.toggle('is-visible', name === 'queue');
+        }
+
+        function clearAmbientAdvanceTimer() {
+            if (ambientAdvanceTimer) { clearTimeout(ambientAdvanceTimer); ambientAdvanceTimer = null; }
+        }
+
+        function renderAmbientSlide() {
+            if (ambientMedia.length === 0) return;
+            const item = ambientMedia[ambientIndex % ambientMedia.length];
+            const incoming = activeLayer === 'a' ? 'b' : 'a';
+            const outgoing = activeLayer;
+            const incomingEl = layerEl(incoming);
+
+            incomingEl.innerHTML = item.type === 'video'
+                ? `<video src="${escapeHtml(item.url)}" autoplay muted playsinline></video>`
+                : `<img src="${escapeHtml(item.url)}" alt="">`;
+
+            // Crossfade: bring the new layer in, then drop the old one out.
+            requestAnimationFrame(() => {
+                incomingEl.classList.add('is-active');
+                layerEl(outgoing).classList.remove('is-active');
+            });
+            activeLayer = incoming;
+
+            clearAmbientAdvanceTimer();
+            if (item.type === 'video') {
+                const videoEl = incomingEl.querySelector('video');
+                videoEl.onended = advanceAmbientSlide;
+                // Safety net in case a video fails to fire 'ended' (broken
+                // file, stalled network) - don't let the slideshow get stuck.
+                ambientAdvanceTimer = setTimeout(advanceAmbientSlide, 90000);
+            } else {
+                ambientAdvanceTimer = setTimeout(advanceAmbientSlide, ambientPhotoDurationSec * 1000);
+            }
+        }
+
+        function advanceAmbientSlide() {
+            ambientIndex = (ambientIndex + 1) % ambientMedia.length;
+            renderAmbientSlide();
+        }
+
+        async function pollAmbientVisuals() {
+            try {
+                const res = await fetch(eventUrl('/api/ambient-visuals'));
+                if (!res.ok) return;
+                const data = await res.json();
+
+                if (!data.active) {
+                    ambientInactiveStreak++;
+                    if (ambientInactiveStreak >= AMBIENT_INACTIVE_TOLERANCE) {
+                        clearAmbientAdvanceTimer();
+                        ambientMedia = [];
+                        ambientRuleId = null;
+                        showView('queue');
+                    }
+                    return;
+                }
+                ambientInactiveStreak = 0;
+
+                const ruleChanged = data.ruleId !== ambientRuleId;
+                ambientRuleId = data.ruleId;
+                ambientPhotoDurationSec = data.photoDurationSec || 8;
+
+                if (ruleChanged || ambientMedia.length === 0) {
+                    ambientMedia = data.media || [];
+                    ambientIndex = 0;
+                    showView('ambient');
+                    renderAmbientSlide();
+                } else {
+                    // Same block still active - just keep its media list fresh
+                    // in case a file was added/removed, without restarting
+                    // whatever is currently on screen.
+                    ambientMedia = data.media || [];
+                    showView('ambient');
+                }
+            } catch (e) { /* keep showing whatever's already on screen */ }
+        }
+
+        /* =========================================================
+           Fallback queue board
+           ========================================================= */
+        let npState = null;
+        let npTicker = null;
+
+        function renderNpProgress() {
+            if (!npState || !npState.durationMs) return;
+            const elapsed = npState.isPlaying ? (Date.now() - npState.fetchedAt) : 0;
+            const pct = Math.min(100, ((npState.progressMs + elapsed) / npState.durationMs) * 100);
+            const fillEl = document.getElementById('qv-progress-fill');
+            if (fillEl) fillEl.style.width = pct + '%';
+        }
+
+        function updateNowPlaying(data) {
+            const card = document.getElementById('qv-now-playing');
+            if (!data || !data.connected || !data.title) {
+                card.style.display = 'none';
+                npState = null;
+                if (npTicker) { clearInterval(npTicker); npTicker = null; }
+                return;
+            }
+            card.style.display = 'flex';
+            document.getElementById('qv-artwork').src = data.artwork || '';
+            document.getElementById('qv-np-title').innerText = data.title;
+            document.getElementById('qv-np-artist').innerText = data.artist || '';
+            document.getElementById('qv-live-dot').classList.toggle('is-paused', !data.isPlaying);
+
+            npState = {
+                progressMs: data.progressMs || 0,
+                durationMs: data.durationMs || 0,
+                isPlaying: !!data.isPlaying,
+                fetchedAt: Date.now()
+            };
+            renderNpProgress();
+            if (!npTicker) npTicker = setInterval(renderNpProgress, 250);
+        }
+
+        function renderQueueList(queue) {
+            const list = document.getElementById('qv-list');
+            const top = (queue || []).slice(0, 8);
+            if (top.length === 0) {
+                list.innerHTML = '<div class="qv-empty">No requests queued right now</div>';
+                return;
+            }
+            list.innerHTML = top.map((song, idx) => `
+                <div class="qv-row">
+                    <div class="qv-row-rank">${idx + 1}</div>
+                    <img src="${escapeHtml(song.artwork || '')}" alt="">
+                    <div class="qv-row-text">
+                        <div class="qv-row-title">${escapeHtml(song.title)}</div>
+                        <div class="qv-row-artist">${escapeHtml(song.artist)}</div>
+                    </div>
+                    <div class="qv-row-votes">+${(song.ups || 0) - (song.downs || 0)}</div>
+                </div>
+            `).join('');
+        }
+
+        async function pollQueueBoard() {
+            try {
+                const res = await fetch(eventUrl('/kiosk-data'));
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('qv-event-name').innerText = data.eventName || 'Now Playing';
+                document.getElementById('qv-venue-name').innerText = data.venueName || '';
+                renderQueueList(data.queue);
+            } catch (e) { /* keep showing last known board */ }
+        }
+
+        async function pollNowPlaying() {
+            try {
+                const res = await fetch(eventUrl('/api/now-playing'));
+                if (!res.ok) return;
+                updateNowPlaying(await res.json());
+            } catch (e) { /* keep last known state */ }
+        }
+
+        // Ambient view is checked most often since it drives an active
+        // slideshow; the fallback board's data is cheap and only visible
+        // when ambient visuals aren't running.
+        pollAmbientVisuals();
+        pollQueueBoard();
+        pollNowPlaying();
+        setInterval(pollAmbientVisuals, 8000);
+        setInterval(pollQueueBoard, 8000);
+        setInterval(pollNowPlaying, 4000);
+    </script>
+</body>
+</html>
