@@ -2041,6 +2041,12 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         const days = Array.isArray(r.days) ? [...new Set(r.days.map(d => parseInt(d, 10)).filter(d => validDays.has(d)))] : [];
         if (days.length === 0) return null;
         const id = typeof r.id === 'string' && r.id ? r.id : crypto.randomUUID();
+        // Optional admin-chosen label shown on the block instead of the
+        // auto-generated one (playlist label / first ambient filename) -
+        // see blockTitleFor in scheduler.html. Blank/whitespace-only names
+        // are dropped entirely rather than saved as '', so the fallback
+        // title logic there keeps working for unnamed blocks.
+        const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 60) : null;
 
         if (r.laneType === 'ambient') {
             // Dedupe while preserving the admin's chosen order (that order
@@ -2054,7 +2060,7 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
             if (mediaIds.length === 0) return null; // a block with nothing to show isn't a valid block
             const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
                 ? r.photoDurationSec : 8;
-            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec };
+            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec, ...(name ? { name } : {}) };
         }
 
         if (!playlistIds.has(r.playlistId)) return null;
@@ -2067,7 +2073,8 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
             start: r.start,
             end: r.end,
             volume,
-            requestsAllowed
+            requestsAllowed,
+            ...(name ? { name } : {})
         };
     }).filter(Boolean).slice(0, 200) : event.musicScheduler.rules;
 
