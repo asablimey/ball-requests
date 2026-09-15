@@ -1159,6 +1159,18 @@
                                 <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
                             </div>
                         </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Visuals Display (visuals.html)</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                A full-screen signage page for a TV or tablet at the venue. It shows the Ambient Visuals
+                                photos/videos scheduled in the Music Scheduler, and automatically falls back to a live
+                                Now Playing + Up Next board whenever no Ambient Visuals block is running.
+                            </p>
+                            <div class="control-bar">
+                                <button class="toggle-btn neutral-status" onclick="openVisualsPage()">Open Visuals Display</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="settings-category-danger" class="settings-category-panel">
@@ -1707,6 +1719,9 @@ async function verifyPassword() {
 
         function openKioskPage() {
             window.open(eventUrl('/kiosk'), '_blank', 'noopener');
+        }
+        function openVisualsPage() {
+            window.open(eventUrl('/visuals'), '_blank', 'noopener');
         }
 
         async function toggleKioskRequests() {
