@@ -66,6 +66,7 @@
         .amb-queue {
             position: absolute; inset: 0; display: flex; flex-direction: column;
             color: white; padding: 40px 56px; background: var(--spotify-black);
+            overflow: hidden; box-sizing: border-box;
         }
         .amb-queue .qv-header { text-align: center; margin-bottom: 24px; }
 
@@ -82,7 +83,7 @@
         /* ---------- Queue view: fallback "up next" board ---------- */
         #queue-view {
             position: fixed; inset: 0; display: none; flex-direction: column;
-            color: white; padding: 40px 56px;
+            color: white; padding: 40px 56px; box-sizing: border-box; overflow: hidden;
         }
         #queue-view.is-visible { display: flex; }
         .qv-header { text-align: center; margin-bottom: 28px; }
@@ -96,19 +97,24 @@
             display: flex; align-items: center; gap: 24px;
             background: var(--panel-bg); border: 1px solid #282828; border-radius: 18px;
             padding: 24px 28px; margin-bottom: 32px;
+            overflow: hidden; min-width: 0; max-width: 100%; box-sizing: border-box;
         }
         .qv-artwork {
-            width: 110px; height: 110px; border-radius: 10px; object-fit: cover;
-            background: var(--card-bg); flex-shrink: 0;
+            display: block;
+            width: 110px; height: 110px; max-width: 110px; max-height: 110px;
+            flex: 0 0 110px; border-radius: 10px; object-fit: cover;
+            background: var(--card-bg);
         }
-        .qv-np-text { flex: 1; min-width: 0; }
+        .qv-np-text { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
         .qv-np-label {
             color: var(--spotify-green); font-size: 0.85rem; font-weight: 700;
             text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 6px;
             display: flex; align-items: center; gap: 8px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .qv-live-dot {
             width: 9px; height: 9px; border-radius: 50%; background: var(--spotify-green);
+            flex-shrink: 0;
             animation: qv-pulse 1.5s ease-in-out infinite;
         }
         .qv-live-dot.is-paused { animation: none; opacity: 0.3; }
@@ -117,7 +123,10 @@
             font-size: 1.7rem; font-weight: 700; margin: 0 0 4px;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        .qv-np-artist { color: #a7a7a7; font-size: 1.15rem; margin: 0; }
+        .qv-np-artist {
+            color: #a7a7a7; font-size: 1.15rem; margin: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
         .qv-progress-track {
             width: 100%; height: 5px; background: #333; border-radius: 3px; margin-top: 14px; overflow: hidden;
         }
@@ -251,6 +260,17 @@
         }
 
         function renderQueueInto(el) {
+            let ambNpState = null;
+            let ambNpTicker = null;
+
+            function renderAmbNpProgress() {
+                if (!ambNpState || !ambNpState.durationMs) return;
+                const elapsed = ambNpState.isPlaying ? (Date.now() - ambNpState.fetchedAt) : 0;
+                const pct = Math.min(100, ((ambNpState.progressMs + elapsed) / ambNpState.durationMs) * 100);
+                const fillEl = el.querySelector('#amb-qv-progress-fill');
+                if (fillEl) fillEl.style.width = pct + '%';
+            }
+
             el.innerHTML = `
                 <div class="amb-queue">
                     <div class="qv-header">
@@ -263,6 +283,7 @@
                             <p class="qv-np-label"><span class="qv-live-dot" id="amb-qv-live-dot"></span> Now Playing</p>
                             <p class="qv-np-title" id="amb-qv-np-title"></p>
                             <p class="qv-np-artist" id="amb-qv-np-artist"></p>
+                            <div class="qv-progress-track"><div class="qv-progress-fill" id="amb-qv-progress-fill"></div></div>
                         </div>
                     </div>
                     <div class="qv-upnext-label">Up Next</div>
@@ -309,8 +330,18 @@
                                 el.querySelector('#amb-qv-np-title').innerText = np.title;
                                 el.querySelector('#amb-qv-np-artist').innerText = np.artist || '';
                                 el.querySelector('#amb-qv-live-dot').classList.toggle('is-paused', !np.isPlaying);
+                                ambNpState = {
+                                    progressMs: np.progressMs || 0,
+                                    durationMs: np.durationMs || 0,
+                                    isPlaying: !!np.isPlaying,
+                                    fetchedAt: Date.now()
+                                };
+                                renderAmbNpProgress();
+                                if (!ambNpTicker) ambNpTicker = setInterval(renderAmbNpProgress, 250);
                             } else {
                                 card.style.display = 'none';
+                                ambNpState = null;
+                                if (ambNpTicker) { clearInterval(ambNpTicker); ambNpTicker = null; }
                             }
                         }
                     }
@@ -318,7 +349,10 @@
             };
             refresh();
             const intervalId = setInterval(refresh, 4000);
-            return () => clearInterval(intervalId);
+            return () => {
+                clearInterval(intervalId);
+                if (ambNpTicker) clearInterval(ambNpTicker);
+            };
         }
 
         function renderAdInto(el, item) {
