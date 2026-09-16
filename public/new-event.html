@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <style>
         :root {
@@ -146,7 +146,7 @@
         /* Plain floating attribution text, no box/badge - matches how
            Google Maps itself shows required credit: quiet grey text
            with no background, border, or pill shape sitting on the map. */
-        .maplibregl-ctrl-attrib {
+        .leaflet-control-attribution {
             background: none !important;
             box-shadow: none !important;
             color: rgba(255, 255, 255, 0.55) !important;
@@ -154,9 +154,17 @@
             padding: 0 4px !important;
             text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
         }
-        .maplibregl-ctrl-attrib a { color: rgba(255, 255, 255, 0.7) !important; }
-        .maplibregl-ctrl-attrib-button { display: none !important; }
-        .maplibregl-canvas { border-radius: 8px; }
+        .leaflet-control-attribution a { color: rgba(255, 255, 255, 0.7) !important; }
+        .leaflet-container { border-radius: 8px; background: var(--card-bg); font-family: inherit; }
+        .leaflet-control-zoom a { background: var(--card-bg) !important; color: white !important; border-color: #333 !important; }
+        .leaflet-control-zoom a:hover { background: #2f2f2f !important; }
+
+        /* Red teardrop pin for the draggable venue marker. */
+        .venue-pin-dot {
+            width: 16px; height: 16px; border-radius: 50% 50% 50% 0;
+            background: var(--red-action); transform: rotate(-45deg);
+            border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+        }
     </style>
 </head>
 <body>
@@ -206,8 +214,12 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // Free CARTO API key - get one in ~1 minute, no account needed,
+        // at https://carto.com/basemaps/apikey (5M free tile loads/month).
+        // Without a key CARTO stamps tiles with a "API key required" watermark.
+        const CARTO_API_KEY = 'cb1_3mzu_1_cfa8111e18df6a0e94198c4c';
         const nameInput = document.getElementById('input-event-name');
         const venueNameInput = document.getElementById('input-venue-name');
 
@@ -241,8 +253,9 @@
         }
 
         // ============================================================
-        // Venue location picker - MapLibre GL + your custom MapTiler
-        // style + OpenStreetMap Nominatim for search.
+        // Venue location picker - Leaflet + CARTO Positron tiles (plain
+        // DOM/canvas rendering, no WebGL - see the CARTO_API_KEY note
+        // above) + OpenStreetMap Nominatim for search.
         //
         // Search gets the admin close; the draggable marker lets them
         // fine-tune the exact spot (a geocoded address often lands
@@ -261,19 +274,24 @@
         // this saves almost everyone a manual pan/zoom before they can even
         // start searching. Searching (or an address autofilling) flies the
         // map to the actual result regardless.
-        const map = new maplibregl.Map({
-            container: 'location-map',
-            // Same switch as index.html - OpenFreeMap needs no key/account,
-            // so this map can't go dark from a MapTiler key expiring/quota
-            // again.
-            style: 'https://tiles.openfreemap.org/styles/liberty',
-            center: [172.8, -41.2],
-            zoom: 4.6,
-            scrollZoom: false,
-            attributionControl: false
+        const map = L.map('location-map', {
+            scrollWheelZoom: false,
+            zoomControl: true,
+            attributionControl: true
+        }).setView([-41.2, 172.8], 4.6); // Leaflet takes [lat, lng], not [lng, lat]
+
+        L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        const venuePinIcon = L.divIcon({
+            className: '',
+            html: '<div class="venue-pin-dot"></div>',
+            iconSize: [16, 16],
+            iconAnchor: [8, 14]
         });
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
-        map.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
 
         let marker = null;
 
@@ -281,18 +299,16 @@
             selectedLat = lat;
             selectedLng = lng;
             if (marker) {
-                marker.setLngLat([lng, lat]);
+                marker.setLatLng([lat, lng]);
             } else {
-                marker = new maplibregl.Marker({ draggable: true, color: '#e91429' })
-                    .setLngLat([lng, lat])
-                    .addTo(map);
+                marker = L.marker([lat, lng], { draggable: true, icon: venuePinIcon }).addTo(map);
                 marker.on('dragend', () => {
-                    const pos = marker.getLngLat();
+                    const pos = marker.getLatLng();
                     selectedLat = pos.lat;
                     selectedLng = pos.lng;
                 });
             }
-            if (panZoom) map.flyTo({ center: [lng, lat], zoom: 16 });
+            if (panZoom) map.flyTo([lat, lng], 16);
             clearLocationBtn.style.display = 'inline-block';
         }
 
@@ -302,10 +318,10 @@
             selectedVenueName = '';
             locationSearchInput.value = '';
             if (marker) {
-                marker.remove();
+                map.removeLayer(marker);
                 marker = null;
             }
-            map.flyTo({ center: [172.8, -41.2], zoom: 4.6 });
+            map.flyTo([-41.2, 172.8], 4.6);
             clearLocationBtn.style.display = 'none';
         }
 
