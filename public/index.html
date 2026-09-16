@@ -242,8 +242,30 @@
         }
         .credit-badge-pin-icon {
             display: none;
+            position: relative;
             width: 22px;
             height: 22px;
+        }
+        .credit-badge-pin-icon .credit-badge-pin-svg {
+            display: block;
+            width: 22px;
+            height: 22px;
+            fill: white;
+        }
+        /* Small "x" badge overlapping the top-right of the pin, so the
+           out-of-range state reads as "location off/unavailable" rather
+           than looking like an ordinary location marker. */
+        .credit-badge-pin-icon .credit-badge-pin-x {
+            position: absolute;
+            top: -3px;
+            right: -3px;
+            width: 12px;
+            height: 12px;
+            box-sizing: border-box;
+            padding: 2px;
+            background-color: #C99404;
+            border: 1.5px solid #F2B705;
+            border-radius: 50%;
             fill: white;
         }
         /* Warm, clearly-different look for "you're not at the venue right
@@ -989,9 +1011,14 @@
                                  CSS) whenever the guest has drifted outside the venue's
                                  geofence - a plain "you're not here" cue rather than a
                                  credit count that can't currently be spent anyway. -->
-                            <svg id="credit-badge-pin-icon" class="credit-badge-pin-icon" viewBox="0 0 24 24">
-                                <path d="M12 2C8.14 2 5 5.14 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.86-3.14-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/>
-                            </svg>
+                            <div id="credit-badge-pin-icon" class="credit-badge-pin-icon">
+                                <svg class="credit-badge-pin-svg" viewBox="0 0 24 24">
+                                    <path d="M12 2C8.14 2 5 5.14 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.86-3.14-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/>
+                                </svg>
+                                <svg class="credit-badge-pin-x" viewBox="0 0 24 24">
+                                    <path d="M18.3 5.71L12 12.01l-6.29-6.3-1.42 1.42L10.59 13.4l-6.3 6.29 1.42 1.42L12 14.83l6.29 6.3 1.42-1.42-6.3-6.29 6.3-6.29z"/>
+                                </svg>
+                            </div>
                         </div>
                     </div>
                 </div>
