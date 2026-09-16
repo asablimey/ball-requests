@@ -406,6 +406,8 @@
         .avm-side-thumb { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: #111; }
         .avm-side-item.disabled { opacity: 0.35; cursor: default; }
         .avm-side-item.disabled:hover { background: none; }
+        .avm-library-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #avm-library-list { max-height: 220px; overflow-y: auto; }
         .avm-empty-hint-small { color: var(--text-dim); font-size: 0.76rem; padding: 4px 8px; }
 
         .avm-main { flex: 1; min-width: 0; padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
@@ -764,6 +766,11 @@
                         <div class="avm-side-label">Media</div>
                         <button type="button" class="avm-side-item" onclick="avmPickFiles('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
                         <button type="button" class="avm-side-item" onclick="avmPickFiles('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
+                    </div>
+
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Library</div>
+                        <div id="avm-library-list"></div>
                     </div>
 
                     <div class="avm-side-section">
@@ -1349,6 +1356,7 @@
             }
             ambientMedia.push(data.item);
             renderPlaylists();
+            renderAvmLibraryList();
             return data.item;
         }
 
@@ -1370,6 +1378,7 @@
                 ambientMedia = data.ambientMedia;
                 rules = data.rules;
                 renderPlaylists();
+                renderAvmLibraryList();
                 renderDayBoxes();
             } catch (e) {
                 showToast('Could not reach the server. Try again.', 'error');
@@ -1792,6 +1801,7 @@
             document.getElementById('avm-schedule-chevron').classList.remove('open');
 
             renderModalAmbientFileList();
+            renderAvmLibraryList();
             document.getElementById('ambient-modal-backdrop').classList.add('show');
         }
 
@@ -2019,6 +2029,36 @@
             const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10 };
             if (kind === 'ad') { item.adText = ''; item.adQrUrl = ''; }
             modalAmbientItems.push(item);
+            avmSelectedIndex = modalAmbientItems.length - 1;
+            renderModalAmbientFileList();
+        }
+
+        // Lets a file already uploaded to this event (any past block's Photo/
+        // Video, still sitting in ambientMedia) get reused in the block
+        // currently open in the editor, without re-uploading it. Safe to call
+        // even when the modal isn't open (e.g. right after an upload) since
+        // it's a no-op if #avm-library-list isn't in the DOM.
+        function renderAvmLibraryList() {
+            const list = document.getElementById('avm-library-list');
+            if (!list) return;
+            if (ambientMedia.length === 0) {
+                list.innerHTML = '<div class="avm-empty-hint-small">Nothing uploaded yet</div>';
+                return;
+            }
+            list.innerHTML = ambientMedia.map(m => `
+                <button type="button" class="avm-side-item" onclick="addExistingMediaToModalBlock('${escapeHtml(m.id)}')" title="${escapeHtml(m.filename)}">
+                    ${m.type === 'video'
+                        ? `<span class="avm-side-thumb avm-side-icon" style="display:flex;align-items:center;justify-content:center;">&#127909;</span>`
+                        : `<img class="avm-side-thumb" src="${escapeHtml(m.url)}" alt="">`}
+                    <span class="avm-library-label">${escapeHtml(m.filename)}</span>
+                </button>
+            `).join('');
+        }
+
+        function addExistingMediaToModalBlock(mediaId) {
+            const media = ambientMedia.find(m => m.id === mediaId);
+            if (!media) return;
+            modalAmbientItems.push({ id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: media.id, durationSec: 8 });
             avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
