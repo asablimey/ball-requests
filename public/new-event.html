@@ -263,7 +263,10 @@
         // map to the actual result regardless.
         const map = new maplibregl.Map({
             container: 'location-map',
-            style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
+            // Same switch as index.html - OpenFreeMap needs no key/account,
+            // so this map can't go dark from a MapTiler key expiring/quota
+            // again.
+            style: 'https://tiles.openfreemap.org/styles/liberty',
             center: [172.8, -41.2],
             zoom: 4.6,
             scrollZoom: false,
