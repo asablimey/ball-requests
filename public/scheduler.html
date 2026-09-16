@@ -541,9 +541,22 @@
             border-radius: 8px; overflow: hidden; border: 1px solid #333; user-select: none;
         }
         .cv-layer {
-            position: absolute; overflow: hidden; cursor: grab;
+            position: absolute; cursor: grab;
             outline: 1px dashed transparent; box-sizing: border-box;
         }
+        /* Clipping (overflow/border-radius/border) now lives on this inner
+           div instead of .cv-layer itself, so the resize handles below -
+           which sit just outside the layer's box - don't get clipped off. */
+        .cv-layer-inner { box-sizing: border-box; }
+        .cv-resize-handle {
+            position: absolute; width: 11px; height: 11px; box-sizing: border-box;
+            background: var(--spotify-green); border: 2px solid white; border-radius: 50%;
+            z-index: 5;
+        }
+        .cv-resize-handle.nw { top: -6px; left: -6px; cursor: nwse-resize; }
+        .cv-resize-handle.ne { top: -6px; right: -6px; cursor: nesw-resize; }
+        .cv-resize-handle.sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+        .cv-resize-handle.se { bottom: -6px; right: -6px; cursor: nwse-resize; }
         .cv-layer:hover { outline-color: rgba(255,255,255,0.35); }
         .cv-layer.selected { outline: 2px solid var(--spotify-green); }
         .cv-layer img, .cv-layer video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -2230,12 +2243,18 @@
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
         }
 
-        // Shared inline style for a layer's outer wrapper - position, size,
-        // opacity, rotation and (for the types that support it) rounded
-        // corners / a border. Used by both the live draggable canvas and the
-        // static composite preview so the two never drift out of sync.
-        function cvLayerWrapperStyle(l) {
+        // Outer wrapper - position, size, opacity, rotation. No clipping
+        // here so resize handles (added in cvRenderCanvas, just outside
+        // this box) aren't cut off.
+        function cvLayerOuterStyle(l) {
             const rot = l.rotation ? `rotate(${l.rotation}deg)` : 'none';
+            return `left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; transform:${rot};`;
+        }
+        // Inner content wrapper - rounded corners / border / clipping for
+        // the types that support it. Used by both the live draggable
+        // canvas and the static composite preview so they never drift out
+        // of sync with each other.
+        function cvLayerInnerStyle(l) {
             let radius = '0';
             if (l.type === 'photo' || l.type === 'video') {
                 radius = l.borderRadius ? `${l.borderRadius}%` : '0';
@@ -2245,7 +2264,7 @@
             const border = (l.type === 'photo' || l.type === 'video') && l.borderWidth
                 ? `${l.borderWidth}px solid ${l.borderColor || '#ffffff'}`
                 : 'none';
-            return `left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; transform:${rot}; border-radius:${radius}; border:${border};`;
+            return `width:100%; height:100%; overflow:hidden; border-radius:${radius}; border:${border};`;
         }
 
         // Shared HTML for a single layer's *content* - used both for the
@@ -2333,8 +2352,8 @@
         function cvRenderComposite(item) {
             const bg = item.background || { type: 'color', color: '#000000' };
             const layers = (item.layers || []).map(l => `
-                <div style="position:absolute; ${cvLayerWrapperStyle(l)} overflow:hidden;">
-                    ${cvLayerContentHtml(l)}
+                <div style="position:absolute; ${cvLayerOuterStyle(l)}">
+                    <div class="cv-layer-inner" style="${cvLayerInnerStyle(l)}">${cvLayerContentHtml(l)}</div>
                 </div>
             `).join('');
             return `<div style="position:relative; width:100%; height:100%;">${cvBackgroundHtml(bg)}${layers}</div>`;
@@ -2342,13 +2361,23 @@
 
         function cvRenderCanvas() {
             const canvas = document.getElementById('cv-canvas');
-            const layersHtml = cvWorking.layers.map((l, idx) => `
-                <div class="cv-layer${idx === cvSelectedLayerIndex ? ' selected' : ''}"
-                     style="${cvLayerWrapperStyle(l)}"
-                     onmousedown="cvLayerMouseDown(event, ${idx})">
-                    ${cvLayerContentHtml(l)}
-                </div>
-            `).join('');
+            const layersHtml = cvWorking.layers.map((l, idx) => {
+                const selected = idx === cvSelectedLayerIndex;
+                const handles = selected ? `
+                    <div class="cv-resize-handle nw" onmousedown="cvResizeMouseDown(event, ${idx}, 'nw')"></div>
+                    <div class="cv-resize-handle ne" onmousedown="cvResizeMouseDown(event, ${idx}, 'ne')"></div>
+                    <div class="cv-resize-handle sw" onmousedown="cvResizeMouseDown(event, ${idx}, 'sw')"></div>
+                    <div class="cv-resize-handle se" onmousedown="cvResizeMouseDown(event, ${idx}, 'se')"></div>
+                ` : '';
+                return `
+                    <div class="cv-layer${selected ? ' selected' : ''}"
+                         style="${cvLayerOuterStyle(l)}"
+                         onmousedown="cvLayerMouseDown(event, ${idx})">
+                        <div class="cv-layer-inner" style="${cvLayerInnerStyle(l)}">${cvLayerContentHtml(l)}</div>
+                        ${handles}
+                    </div>
+                `;
+            }).join('');
             canvas.innerHTML = `${cvBackgroundHtml(cvWorking.background)}${layersHtml}`;
             // Background itself is clickable too, to select/edit it
             const bgEl = canvas.querySelector('div');
@@ -2826,6 +2855,62 @@
             cvDrag = null;
             document.removeEventListener('mousemove', cvOnDragMove);
             document.removeEventListener('mouseup', cvOnDragEnd);
+            cvRenderRightPanel();
+        }
+
+        // ---- Drag-to-resize via the four corner handles ----
+        // Doesn't account for rotation - resizing a rotated layer still
+        // drags in screen-space (x/y/width/height), not along the rotated
+        // axes. Fine for the straight-up-and-down layouts this editor is
+        // mostly used for; a genuinely rotated layer is rare enough that
+        // rotation-aware resize math isn't worth the complexity right now.
+        let cvResize = null; // { idx, corner, startClientX, startClientY, origX, origY, origWidth, origHeight, rect }
+        const CV_MIN_LAYER_SIZE = 5; // percent - keeps a layer from being resized down to nothing
+
+        function cvResizeMouseDown(e, idx, corner) {
+            e.stopPropagation();
+            e.preventDefault();
+            cvSelectLayer(idx);
+            const canvas = document.getElementById('cv-canvas');
+            const rect = canvas.getBoundingClientRect();
+            const layer = cvWorking.layers[idx];
+            cvResize = {
+                idx, corner, startClientX: e.clientX, startClientY: e.clientY,
+                origX: layer.x, origY: layer.y, origWidth: layer.width, origHeight: layer.height, rect
+            };
+            document.addEventListener('mousemove', cvOnResizeMove);
+            document.addEventListener('mouseup', cvOnResizeEnd);
+        }
+        function cvOnResizeMove(e) {
+            if (!cvResize) return;
+            const dxPct = ((e.clientX - cvResize.startClientX) / cvResize.rect.width) * 100;
+            const dyPct = ((e.clientY - cvResize.startClientY) / cvResize.rect.height) * 100;
+            const { corner, origX, origY, origWidth, origHeight } = cvResize;
+            const layer = cvWorking.layers[cvResize.idx];
+            let newX = origX, newY = origY, newWidth = origWidth, newHeight = origHeight;
+
+            if (corner.includes('e')) {
+                newWidth = Math.max(CV_MIN_LAYER_SIZE, Math.min(100 - origX, origWidth + dxPct));
+            } else if (corner.includes('w')) {
+                const clampedDx = Math.max(-origX, Math.min(origWidth - CV_MIN_LAYER_SIZE, dxPct));
+                newX = origX + clampedDx;
+                newWidth = origWidth - clampedDx;
+            }
+            if (corner.includes('s')) {
+                newHeight = Math.max(CV_MIN_LAYER_SIZE, Math.min(100 - origY, origHeight + dyPct));
+            } else if (corner.includes('n')) {
+                const clampedDy = Math.max(-origY, Math.min(origHeight - CV_MIN_LAYER_SIZE, dyPct));
+                newY = origY + clampedDy;
+                newHeight = origHeight - clampedDy;
+            }
+
+            layer.x = newX; layer.y = newY; layer.width = newWidth; layer.height = newHeight;
+            cvRenderCanvas();
+        }
+        function cvOnResizeEnd() {
+            cvResize = null;
+            document.removeEventListener('mousemove', cvOnResizeMove);
+            document.removeEventListener('mouseup', cvOnResizeEnd);
             cvRenderRightPanel();
         }
 
