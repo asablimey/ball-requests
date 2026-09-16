@@ -450,8 +450,8 @@
         .avm-nav-count { font-size: 0.74rem; color: var(--text-dim); }
 
         .avm-seq-head { display: flex; justify-content: space-between; align-items: baseline; }
-        .avm-seq-head h4 { margin: 0; font-size: 0.92rem; display: flex; align-items: baseline; gap: 8px; }
-        .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); font-weight: 400; }
+        .avm-seq-head h4 { margin: 0; font-size: 0.92rem; }
+        .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); }
         .avm-seq-list { display: flex; flex-direction: column; gap: 8px; }
         .avm-seq-row {
             display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid #2c2c2c;
@@ -506,64 +506,75 @@
         }
         .avm-settings-remove:hover { filter: brightness(1.15); }
         .avm-settings-empty { color: var(--text-dim); font-size: 0.82rem; text-align: center; padding: 30px 10px; }
-        .avm-settings-field select {
-            width: 100%; background: var(--panel-bg); border: 1px solid #333; color: white;
-            padding: 8px 10px; border-radius: 6px; font-size: 0.84rem; outline: none; appearance: none;
-            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23a7a7a7'/></svg>");
-            background-repeat: no-repeat; background-position: right 10px center;
-        }
-        .avm-settings-field select:focus { border-color: var(--spotify-green); }
-        .avm-settings-row {
-            display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 0.76rem; color: var(--text-dim);
-        }
-        .avm-settings-row .avm-icon-sm { width: 14px; text-align: center; flex-shrink: 0; }
-        .avm-range-row { display: flex; align-items: center; gap: 10px; }
-        .avm-range-row input[type="range"] {
-            flex: 1; accent-color: var(--spotify-green); height: 4px; cursor: pointer;
-        }
-        .avm-range-value { font-size: 0.78rem; color: var(--text-dim); width: 38px; text-align: right; flex-shrink: 0; }
 
-        .avm-advanced { margin-top: 4px; border-top: 1px solid var(--border); padding-top: 12px; }
-        .avm-advanced-toggle {
-            display: flex; align-items: center; justify-content: space-between; cursor: pointer;
-            font-size: 0.82rem; font-weight: 700; color: white;
+        /* ---------- Custom Visual Editor ---------- */
+        #cv-modal-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+            z-index: 10002; align-items: center; justify-content: center; padding: 20px;
         }
-        .avm-advanced-chevron { color: var(--text-dim); transition: transform 0.15s; display: inline-block; }
-        .avm-advanced-chevron.open { transform: rotate(90deg); }
-        .avm-advanced-panel { display: none; margin-top: 12px; }
-        .avm-advanced-panel.open { display: block; }
-        .avm-advanced-hint { font-size: 0.72rem; color: var(--text-dim); margin: -2px 0 10px; line-height: 1.4; }
-
-        .avm-seq-menu-wrap { position: relative; flex-shrink: 0; }
-        .avm-seq-menu {
-            display: none; position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
-            background: var(--card-bg); border: 1px solid #333; border-radius: 8px; padding: 4px;
-            min-width: 140px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        #cv-modal-backdrop.show { display: flex; }
+        .cv-modal {
+            background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
+            width: 100%; max-width: 1040px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
         }
-        .avm-seq-menu.open { display: block; }
-        .avm-seq-menu button {
-            display: block; width: 100%; text-align: left; background: none; border: none; color: white;
-            padding: 7px 10px; border-radius: 5px; font-size: 0.78rem; cursor: pointer;
+        .cv-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
-        .avm-seq-menu button:hover { background: var(--panel-bg); }
-        .avm-seq-menu button:disabled { opacity: 0.35; cursor: default; }
-        .avm-seq-menu button:disabled:hover { background: none; }
-        .avm-seq-menu button.danger { color: #ffb4bb; }
-
-        .avm-seq-total { font-size: 0.74rem; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
-        .avm-seq-total-btn {
-            width: 22px; height: 22px; border-radius: 5px; background: none; border: none; color: var(--text-dim);
-            cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.85rem;
+        .cv-header h3 { margin: 0; font-size: 1.1rem; }
+        .cv-header-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+        .cv-close { background: none; border: none; color: white; font-size: 1.4rem; cursor: pointer; line-height: 1; }
+        .cv-body { display: flex; flex: 1; min-height: 0; }
+        .cv-sidebar { width: 170px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 16px 12px; overflow-y: auto; }
+        .cv-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: #0a0a0a; }
+        .cv-canvas-wrap { position: relative; width: 100%; max-width: 640px; }
+        .cv-canvas {
+            position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
+            border-radius: 8px; overflow: hidden; border: 1px solid #333; user-select: none;
         }
-        .avm-seq-total-btn:hover { color: white; background: #2f2f2f; }
-
-        .avm-currently-stat { display: flex; align-items: center; gap: 10px; }
-        .avm-currently-stat-icon {
-            width: 26px; height: 26px; border-radius: 6px; background: var(--panel-bg); flex-shrink: 0;
-            display: flex; align-items: center; justify-content: center; font-size: 0.85rem; color: var(--text-dim);
+        .cv-layer {
+            position: absolute; overflow: hidden; cursor: grab;
+            outline: 1px dashed transparent; box-sizing: border-box;
         }
-        .avm-currently-stat-label { font-size: 0.72rem; color: var(--text-dim); }
-        .avm-currently-stat-value { font-size: 0.85rem; font-weight: 700; }
+        .cv-layer:hover { outline-color: rgba(255,255,255,0.35); }
+        .cv-layer.selected { outline: 2px solid var(--spotify-green); }
+        .cv-layer img, .cv-layer video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .cv-layer-text {
+            width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+            text-align: center; padding: 4px; word-break: break-word; font-weight: 700;
+        }
+        .cv-layer-widget {
+            width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.55); color: white; font-size: 0.75rem; gap: 4px; text-align: center;
+        }
+        .cv-right { width: 250px; flex-shrink: 0; border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+        .cv-right-section-label {
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim);
+            margin: 0 0 8px; font-weight: 700;
+        }
+        .cv-layers-list { margin-bottom: 20px; }
+        .cv-layer-row {
+            display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
+            border: 1px solid transparent; cursor: pointer; font-size: 0.78rem;
+        }
+        .cv-layer-row:hover { background: var(--card-bg); }
+        .cv-layer-row.selected { border-color: var(--spotify-green); background: rgba(29,185,84,0.08); }
+        .cv-layer-row .lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cv-layer-row .bg-tag { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; }
+        .cv-layer-row button { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.85rem; padding: 2px 4px; }
+        .cv-layer-row button:hover { color: white; }
+        .cv-settings-field { margin-bottom: 12px; }
+        .cv-settings-field label { display: block; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 5px; }
+        .cv-settings-field input[type="text"], .cv-settings-field input[type="number"], .cv-settings-field select {
+            width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 7px 9px; border-radius: 6px; font-size: 0.82rem;
+        }
+        .cv-settings-row { display: flex; gap: 8px; }
+        .cv-settings-row .cv-settings-field { flex: 1; }
+        .cv-footer {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
+        }
 
         .avm-footer { border-top: 1px solid var(--border); flex-shrink: 0; }
         .avm-schedule-toggle { display: flex; align-items: center; gap: 10px; padding: 14px 20px; cursor: pointer; }
@@ -657,8 +668,7 @@
                         <button class="btn btn-ghost btn-small" style="width:100%;" onclick="addPlaylist()">+ Add Playlist</button>
                     </div>
                     <div id="new-ambient-fields" style="display:none;">
-                        <button class="btn btn-ghost btn-small" style="width:100%;" onclick="openAddVisualModal()">+ Add Visual</button>
-                        <input type="file" id="ambient-file-input" accept="image/*,video/*" multiple style="display:none;" onchange="onAmbientFilesChosen(event)">
+                        <button class="btn btn-ghost btn-small" style="width:100%;" onclick="startNewAmbientBlock()">+ Add Visual</button>
                     </div>
                 </div>
             </div>
@@ -748,15 +758,12 @@
 
             <div class="avm-body">
                 <div class="avm-sidebar">
-                    <button type="button" class="avm-add-visual-btn" onclick="document.getElementById('modal-ambient-file-input').click()">+ Add Visual</button>
+                    <input type="file" id="modal-ambient-file-input" accept="image/*" multiple style="display:none;" onchange="onModalAmbientFilesChosen(event)">
 
                     <div class="avm-side-section">
-                        <div class="avm-side-label">Media Library</div>
-                        <div id="avm-media-list"></div>
-                        <div class="upload-btn-row" style="margin-top:8px;">
-                            <label class="upload-label" id="modal-ambient-upload-label" for="modal-ambient-file-input" style="padding:8px; font-size:0.75rem;">+ Upload photos/videos</label>
-                            <input type="file" id="modal-ambient-file-input" accept="image/*,video/*" multiple onchange="onModalAmbientFilesChosen(event)">
-                        </div>
+                        <div class="avm-side-label">Media</div>
+                        <button type="button" class="avm-side-item" onclick="avmPickFiles('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
+                        <button type="button" class="avm-side-item" onclick="avmPickFiles('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
                     </div>
 
                     <div class="avm-side-section">
@@ -767,13 +774,12 @@
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Custom</div>
-                        <button type="button" class="avm-side-item" onclick="addCustomVisualToModalBlock()"><span class="avm-side-icon">&#10024;</span> Custom Visual</button>
+                        <button type="button" class="avm-side-item" onclick="openCustomVisualEditor(null)"><span class="avm-side-icon">&#10024;</span> Custom Visual</button>
                     </div>
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Other</div>
                         <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('ad')"><span class="avm-side-icon">&#128227;</span> Advertisement</button>
-                        <button type="button" class="avm-side-item" onclick="document.getElementById('modal-ambient-file-input').click()"><span class="avm-side-icon">&#8942;</span> More&hellip;</button>
                     </div>
                 </div>
 
@@ -789,20 +795,8 @@
                                     <div class="sub" id="avm-currently-sub">&mdash;</div>
                                 </div>
                             </div>
-                            <div class="avm-currently-stat">
-                                <span class="avm-currently-stat-icon">&#128337;</span>
-                                <div>
-                                    <div class="avm-currently-stat-label">Duration</div>
-                                    <div class="avm-currently-stat-value" id="avm-currently-duration">&mdash;</div>
-                                </div>
-                            </div>
-                            <div class="avm-currently-stat">
-                                <span class="avm-currently-stat-icon">&#8646;</span>
-                                <div>
-                                    <div class="avm-currently-stat-label">Transition</div>
-                                    <div class="avm-currently-stat-value" id="avm-currently-transition">&mdash;</div>
-                                </div>
-                            </div>
+                            <div class="avm-currently-row"><span>Duration</span></div>
+                            <div class="avm-currently-row"><strong id="avm-currently-duration">&mdash;</strong></div>
                             <div class="avm-currently-nav">
                                 <button type="button" class="avm-nav-btn" onclick="avmStepPreview(-1)">&lsaquo;</button>
                                 <span class="avm-nav-count" id="avm-nav-count">0 / 0</span>
@@ -813,11 +807,8 @@
 
                     <div>
                         <div class="avm-seq-head">
-                            <h4>Visual Sequence <span class="avm-seq-meta" id="avm-seq-meta">0 items</span></h4>
-                            <div class="avm-seq-total">
-                                <span>Total Duration (approx.) <strong id="avm-seq-total-val">0s</strong></span>
-                                <button type="button" class="avm-seq-total-btn" onclick="avmPreviewCurrent()" title="Preview">&#8599;</button>
-                            </div>
+                            <h4>Visual Sequence</h4>
+                            <span class="avm-seq-meta" id="avm-seq-meta">0 items</span>
                         </div>
                         <div class="avm-seq-list" id="avm-seq-list" style="margin-top:10px;"></div>
                     </div>
@@ -863,19 +854,45 @@
         </div>
     </div>
 
-    <div id="add-visual-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10001; align-items:center; justify-content:center;">
-        <div style="background:var(--panel-bg); border:1px solid var(--border); border-radius:12px; padding:20px; width:90%; max-width:320px;">
-            <h3 style="margin:0 0 12px;">Add Visual</h3>
-            <div class="field-group">
-                <label>Type</label>
-                <select id="add-visual-type" style="width:100%; background:var(--card-bg); border:1px solid #333; color:white; padding:8px 10px; border-radius:6px;">
-                    <option value="photo">Photo</option>
-                    <option value="video">Video</option>
-                </select>
+    <div id="cv-modal-backdrop">
+        <div class="cv-modal">
+            <div class="cv-header">
+                <div>
+                    <h3>Custom Visual</h3>
+                    <div class="cv-header-sub">Build a background + overlays, then add it to the sequence</div>
+                </div>
+                <button type="button" class="cv-close" onclick="closeCustomVisualEditor()">&times;</button>
             </div>
-            <div style="display:flex; gap:8px; margin-top:14px;">
-                <button class="btn btn-ghost" style="flex:1;" onclick="closeAddVisualModal()">Cancel</button>
-                <button class="btn btn-primary" style="flex:1;" onclick="confirmAddVisual()">Choose File(s)</button>
+            <div class="cv-body">
+                <div class="cv-sidebar">
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Background</div>
+                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundColor()"><span class="avm-side-icon">&#127912;</span> Color</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
+                    </div>
+                    <div class="avm-side-section">
+                        <div class="avm-side-label">Overlays</div>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('text')"><span class="avm-side-icon">&#128221;</span> Text</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('photo')"><span class="avm-side-icon">&#128444;</span> Image/Logo</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('video')"><span class="avm-side-icon">&#127916;</span> Video</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('clock')"><span class="avm-side-icon">&#128337;</span> Clock &amp; Date</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('queue')"><span class="avm-side-icon">&#128250;</span> Live Queue</button>
+                    </div>
+                    <input type="file" id="cv-file-input" accept="image/*" style="display:none;" onchange="onCvFileChosen(event)">
+                </div>
+
+                <div class="cv-center">
+                    <div class="cv-canvas-wrap">
+                        <div class="cv-canvas" id="cv-canvas"></div>
+                    </div>
+                </div>
+
+                <div class="cv-right" id="cv-right-panel"></div>
+            </div>
+            <div class="cv-footer">
+                <button type="button" class="btn btn-ghost" onclick="closeCustomVisualEditor()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveCustomVisual()">Save Visual</button>
             </div>
         </div>
     </div>
@@ -1213,20 +1230,20 @@
         }
 
         // ---------- Library panel (playlists + ambient visuals, merged) ----------
-        // "+ Add Visual" opens this small popup instead of uploading
-        // straight away - the dropdown picks photo vs video, then the
-        // actual file picker opens on confirm.
-        function openAddVisualModal() {
-            document.getElementById('add-visual-backdrop').style.display = 'flex';
-        }
-        function closeAddVisualModal() {
-            document.getElementById('add-visual-backdrop').style.display = 'none';
-        }
-        function confirmAddVisual() {
-            const type = document.getElementById('add-visual-type').value;
-            document.getElementById('ambient-file-input').accept = type === 'video' ? 'video/*' : 'image/*';
-            closeAddVisualModal();
-            document.getElementById('ambient-file-input').click();
+        // "+ Add Visual" used to open a small popup asking Photo-or-Video
+        // before anything else happened. It now skips straight to creating
+        // a fresh, unscheduled Ambient Visuals block and opens the real
+        // editor on it directly - see startNewAmbientBlock().
+        // isNewAmbientRule tracks whether the block currently open in the
+        // editor was just created and hasn't been saved yet, so Cancel can
+        // discard it cleanly instead of leaving an empty orphan block
+        // sitting in `rules` with no schedule.
+        let isNewAmbientRule = false;
+        function startNewAmbientBlock() {
+            const rule = { id: genId(), laneType: 'ambient', items: [], days: [], start: '', end: '' };
+            rules.push(rule);
+            isNewAmbientRule = true;
+            openAmbientBlockModal(rule);
         }
 
         function onNewItemTypeChange() {
@@ -1297,25 +1314,6 @@
             e.dataTransfer.setData('text/plain', 'media:' + mediaId);
         }
 
-        async function onAmbientFilesChosen(e) {
-            const files = [...e.target.files];
-            e.target.value = ''; // lets the same file be picked again later
-            if (files.length === 0) return;
-            showToast(`Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`);
-            let failures = 0;
-            for (const file of files) {
-                try {
-                    await uploadOneAmbientFile(file);
-                } catch (err) {
-                    failures++;
-                    console.error('Ambient upload failed:', err);
-                }
-            }
-            if (failures > 0) {
-                showToast(`${failures} file${failures === 1 ? '' : 's'} failed to upload. Try again.`, 'error');
-            }
-        }
-
         // Uploads straight to Cloudinary from the browser (the file bytes
         // never pass through this server), then registers just the
         // resulting URL/metadata with the event via the admin API. Uses
@@ -1351,6 +1349,7 @@
             }
             ambientMedia.push(data.item);
             renderPlaylists();
+            return data.item;
         }
 
         async function removeAmbientMedia(id) {
@@ -1829,14 +1828,14 @@
             if (item.type === 'queue') return { icon: '&#128250;', label: 'Live Queue' };
             if (item.type === 'clock') return { icon: '&#128337;', label: 'Clock & Date' };
             if (item.type === 'ad') return { icon: '&#128227;', label: 'Advertisement' };
-            if (item.type === 'custom') return { icon: '&#10024;', label: item.text ? item.text : 'Custom Visual' };
+            if (item.type === 'customVisual') return { icon: '&#10024;', label: item.customLabel || 'Custom Visual' };
             return { icon: '&#10067;', label: 'Unknown' };
         }
         function itemCategoryLabel(item) {
             if (item.type === 'photo') return 'Photo';
             if (item.type === 'video') return 'Video';
             if (item.type === 'ad') return 'Advertisement';
-            if (item.type === 'custom') return 'Custom';
+            if (item.type === 'customVisual') return 'Custom Visual';
             return 'Live widget';
         }
         function itemDurationText(item) {
@@ -1847,9 +1846,6 @@
             if (item.type === 'photo' && media) {
                 return `<img class="${cls}" src="${escapeHtml(media.url)}" alt="">`;
             }
-            if (item.type === 'custom') {
-                return `<span class="${cls}" style="background: linear-gradient(135deg, var(--spotify-green), #0d7a38); color: white; font-weight: 800; font-size: 0.6rem; text-align: center; line-height: 1.1; padding: 2px;">${escapeHtml((item.text || 'CUSTOM').slice(0, 10).toUpperCase())}</span>`;
-            }
             const meta = itemDisplayMeta(item);
             return `<span class="${cls}">${meta.icon}</span>`;
         }
@@ -1858,60 +1854,24 @@
         // on modalAmbientItems/avmSelectedIndex - called after any add,
         // remove, reorder, or selection change.
         function renderModalAmbientFileList() {
-            renderAvmSidebarMedia();
             renderAvmSequenceList();
             renderAvmPreview();
             renderAvmSettingsPanel();
         }
 
-        function renderAvmSidebarMedia() {
-            const list = document.getElementById('avm-media-list');
-            if (!list) return;
-            if (ambientMedia.length === 0) {
-                list.innerHTML = `<div class="avm-empty-hint-small">No media uploaded yet.</div>`;
-                return;
-            }
-            const usedIds = modalAmbientItems.filter(it => it.mediaId).map(it => it.mediaId);
-            list.innerHTML = ambientMedia.map(m => {
-                const used = usedIds.includes(m.id);
-                const thumb = m.type === 'photo'
-                    ? `<img class="avm-side-thumb" src="${escapeHtml(m.url)}" alt="">`
-                    : `<span class="avm-side-thumb" style="display:flex; align-items:center; justify-content:center;">&#127909;</span>`;
-                return used
-                    ? `<button type="button" class="avm-side-item disabled" disabled title="Already in this block">${thumb}<span class="chip-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.filename)}</span></button>`
-                    : `<button type="button" class="avm-side-item" onclick="addMediaFileToModalBlock('${escapeHtml(m.id)}')">${thumb}<span class="chip-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(m.filename)}</span></button>`;
-            }).join('');
-        }
-
-        // Videos play in full, so their real screen time isn't known here -
-        // the total only counts timed items and flags how many videos ride
-        // along on top of that, same spirit as the mockup's "approx." label.
-        function avmTotalDurationText() {
-            let seconds = 0, videoCount = 0;
-            modalAmbientItems.forEach(it => {
-                if (it.type === 'video') videoCount++;
-                else seconds += (it.durationSec || 8);
-            });
-            const m = Math.floor(seconds / 60), s = seconds % 60;
-            const base = m > 0 ? `${m}m ${s}s` : `${s}s`;
-            return videoCount ? `${base} + ${videoCount} video${videoCount === 1 ? '' : 's'}` : base;
-        }
         function renderAvmSequenceList() {
             const list = document.getElementById('avm-seq-list');
             const meta = document.getElementById('avm-seq-meta');
-            const totalEl = document.getElementById('avm-seq-total-val');
             if (modalAmbientItems.length === 0) {
                 list.innerHTML = `<div class="avm-seq-empty">Nothing in this block yet - add a file or widget from the left.</div>`;
                 meta.textContent = '0 items';
-                if (totalEl) totalEl.textContent = '0s';
                 return;
             }
             meta.textContent = `${modalAmbientItems.length} item${modalAmbientItems.length === 1 ? '' : 's'}`;
-            if (totalEl) totalEl.textContent = avmTotalDurationText();
             list.innerHTML = modalAmbientItems.map((item, idx) => {
                 const m = itemDisplayMeta(item);
                 return `
-                    <div class="avm-seq-row${idx === avmSelectedIndex ? ' selected' : ''}" onclick="avmSelectItem(${idx})">
+                    <div class="avm-seq-row${idx === avmSelectedIndex ? ' selected' : ''}" onclick="avmSelectItem(${idx})" ${item.type === 'customVisual' ? `ondblclick="openCustomVisualEditor(modalAmbientItems[${idx}])"` : ''}>
                         <span class="avm-seq-index">${idx + 1}</span>
                         <span class="avm-seq-drag">&#8942;&#8942;</span>
                         ${itemThumbHtml(item, 'avm-seq-thumb')}
@@ -1920,30 +1880,14 @@
                             <div class="type">${itemCategoryLabel(item)}</div>
                         </div>
                         <span class="avm-seq-duration">${itemDurationText(item)}</span>
-                        <div class="avm-seq-menu-wrap">
-                            <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); avmToggleSeqMenu(${idx})" title="More">&#8942;</button>
-                            <div class="avm-seq-menu" id="avm-seq-menu-${idx}">
-                                <button type="button" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, -1); avmCloseSeqMenus();" ${idx === 0 ? 'disabled' : ''}>&uarr; Move earlier</button>
-                                <button type="button" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, 1); avmCloseSeqMenus();" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''}>&darr; Move later</button>
-                                <button type="button" class="danger" onclick="event.stopPropagation(); removeFileFromModalBlock(${idx}); avmCloseSeqMenus();">&times; Remove</button>
-                            </div>
-                        </div>
+                        ${item.type === 'customVisual' ? `<button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); openCustomVisualEditor(modalAmbientItems[${idx}])" title="Edit layers">&#9998;</button>` : ''}
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Move earlier">&uarr;</button>
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); moveFileInModalBlock(${idx}, 1)" ${idx === modalAmbientItems.length - 1 ? 'disabled' : ''} title="Move later">&darr;</button>
+                        <button type="button" class="avm-seq-menu-btn" onclick="event.stopPropagation(); removeFileFromModalBlock(${idx})" title="Remove">&times;</button>
                     </div>
                 `;
             }).join('');
         }
-        function avmToggleSeqMenu(idx) {
-            const menu = document.getElementById(`avm-seq-menu-${idx}`);
-            const wasOpen = menu.classList.contains('open');
-            avmCloseSeqMenus();
-            if (!wasOpen) menu.classList.add('open');
-        }
-        function avmCloseSeqMenus() {
-            document.querySelectorAll('.avm-seq-menu.open').forEach(m => m.classList.remove('open'));
-        }
-        document.addEventListener('click', avmCloseSeqMenus);
-
-        const TRANSITION_LABELS = { fade: 'Fade', cut: 'Cut', slide: 'Slide' };
 
         function renderAvmPreview() {
             const stage = document.getElementById('avm-preview-stage');
@@ -1951,7 +1895,6 @@
             const nameEl = document.getElementById('avm-currently-name');
             const subEl = document.getElementById('avm-currently-sub');
             const durEl = document.getElementById('avm-currently-duration');
-            const transEl = document.getElementById('avm-currently-transition');
             const countEl = document.getElementById('avm-nav-count');
 
             if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
@@ -1960,7 +1903,6 @@
                 nameEl.textContent = '\u2014';
                 subEl.textContent = 'Nothing to preview yet';
                 durEl.textContent = '\u2014';
-                transEl.textContent = '\u2014';
                 countEl.textContent = '0 / 0';
                 return;
             }
@@ -1969,19 +1911,16 @@
             const item = modalAmbientItems[idx];
             const m = itemDisplayMeta(item);
             const media = item.mediaId ? ambientMedia.find(x => x.id === item.mediaId) : null;
-            const mediaStyle = `object-fit:${item.fit || 'cover'}; object-position:${item.position || 'center'}; filter:brightness(${item.brightness || 100}%);`;
-            const captionName = (item.captionTitle || '').trim() || m.label;
-            const captionType = (item.captionSubtitle || '').trim() || itemCategoryLabel(item);
 
             if (item.type === 'photo' && media) {
-                stage.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="${mediaStyle}"><div class="avm-preview-caption"><div class="name">${escapeHtml(captionName)}</div><div class="type">${escapeHtml(captionType)}</div></div>`;
+                stage.innerHTML = `<img src="${escapeHtml(media.url)}" alt=""><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Photo</div></div>`;
                 thumbEl.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:cover;">`;
             } else if (item.type === 'video' && media) {
-                stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="${mediaStyle}"></video><div class="avm-preview-caption"><div class="name">${escapeHtml(captionName)}</div><div class="type">${escapeHtml(captionType)}</div></div>`;
+                stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Video</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#127909;</span>`;
-            } else if (item.type === 'custom') {
-                stage.innerHTML = `<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--spotify-green), #0d7a38); filter:brightness(${item.brightness || 100}%);"><span style="font-weight:800; font-size:1.6rem; letter-spacing:0.5px; text-align:center; padding:0 20px;">${escapeHtml(item.text || 'GOOD VIBES')}</span></div>`;
-                thumbEl.innerHTML = `<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--spotify-green), #0d7a38); color:white; font-size:0.6rem; font-weight:800; text-align:center; line-height:1.1; padding:2px;">${escapeHtml((item.text || 'CUSTOM').slice(0, 10).toUpperCase())}</div>`;
+            } else if (item.type === 'customVisual') {
+                stage.innerHTML = `<div class="avm-cv-stage-inner">${cvRenderComposite(item)}</div><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Custom Visual</div></div>`;
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#10024;</span>`;
             } else {
                 stage.innerHTML = `<span class="avm-preview-placeholder">${m.icon}</span><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">${m.icon}</span>`;
@@ -1990,7 +1929,6 @@
             nameEl.textContent = m.label;
             subEl.textContent = itemCategoryLabel(item);
             durEl.textContent = item.type === 'video' ? 'Full video' : `${item.durationSec || 8} seconds`;
-            transEl.textContent = TRANSITION_LABELS[item.transition] || 'Fade';
             countEl.textContent = `${idx + 1} / ${modalAmbientItems.length}`;
         }
 
@@ -2004,7 +1942,6 @@
             const item = modalAmbientItems[idx];
             const m = itemDisplayMeta(item);
 
-            const isVisualMedia = item.type === 'photo' || item.type === 'video';
             let fieldsHtml = '';
             if (item.type === 'video') {
                 fieldsHtml = `<div class="avm-settings-note">Videos always play in full - there's no duration to set.</div>`;
@@ -2015,6 +1952,16 @@
                         <input type="number" min="1" max="120" value="${item.durationSec || 8}"
                                onchange="updateModalItemDuration(${idx}, this.value); renderAvmSequenceList(); renderAvmPreview();">
                     </div>
+                `;
+            }
+            if (item.type === 'customVisual') {
+                fieldsHtml += `
+                    <div class="avm-settings-field">
+                        <label>Name (optional)</label>
+                        <input type="text" placeholder="e.g. Sponsor Slide" value="${escapeHtml(item.customLabel || '')}"
+                               onchange="updateModalCustomLabel(${idx}, this.value)">
+                    </div>
+                    <button type="button" class="btn btn-ghost btn-small" style="width:100%; margin-bottom:12px;" onclick="openCustomVisualEditor(modalAmbientItems[${idx}])">Edit Layers</button>
                 `;
             }
             if (item.type === 'ad') {
@@ -2031,69 +1978,6 @@
                     </div>
                 `;
             }
-            if (item.type === 'custom') {
-                fieldsHtml += `
-                    <div class="avm-settings-field">
-                        <label>Text</label>
-                        <input type="text" placeholder="e.g. GOOD VIBES" maxlength="40" value="${escapeHtml(item.text || '')}"
-                               onchange="updateModalItemField(${idx}, 'text', this.value); renderAvmSequenceList(); renderAvmPreview();">
-                    </div>
-                `;
-            }
-
-            fieldsHtml += `
-                <div class="avm-settings-field">
-                    <label>Transition</label>
-                    <select onchange="updateModalItemField(${idx}, 'transition', this.value); renderAvmPreview();">
-                        ${['fade', 'cut', 'slide'].map(v => `<option value="${v}" ${(item.transition || 'fade') === v ? 'selected' : ''}>${TRANSITION_LABELS[v]}</option>`).join('')}
-                    </select>
-                </div>
-            `;
-            if (isVisualMedia) {
-                fieldsHtml += `
-                    <div class="avm-settings-field">
-                        <label>Fit</label>
-                        <select onchange="updateModalItemField(${idx}, 'fit', this.value); renderAvmPreview();">
-                            ${['cover', 'contain', 'fill'].map(v => `<option value="${v}" ${(item.fit || 'cover') === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="avm-settings-field">
-                        <label>Position</label>
-                        <select onchange="updateModalItemField(${idx}, 'position', this.value); renderAvmPreview();">
-                            ${['center', 'top', 'bottom', 'left', 'right'].map(v => `<option value="${v}" ${(item.position || 'center') === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`).join('')}
-                        </select>
-                    </div>
-                `;
-            }
-            fieldsHtml += `
-                <div class="avm-settings-field">
-                    <label>Brightness</label>
-                    <div class="avm-range-row">
-                        <input type="range" min="40" max="150" value="${item.brightness || 100}"
-                               oninput="this.nextElementSibling.textContent = this.value + '%'; updateModalItemField(${idx}, 'brightness', parseInt(this.value, 10)); renderAvmPreview();">
-                        <span class="avm-range-value">${item.brightness || 100}%</span>
-                    </div>
-                </div>
-            `;
-
-            let advancedHtml = '';
-            if (isVisualMedia) {
-                advancedHtml = `
-                    <div class="avm-advanced-hint">Overrides the name and category shown on the venue screen for this item only.</div>
-                    <div class="avm-settings-field">
-                        <label>Overlay title</label>
-                        <input type="text" placeholder="${escapeHtml(m.label)}" maxlength="60" value="${escapeHtml(item.captionTitle || '')}"
-                               onchange="updateModalItemField(${idx}, 'captionTitle', this.value); renderAvmPreview();">
-                    </div>
-                    <div class="avm-settings-field" style="margin-bottom:0;">
-                        <label>Overlay subtitle</label>
-                        <input type="text" placeholder="${escapeHtml(itemCategoryLabel(item))}" maxlength="80" value="${escapeHtml(item.captionSubtitle || '')}"
-                               onchange="updateModalItemField(${idx}, 'captionSubtitle', this.value); renderAvmPreview();">
-                    </div>
-                `;
-            } else {
-                advancedHtml = `<div class="avm-advanced-hint" style="margin-bottom:0;">No advanced options for this item type yet.</div>`;
-            }
 
             panel.innerHTML = `
                 <div class="avm-settings-head">
@@ -2105,22 +1989,8 @@
                 </div>
                 <div class="avm-settings-section-label">Settings</div>
                 ${fieldsHtml}
-                <div class="avm-advanced">
-                    <div class="avm-advanced-toggle" onclick="avmToggleAdvanced()">
-                        <span>Advanced</span>
-                        <span class="avm-advanced-chevron" id="avm-advanced-chevron">&rsaquo;</span>
-                    </div>
-                    <div class="avm-advanced-panel" id="avm-advanced-panel">${advancedHtml}</div>
-                </div>
                 <button type="button" class="avm-settings-remove" onclick="removeFileFromModalBlock(${idx})">Remove from sequence</button>
             `;
-        }
-        function avmToggleAdvanced() {
-            document.getElementById('avm-advanced-panel').classList.toggle('open');
-            document.getElementById('avm-advanced-chevron').classList.toggle('open');
-        }
-        function updateModalItemField(idx, field, val) {
-            if (modalAmbientItems[idx]) modalAmbientItems[idx][field] = val;
         }
 
         function avmSelectItem(idx) {
@@ -2145,25 +2015,10 @@
             }
         }
 
-        function addMediaFileToModalBlock(id) {
-            const media = ambientMedia.find(m => m.id === id);
-            if (!media) return;
-            modalAmbientItems.push({
-                id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: id, durationSec: 8,
-                transition: 'fade', fit: 'cover', position: 'center', brightness: 100
-            });
-            avmSelectedIndex = modalAmbientItems.length - 1;
-            renderModalAmbientFileList();
-        }
         function addWidgetToModalBlock(kind) {
-            const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10, transition: 'fade', brightness: 100 };
+            const item = { id: genId(), type: kind, durationSec: kind === 'ad' ? 8 : 10 };
             if (kind === 'ad') { item.adText = ''; item.adQrUrl = ''; }
             modalAmbientItems.push(item);
-            avmSelectedIndex = modalAmbientItems.length - 1;
-            renderModalAmbientFileList();
-        }
-        function addCustomVisualToModalBlock() {
-            modalAmbientItems.push({ id: genId(), type: 'custom', text: 'GOOD VIBES', durationSec: 10, transition: 'fade', brightness: 100 });
             avmSelectedIndex = modalAmbientItems.length - 1;
             renderModalAmbientFileList();
         }
@@ -2174,6 +2029,11 @@
         function updateModalAdField(idx, field, val) {
             const maxLen = field === 'adText' ? 200 : 500;
             modalAmbientItems[idx][field] = val.trim().slice(0, maxLen);
+        }
+        function updateModalCustomLabel(idx, val) {
+            modalAmbientItems[idx].customLabel = val.trim().slice(0, 60);
+            renderAvmSequenceList();
+            renderAvmPreview();
         }
         function removeFileFromModalBlock(idx) {
             modalAmbientItems.splice(idx, 1);
@@ -2193,28 +2053,396 @@
             renderModalAmbientFileList();
         }
 
-        // Lets an admin upload new photos/videos without leaving the block
-        // editor - uploads land in the shared library (same as the
-        // palette's upload button) and show up in the sidebar immediately.
+        // Clicking "Photo" or "Video" in the sidebar sets the right accept
+        // filter on the hidden file input, then opens the file picker
+        // immediately - no intermediate "what type is this" popup.
+        function avmPickFiles(type) {
+            const input = document.getElementById('modal-ambient-file-input');
+            input.accept = type === 'video' ? 'video/*' : 'image/*';
+            input.click();
+        }
+
+        // Uploads the chosen file(s) and drops each one straight into this
+        // block's Visual Sequence as a new item - there's no separate
+        // reusable media library step in between.
         async function onModalAmbientFilesChosen(e) {
             const files = [...e.target.files];
             e.target.value = '';
             if (files.length === 0) return;
-            const label = document.getElementById('modal-ambient-upload-label');
-            label.textContent = `Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`;
+            showToast(`Uploading ${files.length === 1 ? '1 file' : files.length + ' files'}...`);
             let failures = 0;
             for (const file of files) {
                 try {
-                    await uploadOneAmbientFile(file);
+                    const media = await uploadOneAmbientFile(file);
+                    modalAmbientItems.push({ id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: media.id, durationSec: 8 });
+                    avmSelectedIndex = modalAmbientItems.length - 1;
                 } catch (err) {
                     failures++;
                     console.error('Ambient upload failed:', err);
                 }
             }
-            label.textContent = '+ Upload photos/videos';
             if (failures > 0) {
                 showToast(`${failures} file${failures === 1 ? '' : 's'} failed to upload. Try again.`, 'error');
             }
+            renderModalAmbientFileList();
+        }
+
+        // ---------- Custom Visual Editor ----------
+        // A Custom Visual is one item in the main sequence, but internally
+        // it's a background (color/photo/video, always full-screen) plus
+        // any number of overlay layers (text/photo/video/clock/live queue),
+        // each with its own position, size and opacity. cvWorking holds the
+        // in-progress copy being edited; nothing touches modalAmbientItems
+        // until Save Visual is clicked.
+        let cvWorking = null;
+        let cvSelectedLayerIndex = -1; // -1 = background is selected
+        let cvPendingFileTarget = null; // 'bg-photo' | 'bg-video' | 'ov-photo' | 'ov-video'
+        let cvDrag = null; // { idx, startX, startY, origX, origY, canvasRect }
+
+        function openCustomVisualEditor(existingItem) {
+            if (existingItem && existingItem.type === 'customVisual') {
+                cvWorking = {
+                    itemId: existingItem.id,
+                    customLabel: existingItem.customLabel || '',
+                    durationSec: existingItem.durationSec || 10,
+                    background: existingItem.background ? { ...existingItem.background } : { type: 'color', color: '#000000', fit: 'cover' },
+                    layers: (existingItem.layers || []).map(l => ({ ...l }))
+                };
+            } else {
+                cvWorking = {
+                    itemId: null,
+                    customLabel: '',
+                    durationSec: 10,
+                    background: { type: 'color', color: '#000000', fit: 'cover' },
+                    layers: []
+                };
+            }
+            cvSelectedLayerIndex = -1;
+            document.getElementById('cv-modal-backdrop').classList.add('show');
+            cvRenderAll();
+        }
+        function closeCustomVisualEditor() {
+            document.getElementById('cv-modal-backdrop').classList.remove('show');
+            cvWorking = null;
+            cvSelectedLayerIndex = -1;
+        }
+
+        function cvRenderAll() {
+            cvRenderCanvas();
+            cvRenderRightPanel();
+        }
+
+        function cvMediaFor(mediaId) {
+            return ambientMedia.find(m => m.id === mediaId) || null;
+        }
+
+        // Shared HTML for a single layer's *content* - used both for the
+        // live, draggable canvas and for the flattened static preview
+        // shown back on the main Ambient Visuals editor.
+        function cvLayerContentHtml(layer) {
+            if (layer.type === 'photo' || layer.type === 'video') {
+                const media = cvMediaFor(layer.mediaId);
+                if (!media) return `<div class="cv-layer-widget">Missing file</div>`;
+                return layer.type === 'video'
+                    ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video>`
+                    : `<img src="${escapeHtml(media.url)}" alt="">`;
+            }
+            if (layer.type === 'text') {
+                return `<div class="cv-layer-text" style="font-size:${layer.fontSize || 28}px; color:${escapeHtml(layer.color || '#ffffff')};">${escapeHtml(layer.text || '')}</div>`;
+            }
+            if (layer.type === 'clock') {
+                const now = new Date();
+                return `<div class="cv-layer-widget">&#128337; ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`;
+            }
+            if (layer.type === 'queue') {
+                return `<div class="cv-layer-widget">&#128250; Live Queue</div>`;
+            }
+            return '';
+        }
+        function cvBackgroundHtml(bg) {
+            if (bg.type === 'color') {
+                return `<div style="position:absolute; inset:0; background:${escapeHtml(bg.color || '#000000')};"></div>`;
+            }
+            const media = cvMediaFor(bg.mediaId);
+            if (!media) return `<div style="position:absolute; inset:0; background:#000;"></div>`;
+            return bg.type === 'video'
+                ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};"></video>`
+                : `<img src="${escapeHtml(media.url)}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};">`;
+        }
+        // Static, non-interactive composite - reused by the main modal's
+        // "Currently Previewing" stage so a Custom Visual actually shows
+        // what it looks like instead of just a generic icon.
+        function cvRenderComposite(item) {
+            const bg = item.background || { type: 'color', color: '#000000' };
+            const layers = (item.layers || []).map(l => `
+                <div style="position:absolute; left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; overflow:hidden;">
+                    ${cvLayerContentHtml(l)}
+                </div>
+            `).join('');
+            return `<div style="position:relative; width:100%; height:100%;">${cvBackgroundHtml(bg)}${layers}</div>`;
+        }
+
+        function cvRenderCanvas() {
+            const canvas = document.getElementById('cv-canvas');
+            const layersHtml = cvWorking.layers.map((l, idx) => `
+                <div class="cv-layer${idx === cvSelectedLayerIndex ? ' selected' : ''}"
+                     style="left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100};"
+                     onmousedown="cvLayerMouseDown(event, ${idx})">
+                    ${cvLayerContentHtml(l)}
+                </div>
+            `).join('');
+            canvas.innerHTML = `${cvBackgroundHtml(cvWorking.background)}${layersHtml}`;
+            // Background itself is clickable too, to select/edit it
+            const bgEl = canvas.querySelector('div');
+            if (bgEl) bgEl.style.cursor = 'pointer';
+            canvas.onclick = (e) => { if (e.target === canvas || e.target === bgEl) cvSelectLayer(-1); };
+        }
+
+        function cvSelectLayer(idx) {
+            cvSelectedLayerIndex = idx;
+            cvRenderCanvas();
+            cvRenderRightPanel();
+        }
+
+        function cvMoveLayer(idx, dir) {
+            const target = idx + dir;
+            if (target < 0 || target >= cvWorking.layers.length) return;
+            [cvWorking.layers[idx], cvWorking.layers[target]] = [cvWorking.layers[target], cvWorking.layers[idx]];
+            if (cvSelectedLayerIndex === idx) cvSelectedLayerIndex = target;
+            else if (cvSelectedLayerIndex === target) cvSelectedLayerIndex = idx;
+            cvRenderAll();
+        }
+        function cvRemoveLayer(idx) {
+            cvWorking.layers.splice(idx, 1);
+            if (cvSelectedLayerIndex === idx) cvSelectedLayerIndex = -1;
+            else if (cvSelectedLayerIndex > idx) cvSelectedLayerIndex--;
+            cvRenderAll();
+        }
+
+        function cvLayerLabel(layer) {
+            if (layer.type === 'photo') return cvMediaFor(layer.mediaId) ? cvMediaFor(layer.mediaId).filename : 'Photo';
+            if (layer.type === 'video') return cvMediaFor(layer.mediaId) ? cvMediaFor(layer.mediaId).filename : 'Video';
+            if (layer.type === 'text') return layer.text ? layer.text.slice(0, 24) : 'Text';
+            if (layer.type === 'clock') return 'Clock & Date';
+            if (layer.type === 'queue') return 'Live Queue';
+            return 'Layer';
+        }
+
+        function cvRenderRightPanel() {
+            const panel = document.getElementById('cv-right-panel');
+            const layersRows = cvWorking.layers.map((l, idx) => `
+                <div class="cv-layer-row${idx === cvSelectedLayerIndex ? ' selected' : ''}" onclick="cvSelectLayer(${idx})">
+                    <span class="lbl">${escapeHtml(cvLayerLabel(l))}</span>
+                    <button onclick="event.stopPropagation(); cvMoveLayer(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Bring back">&darr;</button>
+                    <button onclick="event.stopPropagation(); cvMoveLayer(${idx}, 1)" ${idx === cvWorking.layers.length - 1 ? 'disabled' : ''} title="Bring forward">&uarr;</button>
+                    <button onclick="event.stopPropagation(); cvRemoveLayer(${idx})" title="Remove">&times;</button>
+                </div>
+            `).join('');
+
+            let settingsHtml = '';
+            if (cvSelectedLayerIndex === -1) {
+                const bg = cvWorking.background;
+                settingsHtml = `
+                    <div class="cv-right-section-label">Background Settings</div>
+                    ${bg.type === 'color' ? `
+                        <div class="cv-settings-field">
+                            <label>Color</label>
+                            <input type="color" value="${escapeHtml(bg.color || '#000000')}" oninput="cvUpdateBackgroundField('color', this.value)">
+                        </div>
+                    ` : `
+                        <div class="cv-settings-field">
+                            <label>Fit</label>
+                            <select onchange="cvUpdateBackgroundField('fit', this.value)">
+                                <option value="cover" ${bg.fit === 'cover' ? 'selected' : ''}>Cover</option>
+                                <option value="contain" ${bg.fit === 'contain' ? 'selected' : ''}>Contain</option>
+                            </select>
+                        </div>
+                    `}
+                `;
+            } else {
+                const l = cvWorking.layers[cvSelectedLayerIndex];
+                let typeFields = '';
+                if (l.type === 'text') {
+                    typeFields = `
+                        <div class="cv-settings-field">
+                            <label>Text</label>
+                            <input type="text" value="${escapeHtml(l.text || '')}" maxlength="80" onchange="cvUpdateLayerField('text', this.value)">
+                        </div>
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Font size</label>
+                                <input type="number" min="8" max="120" value="${l.fontSize || 28}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Color</label>
+                                <input type="color" value="${escapeHtml(l.color || '#ffffff')}" oninput="cvUpdateLayerField('color', this.value)">
+                            </div>
+                        </div>
+                    `;
+                } else if (l.type === 'photo' || l.type === 'video') {
+                    typeFields = `
+                        <div class="cv-settings-field">
+                            <label>Fit</label>
+                            <select onchange="cvUpdateLayerField('fit', this.value)">
+                                <option value="cover" ${l.fit === 'cover' ? 'selected' : ''}>Cover</option>
+                                <option value="contain" ${l.fit === 'contain' ? 'selected' : ''}>Contain</option>
+                            </select>
+                        </div>
+                    `;
+                }
+                settingsHtml = `
+                    <div class="cv-right-section-label">Layer Settings</div>
+                    <div class="cv-settings-row">
+                        <div class="cv-settings-field">
+                            <label>X %</label>
+                            <input type="number" min="0" max="100" value="${Math.round(l.x)}" onchange="cvUpdateLayerField('x', parseFloat(this.value))">
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Y %</label>
+                            <input type="number" min="0" max="100" value="${Math.round(l.y)}" onchange="cvUpdateLayerField('y', parseFloat(this.value))">
+                        </div>
+                    </div>
+                    <div class="cv-settings-row">
+                        <div class="cv-settings-field">
+                            <label>Width %</label>
+                            <input type="number" min="5" max="100" value="${Math.round(l.width)}" onchange="cvUpdateLayerField('width', parseFloat(this.value))">
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Height %</label>
+                            <input type="number" min="5" max="100" value="${Math.round(l.height)}" onchange="cvUpdateLayerField('height', parseFloat(this.value))">
+                        </div>
+                    </div>
+                    <div class="cv-settings-field">
+                        <label>Opacity ${l.opacity != null ? l.opacity : 100}%</label>
+                        <input type="range" min="0" max="100" value="${l.opacity != null ? l.opacity : 100}" oninput="cvUpdateLayerField('opacity', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Opacity ' + this.value + '%';">
+                    </div>
+                    ${typeFields}
+                `;
+            }
+
+            panel.innerHTML = `
+                <div class="cv-right-section-label">Layers</div>
+                <div class="cv-layers-list">
+                    <div class="cv-layer-row${cvSelectedLayerIndex === -1 ? ' selected' : ''}" onclick="cvSelectLayer(-1)">
+                        <span class="lbl">Background</span>
+                        <span class="bg-tag">Base</span>
+                    </div>
+                    ${layersRows}
+                </div>
+                ${settingsHtml}
+            `;
+        }
+
+        function cvUpdateBackgroundField(field, val) {
+            cvWorking.background[field] = val;
+            cvRenderCanvas();
+        }
+        function cvUpdateLayerField(field, val) {
+            if (cvSelectedLayerIndex < 0) return;
+            cvWorking.layers[cvSelectedLayerIndex][field] = val;
+            cvRenderCanvas();
+        }
+
+        // ---- File picking (background or overlay, photo or video) ----
+        function cvSetBackgroundColor() {
+            cvWorking.background = { type: 'color', color: cvWorking.background.color || '#000000', fit: 'cover' };
+            cvSelectedLayerIndex = -1;
+            cvRenderAll();
+        }
+        function cvPickBackgroundFile(type) {
+            cvPendingFileTarget = type === 'video' ? 'bg-video' : 'bg-photo';
+            const input = document.getElementById('cv-file-input');
+            input.accept = type === 'video' ? 'video/*' : 'image/*';
+            input.click();
+        }
+        function cvPickOverlayFile(type) {
+            cvPendingFileTarget = type === 'video' ? 'ov-video' : 'ov-photo';
+            const input = document.getElementById('cv-file-input');
+            input.accept = type === 'video' ? 'video/*' : 'image/*';
+            input.click();
+        }
+        async function onCvFileChosen(e) {
+            const file = e.target.files[0];
+            e.target.value = '';
+            if (!file) return;
+            const target = cvPendingFileTarget;
+            cvPendingFileTarget = null;
+            showToast('Uploading...');
+            try {
+                const media = await uploadOneAmbientFile(file);
+                if (target === 'bg-photo' || target === 'bg-video') {
+                    cvWorking.background = { type: media.type === 'video' ? 'video' : 'photo', mediaId: media.id, fit: 'cover' };
+                    cvSelectedLayerIndex = -1;
+                } else {
+                    cvWorking.layers.push({
+                        id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: media.id,
+                        x: 30, y: 40, width: 35, height: 25, opacity: 100, fit: 'cover'
+                    });
+                    cvSelectedLayerIndex = cvWorking.layers.length - 1;
+                }
+                cvRenderAll();
+            } catch (err) {
+                console.error('Custom Visual upload failed:', err);
+                showToast('Could not upload that file. Try again.', 'error');
+            }
+        }
+        function cvAddLayer(kind) {
+            const layer = { id: genId(), type: kind, x: 30, y: 40, width: 35, height: 20, opacity: 100 };
+            if (kind === 'text') { layer.text = 'Your text here'; layer.fontSize = 28; layer.color = '#ffffff'; }
+            cvWorking.layers.push(layer);
+            cvSelectedLayerIndex = cvWorking.layers.length - 1;
+            cvRenderAll();
+        }
+
+        // ---- Direct drag-to-position on the canvas ----
+        function cvLayerMouseDown(e, idx) {
+            e.stopPropagation();
+            cvSelectLayer(idx);
+            const canvas = document.getElementById('cv-canvas');
+            const rect = canvas.getBoundingClientRect();
+            const layer = cvWorking.layers[idx];
+            cvDrag = { idx, startClientX: e.clientX, startClientY: e.clientY, origX: layer.x, origY: layer.y, rect };
+            document.addEventListener('mousemove', cvOnDragMove);
+            document.addEventListener('mouseup', cvOnDragEnd);
+        }
+        function cvOnDragMove(e) {
+            if (!cvDrag) return;
+            const dxPct = ((e.clientX - cvDrag.startClientX) / cvDrag.rect.width) * 100;
+            const dyPct = ((e.clientY - cvDrag.startClientY) / cvDrag.rect.height) * 100;
+            const layer = cvWorking.layers[cvDrag.idx];
+            layer.x = Math.max(0, Math.min(100 - layer.width, cvDrag.origX + dxPct));
+            layer.y = Math.max(0, Math.min(100 - layer.height, cvDrag.origY + dyPct));
+            cvRenderCanvas();
+        }
+        function cvOnDragEnd() {
+            cvDrag = null;
+            document.removeEventListener('mousemove', cvOnDragMove);
+            document.removeEventListener('mouseup', cvOnDragEnd);
+            cvRenderRightPanel();
+        }
+
+        // ---- Save back into the main modal's sequence ----
+        function saveCustomVisual() {
+            if (cvWorking.background.type !== 'color' && !cvWorking.background.mediaId) {
+                return showToast('Set a background color or file first.', 'error');
+            }
+            const finished = {
+                id: cvWorking.itemId || genId(),
+                type: 'customVisual',
+                durationSec: cvWorking.durationSec || 10,
+                customLabel: cvWorking.customLabel || '',
+                background: { ...cvWorking.background },
+                layers: cvWorking.layers.map(l => ({ ...l }))
+            };
+            const existingIdx = modalAmbientItems.findIndex(it => it.id === finished.id);
+            if (existingIdx >= 0) {
+                modalAmbientItems[existingIdx] = finished;
+                avmSelectedIndex = existingIdx;
+            } else {
+                modalAmbientItems.push(finished);
+                avmSelectedIndex = modalAmbientItems.length - 1;
+            }
+            closeCustomVisualEditor();
             renderModalAmbientFileList();
         }
 
@@ -2222,6 +2450,13 @@
             document.getElementById('modal-backdrop').classList.remove('show');
             const ambientBackdrop = document.getElementById('ambient-modal-backdrop');
             if (ambientBackdrop) ambientBackdrop.classList.remove('show');
+            // A block created via startNewAmbientBlock() that never got
+            // saved is just an empty, unscheduled rule sitting in memory -
+            // discard it rather than leaving an orphan behind.
+            if (isNewAmbientRule && modalRuleId) {
+                rules = rules.filter(r => r.id !== modalRuleId);
+            }
+            isNewAmbientRule = false;
             modalRuleId = null;
             modalAmbientItems = [];
             avmSelectedIndex = -1;
@@ -2263,11 +2498,9 @@
                     if (it.type === 'ad' && !(it.adText || '').trim() && !(it.adQrUrl || '').trim()) {
                         return showToast('Give each Advertisement item some text or a QR link.', 'error');
                     }
-                    if (it.type === 'custom' && !(it.text || '').trim()) {
-                        return showToast('Give each Custom Visual some text to display.', 'error');
-                    }
                 }
                 rule.items = modalAmbientItems.map(it => ({ ...it }));
+                isNewAmbientRule = false; // saved successfully - no longer an orphan candidate
             } else {
                 rule.playlistId = document.getElementById('modal-playlist').value;
                 rule.volume = document.getElementById('modal-volume-enabled').checked ? parseInt(document.getElementById('modal-volume').value, 10) : null;
