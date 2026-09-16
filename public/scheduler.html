@@ -562,6 +562,16 @@
         .cv-layer {
             position: absolute; cursor: grab;
             outline: 1px dashed transparent; box-sizing: border-box;
+            -webkit-user-drag: none; user-select: none; -webkit-user-select: none; touch-action: none;
+        }
+        /* Belt-and-suspenders on top of the draggable="false" attribute
+           on the <img>/<video> tags themselves: without this, a mousedown
+           that starts moving over the media begins the browser's native
+           image/video drag-and-drop instead of our own mousemove-based
+           drag, which looks exactly like "click, release, then it follows
+           the cursor until you click again" - the native drag ghost. */
+        .cv-layer img, .cv-layer video, .cv-canvas img, .cv-canvas video {
+            -webkit-user-drag: none; user-drag: none; user-select: none; -webkit-user-select: none; pointer-events: none;
         }
         /* Clipping (overflow/border-radius/border) now lives on this inner
            div instead of .cv-layer itself, so the resize handles below -
@@ -2333,8 +2343,8 @@
                 if (!media) return `<div class="cv-layer-widget">Missing file</div>`;
                 const fit = layer.fit || 'cover';
                 const mediaTag = layer.type === 'video'
-                    ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="width:100%; height:100%; object-fit:${fit}; display:block;"></video>`
-                    : `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:${fit}; display:block;">`;
+                    ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline draggable="false" ondragstart="return false;" style="width:100%; height:100%; object-fit:${fit}; display:block;"></video>`
+                    : `<img src="${escapeHtml(media.url)}" alt="" draggable="false" ondragstart="return false;" style="width:100%; height:100%; object-fit:${fit}; display:block;">`;
                 const tint = layer.tintEnabled
                     ? `<div style="position:absolute; inset:0; background:${escapeHtml(layer.tintColor || '#000000')}; opacity:${(layer.tintOpacity != null ? layer.tintOpacity : 40) / 100};"></div>`
                     : '';
@@ -2400,8 +2410,8 @@
             const media = cvMediaFor(bg.mediaId);
             if (!media) return `<div style="position:absolute; inset:0; background:#000;"></div>`;
             const mediaTag = bg.type === 'video'
-                ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};"></video>`
-                : `<img src="${escapeHtml(media.url)}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};">`;
+                ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline draggable="false" ondragstart="return false;" style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};"></video>`
+                : `<img src="${escapeHtml(media.url)}" alt="" draggable="false" ondragstart="return false;" style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};">`;
             const dim = bg.dimEnabled
                 ? `<div style="position:absolute; inset:0; background:${escapeHtml(bg.dimColor || '#000000')}; opacity:${(bg.dimOpacity != null ? bg.dimOpacity : 40) / 100};"></div>`
                 : '';
@@ -2980,6 +2990,7 @@
         // again until the drag ends - that's what removes the stutter.
         function cvLayerMouseDown(e, idx) {
             e.stopPropagation();
+            e.preventDefault();
             cvSelectLayer(idx);
             const canvas = document.getElementById('cv-canvas');
             const el = canvas.querySelector(`[data-layer-idx="${idx}"]`);
