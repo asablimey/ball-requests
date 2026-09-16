@@ -22,6 +22,13 @@
             --border: #282828;
             --text-dim: #a7a7a7;
             --day-box-bg: #1f1f1f;
+            /* Lighter chrome used only inside the big editor modals (Edit
+               Block, Ambient Visuals, Custom Visual) - scoped onto those
+               modal roots below rather than changed globally, so the rest
+               of the dashboard keeps its darker look. */
+            --modal-panel-bg-light: #242424;
+            --modal-card-bg-light: #333333;
+            --modal-border-light: #3d3d3d;
         }
         html { overflow-x: hidden; overscroll-behavior-x: none; }
         * { box-sizing: border-box; }
@@ -332,11 +339,17 @@
         }
         #modal-backdrop.show { display: flex; }
         .modal {
+            /* Local, lighter overrides of --panel-bg/--card-bg/--border -
+               cascades to every child below that reads those variables,
+               without touching the darker dashboard behind it. */
+            --panel-bg: var(--modal-panel-bg-light);
+            --card-bg: var(--modal-card-bg-light);
+            --border: var(--modal-border-light);
             background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
-            padding: 24px; max-width: 380px; width: 100%; max-height: 90vh; overflow-y: auto;
+            padding: 28px; max-width: 420px; width: 100%; max-height: 90vh; overflow-y: auto;
         }
-        .modal h3 { margin: 0 0 16px; font-size: 1.1rem; }
-        .field-group { margin-bottom: 16px; }
+        .modal h3 { margin: 0 0 18px; font-size: 1.15rem; }
+        .field-group { margin-bottom: 18px; }
         .field-group label { display: block; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.3px; }
         .field-group select, .field-group input[type="time"] {
             width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
@@ -360,14 +373,17 @@
         }
         #ambient-modal-backdrop.show { display: flex; }
         .avm {
+            --panel-bg: var(--modal-panel-bg-light);
+            --card-bg: var(--modal-card-bg-light);
+            --border: var(--modal-border-light);
             background: var(--panel-bg); border: 1px solid var(--border); border-radius: 16px;
-            width: 100%; max-width: 1180px; height: 88vh; max-height: 820px;
+            width: 100%; max-width: 1360px; height: 92vh; max-height: 920px;
             display: flex; flex-direction: column; overflow: hidden;
             box-shadow: 0 20px 60px rgba(0,0,0,0.6);
         }
         .avm-header {
             display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-            padding: 18px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+            padding: 22px 28px; border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
         .avm-header-left { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
         .avm-icon {
@@ -391,21 +407,21 @@
 
         .avm-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
 
-        .avm-sidebar { flex: 0 0 210px; border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+        .avm-sidebar { flex: 0 0 250px; border-right: 1px solid var(--border); padding: 20px 18px; overflow-y: auto; }
         .avm-add-visual-btn {
             width: 100%; background: var(--spotify-green); color: white; border: none; border-radius: 8px;
-            padding: 10px; font-weight: 700; font-size: 0.82rem; cursor: pointer; margin-bottom: 18px;
+            padding: 10px; font-weight: 700; font-size: 0.82rem; cursor: pointer; margin-bottom: 20px;
         }
         .avm-add-visual-btn:hover { filter: brightness(1.1); }
-        .avm-side-section { margin-bottom: 18px; }
+        .avm-side-section { margin-bottom: 22px; }
         .avm-side-section:last-child { margin-bottom: 0; }
         .avm-side-label {
-            font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-            color: var(--text-dim); margin-bottom: 8px;
+            font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-dim); margin-bottom: 10px;
         }
         .avm-side-item {
-            display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none;
-            border: none; color: white; padding: 7px 8px; border-radius: 6px; font-size: 0.82rem; cursor: pointer;
+            display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none;
+            border: none; color: white; padding: 9px 10px; border-radius: 7px; font-size: 0.84rem; cursor: pointer;
         }
         .avm-side-item:hover { background: var(--card-bg); }
         .avm-side-icon { width: 18px; text-align: center; flex-shrink: 0; color: var(--text-dim); }
@@ -413,11 +429,11 @@
         .avm-side-item.disabled { opacity: 0.35; cursor: default; }
         .avm-side-item.disabled:hover { background: none; }
         .avm-library-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        #avm-library-list { max-height: 220px; overflow-y: auto; }
-        .avm-empty-hint-small { color: var(--text-dim); font-size: 0.76rem; padding: 4px 8px; }
+        #avm-library-list { max-height: 240px; overflow-y: auto; }
+        .avm-empty-hint-small { color: var(--text-dim); font-size: 0.78rem; padding: 6px 8px; }
 
-        .avm-main { flex: 1; min-width: 0; padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
-        .avm-right { flex: 0 0 270px; border-left: 1px solid var(--border); padding: 18px; overflow-y: auto; }
+        .avm-main { flex: 1; min-width: 0; padding: 24px 28px; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; }
+        .avm-right { flex: 0 0 310px; border-left: 1px solid var(--border); padding: 22px; overflow-y: auto; }
 
         .avm-preview-row { display: flex; gap: 14px; }
         .avm-preview-stage {
@@ -434,8 +450,8 @@
         .avm-preview-caption .type { font-size: 0.7rem; color: #d8d8d8; text-transform: uppercase; letter-spacing: 0.4px; }
 
         .avm-currently {
-            flex: 0 0 210px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
-            padding: 14px; display: flex; flex-direction: column; gap: 10px;
+            flex: 0 0 240px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+            padding: 18px; display: flex; flex-direction: column; gap: 12px;
         }
         .avm-currently-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
         .avm-currently-item { display: flex; align-items: center; gap: 10px; }
@@ -460,10 +476,10 @@
         .avm-seq-head { display: flex; justify-content: space-between; align-items: baseline; }
         .avm-seq-head h4 { margin: 0; font-size: 0.92rem; }
         .avm-seq-meta { font-size: 0.74rem; color: var(--text-dim); }
-        .avm-seq-list { display: flex; flex-direction: column; gap: 8px; }
+        .avm-seq-list { display: flex; flex-direction: column; gap: 10px; }
         .avm-seq-row {
-            display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid #2c2c2c;
-            border-radius: 8px; padding: 8px 10px; cursor: pointer;
+            display: flex; align-items: center; gap: 10px; background: var(--card-bg); border: 1px solid #3a3a3a;
+            border-radius: 8px; padding: 10px 12px; cursor: pointer;
         }
         .avm-seq-row:hover { border-color: #444; }
         .avm-seq-row.selected { border-color: var(--spotify-green); background: rgba(29,185,84,0.08); }
@@ -497,7 +513,7 @@
         .avm-settings-section-label {
             font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); margin-bottom: 10px;
         }
-        .avm-settings-field { margin-bottom: 12px; }
+        .avm-settings-field { margin-bottom: 14px; }
         .avm-settings-field label { display: block; font-size: 0.76rem; color: var(--text-dim); margin-bottom: 5px; }
         .avm-settings-field input[type="number"], .avm-settings-field input[type="text"] {
             width: 100%; background: var(--panel-bg); border: 1px solid #333; color: white;
@@ -522,20 +538,23 @@
         }
         #cv-modal-backdrop.show { display: flex; }
         .cv-modal {
+            --panel-bg: var(--modal-panel-bg-light);
+            --card-bg: var(--modal-card-bg-light);
+            --border: var(--modal-border-light);
             background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
-            width: 100%; max-width: 1040px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden;
+            width: 100%; max-width: 1240px; max-height: 94vh; display: flex; flex-direction: column; overflow: hidden;
         }
         .cv-header {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+            padding: 20px 26px; border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
-        .cv-header h3 { margin: 0; font-size: 1.1rem; }
-        .cv-header-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+        .cv-header h3 { margin: 0; font-size: 1.15rem; }
+        .cv-header-sub { font-size: 0.78rem; color: var(--text-dim); margin-top: 3px; }
         .cv-close { background: none; border: none; color: white; font-size: 1.4rem; cursor: pointer; line-height: 1; }
         .cv-body { display: flex; flex: 1; min-height: 0; }
-        .cv-sidebar { width: 190px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 16px 12px; overflow-y: auto; }
-        .cv-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: #0a0a0a; }
-        .cv-canvas-wrap { position: relative; width: 100%; max-width: 640px; }
+        .cv-sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 20px 16px; overflow-y: auto; }
+        .cv-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; background: #0a0a0a; }
+        .cv-canvas-wrap { position: relative; width: 100%; max-width: 760px; }
         .cv-canvas {
             position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
             border-radius: 8px; overflow: hidden; border: 1px solid #333; user-select: none;
@@ -549,14 +568,14 @@
            which sit just outside the layer's box - don't get clipped off. */
         .cv-layer-inner { box-sizing: border-box; }
         .cv-resize-handle {
-            position: absolute; width: 11px; height: 11px; box-sizing: border-box;
+            position: absolute; width: 14px; height: 14px; box-sizing: border-box;
             background: var(--spotify-green); border: 2px solid white; border-radius: 50%;
             z-index: 5;
         }
-        .cv-resize-handle.nw { top: -6px; left: -6px; cursor: nwse-resize; }
-        .cv-resize-handle.ne { top: -6px; right: -6px; cursor: nesw-resize; }
-        .cv-resize-handle.sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
-        .cv-resize-handle.se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+        .cv-resize-handle.nw { top: -7px; left: -7px; cursor: nwse-resize; }
+        .cv-resize-handle.ne { top: -7px; right: -7px; cursor: nesw-resize; }
+        .cv-resize-handle.sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+        .cv-resize-handle.se { bottom: -7px; right: -7px; cursor: nwse-resize; }
         .cv-layer:hover { outline-color: rgba(255,255,255,0.35); }
         .cv-layer.selected { outline: 2px solid var(--spotify-green); }
         .cv-layer img, .cv-layer video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -568,15 +587,15 @@
             width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
             background: rgba(0,0,0,0.55); color: white; font-size: 0.75rem; gap: 4px; text-align: center;
         }
-        .cv-right { width: 250px; flex-shrink: 0; border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+        .cv-right { width: 300px; flex-shrink: 0; border-left: 1px solid var(--border); padding: 20px; overflow-y: auto; }
         .cv-right-section-label {
-            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim);
-            margin: 0 0 8px; font-weight: 700;
+            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim);
+            margin: 0 0 10px; font-weight: 700;
         }
-        .cv-layers-list { margin-bottom: 20px; }
+        .cv-layers-list { margin-bottom: 22px; }
         .cv-layer-row {
-            display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
-            border: 1px solid transparent; cursor: pointer; font-size: 0.78rem;
+            display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 7px;
+            border: 1px solid transparent; cursor: pointer; font-size: 0.8rem; margin-bottom: 4px;
         }
         .cv-layer-row:hover { background: var(--card-bg); }
         .cv-layer-row.selected { border-color: var(--spotify-green); background: rgba(29,185,84,0.08); }
@@ -584,31 +603,41 @@
         .cv-layer-row .bg-tag { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; }
         .cv-layer-row button { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.85rem; padding: 2px 4px; }
         .cv-layer-row button:hover { color: white; }
-        .cv-settings-field { margin-bottom: 12px; }
-        .cv-settings-field label { display: block; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 5px; }
+        .cv-settings-field { margin-bottom: 14px; }
+        .cv-settings-field label { display: block; font-size: 0.76rem; color: var(--text-dim); margin-bottom: 6px; }
         .cv-settings-field input[type="text"], .cv-settings-field input[type="number"], .cv-settings-field select {
-            width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
-            padding: 7px 9px; border-radius: 6px; font-size: 0.82rem;
+            width: 100%; background: var(--card-bg); border: 1px solid #3a3a3a; color: white;
+            padding: 8px 10px; border-radius: 6px; font-size: 0.84rem;
         }
-        .cv-settings-row { display: flex; gap: 8px; }
+        .cv-settings-row { display: flex; gap: 10px; }
         .cv-settings-row .cv-settings-field { flex: 1; }
         /* New in the expanded editor: sub-sections within one layer's
            settings (Position & Size vs. type-specific Appearance fields)
            needed a visual break now that there's a lot more per layer. */
-        .cv-settings-divider { border-top: 1px solid var(--border); margin: 14px 0; }
+        .cv-settings-divider { border-top: 1px solid var(--border); margin: 16px 0; }
         .cv-settings-subhead {
-            font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
-            color: var(--text-dim); margin: 0 0 8px; font-weight: 700;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-dim); margin: 0 0 10px; font-weight: 700;
         }
-        .cv-toggle-group { display: flex; gap: 4px; margin-bottom: 12px; }
+        .cv-toggle-group { display: flex; gap: 5px; margin-bottom: 14px; }
         .cv-toggle-btn {
-            flex: 1; background: var(--card-bg); border: 1px solid #333; color: white;
-            padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+            flex: 1; background: var(--card-bg); border: 1px solid #3a3a3a; color: white;
+            padding: 7px 0; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
         }
-        .cv-toggle-btn:hover { border-color: #555; }
+        .cv-toggle-btn:hover { border-color: #666; }
         .cv-toggle-btn.active { border-color: var(--spotify-green); background: rgba(29,185,84,0.15); color: var(--spotify-green); }
-        .cv-checkbox-field { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 0.8rem; cursor: pointer; }
+        .cv-checkbox-field { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 0.82rem; cursor: pointer; }
         .cv-checkbox-field input { width: auto; margin: 0; }
+        .cv-quick-align-row { display: flex; gap: 6px; margin-bottom: 14px; }
+        .cv-quick-align-row button {
+            flex: 1; background: var(--card-bg); border: 1px solid #3a3a3a; color: white;
+            padding: 7px 4px; border-radius: 6px; cursor: pointer; font-size: 0.72rem; font-weight: 600;
+        }
+        .cv-quick-align-row button:hover { border-color: #666; }
+        .cv-layer-row-btn {
+            background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.85rem; padding: 2px 4px;
+        }
+        .cv-layer-row-btn:hover { color: white; }
         /* Content for the Clock, Live Queue and Countdown layer types. */
         .cv-clock-date { font-size: 0.42em; color: #d8d8d8; margin-top: 3px; font-weight: 400; }
         .cv-queue-title { font-weight: 700; font-size: 1em; display: flex; align-items: center; gap: 6px; }
@@ -616,30 +645,30 @@
         .cv-shape-el { width: 100%; height: 100%; }
         .cv-footer {
             display: flex; justify-content: space-between; align-items: center;
-            padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
+            padding: 16px 26px; border-top: 1px solid var(--border); flex-shrink: 0;
         }
 
         .avm-footer { border-top: 1px solid var(--border); flex-shrink: 0; }
-        .avm-schedule-toggle { display: flex; align-items: center; gap: 10px; padding: 14px 20px; cursor: pointer; }
+        .avm-schedule-toggle { display: flex; align-items: center; gap: 10px; padding: 16px 24px; cursor: pointer; }
         .avm-schedule-icon { color: var(--text-dim); font-size: 0.95rem; }
         .avm-schedule-text { flex: 1; min-width: 0; }
         .avm-schedule-text .t1 { font-size: 0.84rem; font-weight: 700; }
         .avm-schedule-text .t2 { font-size: 0.74rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .avm-schedule-chevron { color: var(--text-dim); transition: transform 0.15s; display: inline-block; }
         .avm-schedule-chevron.open { transform: rotate(90deg); }
-        .avm-schedule-panel { display: none; padding: 0 20px 18px; }
+        .avm-schedule-panel { display: none; padding: 0 24px 20px; }
         .avm-schedule-panel.open { display: block; }
         .avm-footer-actions {
-            display: flex; justify-content: space-between; align-items: center; padding: 14px 20px;
+            display: flex; justify-content: space-between; align-items: center; padding: 16px 24px;
             border-top: 1px solid var(--border);
         }
         .avm-delete-link { background: none; border: none; color: #ff6b6b; font-size: 0.8rem; cursor: pointer; padding: 6px 4px; }
         .avm-delete-link:hover { text-decoration: underline; }
 
         @media (max-width: 860px) {
-            .avm { height: 94vh; max-height: none; }
+            .avm { height: 96vh; max-height: none; }
             .avm-body { flex-direction: column; overflow-y: auto; }
-            .avm-sidebar { flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 180px; }
+            .avm-sidebar { flex: 0 0 auto; border-right: none; border-bottom: 1px solid var(--border); max-height: 200px; }
             .avm-right { flex: 0 0 auto; border-left: none; border-top: 1px solid var(--border); }
             .avm-preview-row { flex-direction: column; }
             .avm-currently { flex: 0 0 auto; }
@@ -2203,12 +2232,36 @@
             }
             cvSelectedLayerIndex = -1;
             document.getElementById('cv-modal-backdrop').classList.add('show');
+            document.addEventListener('keydown', cvOnKeyDown);
             cvRenderAll();
         }
         function closeCustomVisualEditor() {
             document.getElementById('cv-modal-backdrop').classList.remove('show');
+            document.removeEventListener('keydown', cvOnKeyDown);
             cvWorking = null;
             cvSelectedLayerIndex = -1;
+        }
+        // Delete/Backspace removes the selected layer, arrow keys nudge it
+        // (Shift for a bigger step), and Escape backs out of the editor -
+        // straight back to the Ambient Visuals modal underneath, since
+        // that modal was never actually closed while this one was open.
+        function cvOnKeyDown(e) {
+            const tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeCustomVisualEditor();
+                return;
+            }
+            if (cvSelectedLayerIndex < 0) return;
+            const step = e.shiftKey ? 5 : 1;
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                cvRemoveLayer(cvSelectedLayerIndex);
+            } else if (e.key === 'ArrowLeft') { e.preventDefault(); cvNudgeLayer(-step, 0); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); cvNudgeLayer(step, 0); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); cvNudgeLayer(0, -step); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); cvNudgeLayer(0, step); }
         }
 
         function cvRenderAll() {
@@ -2247,8 +2300,12 @@
         // here so resize handles (added in cvRenderCanvas, just outside
         // this box) aren't cut off.
         function cvLayerOuterStyle(l) {
-            const rot = l.rotation ? `rotate(${l.rotation}deg)` : 'none';
-            return `left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; transform:${rot};`;
+            const transforms = [];
+            if (l.rotation) transforms.push(`rotate(${l.rotation}deg)`);
+            if (l.flipH) transforms.push('scaleX(-1)');
+            if (l.flipV) transforms.push('scaleY(-1)');
+            const transform = transforms.length ? transforms.join(' ') : 'none';
+            return `left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; transform:${transform};`;
         }
         // Inner content wrapper - rounded corners / border / clipping for
         // the types that support it. Used by both the live draggable
@@ -2342,9 +2399,13 @@
             }
             const media = cvMediaFor(bg.mediaId);
             if (!media) return `<div style="position:absolute; inset:0; background:#000;"></div>`;
-            return bg.type === 'video'
+            const mediaTag = bg.type === 'video'
                 ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};"></video>`
                 : `<img src="${escapeHtml(media.url)}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:${bg.fit || 'cover'};">`;
+            const dim = bg.dimEnabled
+                ? `<div style="position:absolute; inset:0; background:${escapeHtml(bg.dimColor || '#000000')}; opacity:${(bg.dimOpacity != null ? bg.dimOpacity : 40) / 100};"></div>`
+                : '';
+            return `${mediaTag}${dim}`;
         }
         // Static, non-interactive composite - reused by the main modal's
         // "Currently Previewing" stage so a Custom Visual actually shows
@@ -2369,8 +2430,13 @@
                     <div class="cv-resize-handle sw" onmousedown="cvResizeMouseDown(event, ${idx}, 'sw')"></div>
                     <div class="cv-resize-handle se" onmousedown="cvResizeMouseDown(event, ${idx}, 'se')"></div>
                 ` : '';
+                // data-layer-idx lets the drag/resize handlers grab a fresh
+                // reference to *this* element right after a render, instead
+                // of trusting a DOM node captured before one - see
+                // cvLayerMouseDown/cvResizeMouseDown below.
                 return `
                     <div class="cv-layer${selected ? ' selected' : ''}"
+                         data-layer-idx="${idx}"
                          style="${cvLayerOuterStyle(l)}"
                          onmousedown="cvLayerMouseDown(event, ${idx})">
                         <div class="cv-layer-inner" style="${cvLayerInnerStyle(l)}">${cvLayerContentHtml(l)}</div>
@@ -2405,6 +2471,45 @@
             else if (cvSelectedLayerIndex > idx) cvSelectedLayerIndex--;
             cvRenderAll();
         }
+        // Clones a layer with a small offset so the copy is visibly
+        // distinct from the original rather than sitting exactly on top.
+        function cvDuplicateLayer(idx) {
+            if (idx < 0 || !cvWorking.layers[idx]) return;
+            const copy = { ...cvWorking.layers[idx], id: genId() };
+            copy.x = Math.min(100 - copy.width, copy.x + 4);
+            copy.y = Math.min(100 - copy.height, copy.y + 4);
+            cvWorking.layers.splice(idx + 1, 0, copy);
+            cvSelectedLayerIndex = idx + 1;
+            cvRenderAll();
+        }
+        // Jumps a layer all the way to the front (end of the array, drawn
+        // last/on top) or back (start, drawn first/underneath), as
+        // opposed to cvMoveLayer's single-step nudge.
+        function cvSendLayer(idx, where) {
+            if (idx < 0 || !cvWorking.layers[idx]) return;
+            const [layer] = cvWorking.layers.splice(idx, 1);
+            if (where === 'front') cvWorking.layers.push(layer);
+            else cvWorking.layers.unshift(layer);
+            cvSelectedLayerIndex = where === 'front' ? cvWorking.layers.length - 1 : 0;
+            cvRenderAll();
+        }
+        // Centers the selected layer along one axis, keeping its size.
+        function cvCenterLayer(axis) {
+            if (cvSelectedLayerIndex < 0) return;
+            const l = cvWorking.layers[cvSelectedLayerIndex];
+            if (axis === 'h') l.x = Math.max(0, (100 - l.width) / 2);
+            else l.y = Math.max(0, (100 - l.height) / 2);
+            cvRenderAll();
+        }
+        // Nudges the selected layer by keyboard arrow keys - see the
+        // keydown listener near the bottom of the script.
+        function cvNudgeLayer(dx, dy) {
+            if (cvSelectedLayerIndex < 0) return;
+            const l = cvWorking.layers[cvSelectedLayerIndex];
+            l.x = Math.max(0, Math.min(100 - l.width, l.x + dx));
+            l.y = Math.max(0, Math.min(100 - l.height, l.y + dy));
+            cvRenderAll();
+        }
 
         function cvLayerLabel(layer) {
             if (layer.type === 'photo') return cvMediaFor(layer.mediaId) ? cvMediaFor(layer.mediaId).filename : 'Photo';
@@ -2422,9 +2527,10 @@
             const layersRows = cvWorking.layers.map((l, idx) => `
                 <div class="cv-layer-row${idx === cvSelectedLayerIndex ? ' selected' : ''}" onclick="cvSelectLayer(${idx})">
                     <span class="lbl">${escapeHtml(cvLayerLabel(l))}</span>
-                    <button onclick="event.stopPropagation(); cvMoveLayer(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Bring back">&darr;</button>
-                    <button onclick="event.stopPropagation(); cvMoveLayer(${idx}, 1)" ${idx === cvWorking.layers.length - 1 ? 'disabled' : ''} title="Bring forward">&uarr;</button>
-                    <button onclick="event.stopPropagation(); cvRemoveLayer(${idx})" title="Remove">&times;</button>
+                    <button class="cv-layer-row-btn" onclick="event.stopPropagation(); cvMoveLayer(${idx}, -1)" ${idx === 0 ? 'disabled' : ''} title="Bring back">&darr;</button>
+                    <button class="cv-layer-row-btn" onclick="event.stopPropagation(); cvMoveLayer(${idx}, 1)" ${idx === cvWorking.layers.length - 1 ? 'disabled' : ''} title="Bring forward">&uarr;</button>
+                    <button class="cv-layer-row-btn" onclick="event.stopPropagation(); cvDuplicateLayer(${idx})" title="Duplicate">&#10697;</button>
+                    <button class="cv-layer-row-btn" onclick="event.stopPropagation(); cvRemoveLayer(${idx})" title="Remove">&times;</button>
                 </div>
             `).join('');
 
@@ -2465,6 +2571,20 @@
                                 <option value="contain" ${bg.fit === 'contain' ? 'selected' : ''}>Contain</option>
                             </select>
                         </div>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${bg.dimEnabled ? 'checked' : ''} onchange="cvUpdateBackgroundField('dimEnabled', this.checked); cvRenderRightPanel();"> Darken / tint overlay
+                        </label>
+                        ${bg.dimEnabled ? `
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Tint color</label>
+                                <input type="color" value="${escapeHtml(bg.dimColor || '#000000')}" oninput="cvUpdateBackgroundField('dimColor', this.value)">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Tint strength</label>
+                                <input type="number" min="0" max="100" value="${bg.dimOpacity != null ? bg.dimOpacity : 40}" onchange="cvUpdateBackgroundField('dimOpacity', parseInt(this.value,10))">
+                            </div>
+                        </div>` : ''}
                     `;
                 }
                 settingsHtml = `<div class="cv-right-section-label">Background Settings</div>${bgFields}`;
@@ -2548,6 +2668,13 @@
                                 <option value="cover" ${l.fit === 'cover' ? 'selected' : ''}>Cover</option>
                                 <option value="contain" ${l.fit === 'contain' ? 'selected' : ''}>Contain</option>
                             </select>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Flip</label>
+                            <div class="cv-toggle-group">
+                                <button type="button" class="cv-toggle-btn${l.flipH ? ' active' : ''}" onclick="cvUpdateLayerField('flipH', ${!l.flipH}); cvRenderRightPanel();" title="Flip horizontal">&#8596;</button>
+                                <button type="button" class="cv-toggle-btn${l.flipV ? ' active' : ''}" onclick="cvUpdateLayerField('flipV', ${!l.flipV}); cvRenderRightPanel();" title="Flip vertical">&#8597;</button>
+                            </div>
                         </div>
                         <div class="cv-settings-field">
                             <label>Rounded corners ${l.borderRadius || 0}%</label>
@@ -2687,6 +2814,10 @@
                 settingsHtml = `
                     <div class="cv-right-section-label">Layer Settings</div>
                     <div class="cv-settings-subhead">Position &amp; Size</div>
+                    <div class="cv-quick-align-row">
+                        <button type="button" onclick="cvCenterLayer('h')" title="Center horizontally">&#8596; Center</button>
+                        <button type="button" onclick="cvCenterLayer('v')" title="Center vertically">&#8597; Center</button>
+                    </div>
                     <div class="cv-settings-row">
                         <div class="cv-settings-field">
                             <label>X %</label>
@@ -2707,6 +2838,9 @@
                             <input type="number" min="5" max="100" value="${Math.round(l.height)}" onchange="cvUpdateLayerField('height', parseFloat(this.value))">
                         </div>
                     </div>
+                    <label class="cv-checkbox-field">
+                        <input type="checkbox" ${l.lockAspect ? 'checked' : ''} onchange="cvUpdateLayerField('lockAspect', this.checked)"> Lock aspect ratio while resizing
+                    </label>
                     <div class="cv-settings-row">
                         <div class="cv-settings-field">
                             <label>Rotation&deg;</label>
@@ -2716,6 +2850,11 @@
                             <label>Opacity ${l.opacity != null ? l.opacity : 100}%</label>
                             <input type="range" min="0" max="100" value="${l.opacity != null ? l.opacity : 100}" oninput="cvUpdateLayerField('opacity', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Opacity ' + this.value + '%';">
                         </div>
+                    </div>
+                    <div class="cv-quick-align-row">
+                        <button type="button" onclick="cvDuplicateLayer(${cvSelectedLayerIndex})" title="Duplicate this layer">&#10697; Duplicate</button>
+                        <button type="button" onclick="cvSendLayer(${cvSelectedLayerIndex}, 'front')" title="Bring to front">Front</button>
+                        <button type="button" onclick="cvSendLayer(${cvSelectedLayerIndex}, 'back')" title="Send to back">Back</button>
                     </div>
                     ${typeFields}
                 `;
@@ -2832,13 +2971,21 @@
         }
 
         // ---- Direct drag-to-position on the canvas ----
+        // cvSelectLayer() re-renders the canvas (to add/remove resize
+        // handles), which destroys and rebuilds every layer's DOM node -
+        // including any <video>, which would restart playback. So we grab
+        // the live element by data-layer-idx *after* that render, then
+        // drive the drag purely by mutating that one element's inline
+        // style directly on every mousemove. No innerHTML rebuild happens
+        // again until the drag ends - that's what removes the stutter.
         function cvLayerMouseDown(e, idx) {
             e.stopPropagation();
             cvSelectLayer(idx);
             const canvas = document.getElementById('cv-canvas');
+            const el = canvas.querySelector(`[data-layer-idx="${idx}"]`);
             const rect = canvas.getBoundingClientRect();
             const layer = cvWorking.layers[idx];
-            cvDrag = { idx, startClientX: e.clientX, startClientY: e.clientY, origX: layer.x, origY: layer.y, rect };
+            cvDrag = { idx, el, startClientX: e.clientX, startClientY: e.clientY, origX: layer.x, origY: layer.y, rect };
             document.addEventListener('mousemove', cvOnDragMove);
             document.addEventListener('mouseup', cvOnDragEnd);
         }
@@ -2849,12 +2996,18 @@
             const layer = cvWorking.layers[cvDrag.idx];
             layer.x = Math.max(0, Math.min(100 - layer.width, cvDrag.origX + dxPct));
             layer.y = Math.max(0, Math.min(100 - layer.height, cvDrag.origY + dyPct));
-            cvRenderCanvas();
+            if (cvDrag.el) {
+                cvDrag.el.style.left = layer.x + '%';
+                cvDrag.el.style.top = layer.y + '%';
+            }
         }
         function cvOnDragEnd() {
             cvDrag = null;
             document.removeEventListener('mousemove', cvOnDragMove);
             document.removeEventListener('mouseup', cvOnDragEnd);
+            // One real render now that the drag is over, to catch up any
+            // state the fast-path style tweaks above didn't touch.
+            cvRenderCanvas();
             cvRenderRightPanel();
         }
 
@@ -2864,7 +3017,7 @@
         // axes. Fine for the straight-up-and-down layouts this editor is
         // mostly used for; a genuinely rotated layer is rare enough that
         // rotation-aware resize math isn't worth the complexity right now.
-        let cvResize = null; // { idx, corner, startClientX, startClientY, origX, origY, origWidth, origHeight, rect }
+        let cvResize = null; // { idx, el, corner, startClientX, startClientY, origX, origY, origWidth, origHeight, origRatio, aspectLocked, rect }
         const CV_MIN_LAYER_SIZE = 5; // percent - keeps a layer from being resized down to nothing
 
         function cvResizeMouseDown(e, idx, corner) {
@@ -2872,11 +3025,13 @@
             e.preventDefault();
             cvSelectLayer(idx);
             const canvas = document.getElementById('cv-canvas');
+            const el = canvas.querySelector(`[data-layer-idx="${idx}"]`);
             const rect = canvas.getBoundingClientRect();
             const layer = cvWorking.layers[idx];
             cvResize = {
-                idx, corner, startClientX: e.clientX, startClientY: e.clientY,
-                origX: layer.x, origY: layer.y, origWidth: layer.width, origHeight: layer.height, rect
+                idx, el, corner, startClientX: e.clientX, startClientY: e.clientY,
+                origX: layer.x, origY: layer.y, origWidth: layer.width, origHeight: layer.height,
+                origRatio: layer.width / (layer.height || 1), aspectLocked: !!layer.lockAspect, rect
             };
             document.addEventListener('mousemove', cvOnResizeMove);
             document.addEventListener('mouseup', cvOnResizeEnd);
@@ -2885,7 +3040,7 @@
             if (!cvResize) return;
             const dxPct = ((e.clientX - cvResize.startClientX) / cvResize.rect.width) * 100;
             const dyPct = ((e.clientY - cvResize.startClientY) / cvResize.rect.height) * 100;
-            const { corner, origX, origY, origWidth, origHeight } = cvResize;
+            const { corner, origX, origY, origWidth, origHeight, origRatio, aspectLocked } = cvResize;
             const layer = cvWorking.layers[cvResize.idx];
             let newX = origX, newY = origY, newWidth = origWidth, newHeight = origHeight;
 
@@ -2904,20 +3059,47 @@
                 newHeight = origHeight - clampedDy;
             }
 
+            if (aspectLocked && origRatio > 0) {
+                // Drive height off of whichever dimension moved more, then
+                // re-anchor whichever corner shouldn't have moved (the
+                // opposite side from the handle being dragged).
+                const widthDriven = Math.abs(newWidth - origWidth) >= Math.abs(newHeight - origHeight);
+                if (widthDriven) newHeight = newWidth / origRatio;
+                else newWidth = newHeight * origRatio;
+                if (corner.includes('w')) newX = origX + origWidth - newWidth;
+                if (corner.includes('n')) newY = origY + origHeight - newHeight;
+                // Re-clamp so a locked ratio can't push the layer off-canvas.
+                newWidth = Math.max(CV_MIN_LAYER_SIZE, Math.min(newWidth, 100 - (corner.includes('w') ? 0 : newX)));
+                newHeight = Math.max(CV_MIN_LAYER_SIZE, Math.min(newHeight, 100 - (corner.includes('n') ? 0 : newY)));
+            }
+
             layer.x = newX; layer.y = newY; layer.width = newWidth; layer.height = newHeight;
-            cvRenderCanvas();
+            // Same fast path as dragging: mutate this one element's style
+            // directly rather than rebuilding the whole canvas per move.
+            if (cvResize.el) {
+                cvResize.el.style.left = newX + '%';
+                cvResize.el.style.top = newY + '%';
+                cvResize.el.style.width = newWidth + '%';
+                cvResize.el.style.height = newHeight + '%';
+            }
         }
         function cvOnResizeEnd() {
             cvResize = null;
             document.removeEventListener('mousemove', cvOnResizeMove);
             document.removeEventListener('mouseup', cvOnResizeEnd);
+            cvRenderCanvas();
             cvRenderRightPanel();
         }
 
         // ---- Save back into the main modal's sequence ----
         function saveCustomVisual() {
-            if (cvWorking.background.type !== 'color' && !cvWorking.background.mediaId) {
-                return showToast('Set a background color or file first.', 'error');
+            // Only a photo/video background actually needs a file picked;
+            // color and gradient backgrounds are self-contained. The old
+            // check here (`type !== 'color'`) wrongly caught gradients
+            // too, blocking a perfectly valid save with a confusing error.
+            const bgNeedsMedia = cvWorking.background.type === 'photo' || cvWorking.background.type === 'video';
+            if (bgNeedsMedia && !cvWorking.background.mediaId) {
+                return showToast('Set a background file first.', 'error');
             }
             const finished = {
                 id: cvWorking.itemId || genId(),
@@ -2935,8 +3117,13 @@
                 modalAmbientItems.push(finished);
                 avmSelectedIndex = modalAmbientItems.length - 1;
             }
+            // Closing this editor doesn't touch the Ambient Visuals modal
+            // underneath - it was never hidden while this one was open -
+            // so the person lands right back on it with the new/updated
+            // visual already in the sequence.
             closeCustomVisualEditor();
             renderModalAmbientFileList();
+            showToast('Visual saved.');
         }
 
         function closeModal() {
