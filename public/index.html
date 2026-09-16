@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Khula:wght@600&display=swap">
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <title>CrowdDJ</title>
     <style>
         :root {
@@ -865,10 +865,13 @@
         .venue-select-btn:hover { filter: brightness(1.1); }
 
         #venue-map { width: 100%; height: 100%; }
-        .maplibregl-ctrl-attrib a { color: rgba(255,255,255,0.7) !important; }
+        #venue-map .leaflet-container { background: var(--spotify-black); font-family: inherit; }
+        .leaflet-control-attribution a { color: rgba(255,255,255,0.7) !important; }
+        #venue-map .leaflet-control-zoom a { background: var(--card-bg) !important; color: white !important; border-color: #333 !important; }
+        #venue-map .leaflet-control-zoom a:hover { background: #2f2f2f !important; }
 
         /* "Zoom to my location" - sits top-right over the map, out of the
-           way of MapLibre's own zoom/attribution controls in the bottom
+           way of Leaflet's own zoom/attribution controls in the bottom
            corners. */
         .venue-map-locate-btn {
             position: absolute; top: 12px; right: 12px; z-index: 5;
@@ -882,8 +885,8 @@
         .venue-map-locate-btn svg { width: 20px; height: 20px; fill: #333; }
 
         /* Small round marker icon on the venue map - same icon as the
-           browser tab favicon, per spec. Plain <img>, not a MapLibre default
-           pin, so it stays a flat circular dot rather than a teardrop. */
+           browser tab favicon, per spec. A plain divIcon, not Leaflet's
+           default pin, so it stays a flat circular dot rather than a teardrop. */
         .venue-map-marker {
             width: 30px; height: 30px; border-radius: 50%;
             border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.5);
@@ -909,7 +912,8 @@
             border: none; padding: 9px 0; border-radius: 50px; font-weight: 700;
             font-size: 0.85rem; font-family: inherit; cursor: pointer;
         }
-        .maplibregl-popup-content { padding: 14px; border-radius: 10px; }
+        .leaflet-popup-content-wrapper { padding: 0; border-radius: 10px; }
+        .leaflet-popup-content { margin: 14px; }
 
         .venue-empty-msg { color: #a7a7a7; text-align: center; padding: 40px 20px; font-style: italic; }
 
@@ -1092,7 +1096,7 @@
                 <p>Requests, votes, and names are kept only for the duration of the event and are cleared when the server restarts between events. Nothing here is stored in a long-term database.</p>
 
                 <h4>Third parties</h4>
-                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. The venue map is rendered using tiles from OpenFreeMap, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Spotify's and OpenFreeMap's own handling of this data is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's</a> and <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap's</a> policies, not this one.</p>
+                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. The venue map is rendered using tiles from CARTO, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Spotify's and CARTO's own handling of this data is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's</a> and <a href="https://carto.com/privacy-policy" target="_blank" rel="noopener">CARTO's</a> privacy policies, not this one.</p>
 
                 <h4>Questions</h4>
                 <p>This site is made and maintained by Sam B. If you have questions about how it works, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
@@ -1148,6 +1152,10 @@
 
         // --- Venue selection (switches the active event without ever
         // navigating away from this one guest URL) ---
+        // Free CARTO API key - get one in ~1 minute, no account needed,
+        // at https://carto.com/basemaps/apikey (5M free tile loads/month).
+        // Without a key CARTO stamps tiles with a "API key required" watermark.
+        const CARTO_API_KEY = 'cb1_3mzu_1_cfa8111e18df6a0e94198c4c';
         let venueMap = null;
         let venueMapInitialized = false;
         let activeVenueTab = 'list';
@@ -1266,12 +1274,12 @@
             if (tab === 'list') {
                 loadVenueList();
             } else {
-                // MapLibre needs to be created (or resized) only once its
+                // Leaflet needs to be created (or resized) only once its
                 // container is actually visible - creating it while the tab
                 // was display:none leaves it stuck at a zero-size canvas.
                 await initVenueMapIfNeeded();
                 loadVenueMarkers();
-                if (venueMap) setTimeout(() => venueMap.resize(), 0);
+                if (venueMap) setTimeout(() => venueMap.invalidateSize(), 0);
             }
         }
 
@@ -1326,29 +1334,28 @@
         const NZ_MAP_ZOOM = 4.6;
         let venueMapUserMarker = null;
 
+        function userLocationIcon() {
+            return L.divIcon({ className: '', html: '<div class="venue-map-user-marker"></div>', iconSize: [16, 16], iconAnchor: [8, 8] });
+        }
+
         async function initVenueMapIfNeeded() {
             if (venueMapInitialized) return;
             venueMapInitialized = true;
             const loc = await getUserLocation();
-            venueMap = new maplibregl.Map({
-                container: 'venue-map',
-                // Switched from a personal MapTiler key/style to OpenFreeMap:
-                // no API key, no account, no request quota to run out of -
-                // this is what silently took every map on the site down at
-                // once when the old key stopped resolving.
-                style: 'https://tiles.openfreemap.org/styles/liberty',
-                // Always opens centred on New Zealand, regardless of where
-                // the guest actually is - the "locate me" button below is
-                // how they zoom to their own position instead.
-                center: NZ_MAP_CENTER,
-                zoom: NZ_MAP_ZOOM
-            });
-            venueMap.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
-            venueMap.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
+            // Always opens centred on New Zealand, regardless of where
+            // the guest actually is - the "locate me" button below is
+            // how they zoom to their own position instead.
+            venueMap = L.map('venue-map', { attributionControl: true })
+                .setView([NZ_MAP_CENTER[1], NZ_MAP_CENTER[0]], NZ_MAP_ZOOM); // Leaflet takes [lat, lng]
+
+            L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 20
+            }).addTo(venueMap);
+
             if (loc) {
-                const meEl = document.createElement('div');
-                meEl.className = 'venue-map-user-marker';
-                venueMapUserMarker = new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
+                venueMapUserMarker = L.marker([loc.latitude, loc.longitude], { icon: userLocationIcon(), interactive: false }).addTo(venueMap);
             }
         }
 
@@ -1377,13 +1384,11 @@
             }
             userLocation = loc;
             if (venueMapUserMarker) {
-                venueMapUserMarker.setLngLat([loc.longitude, loc.latitude]);
+                venueMapUserMarker.setLatLng([loc.latitude, loc.longitude]);
             } else {
-                const meEl = document.createElement('div');
-                meEl.className = 'venue-map-user-marker';
-                venueMapUserMarker = new maplibregl.Marker({ element: meEl }).setLngLat([loc.longitude, loc.latitude]).addTo(venueMap);
+                venueMapUserMarker = L.marker([loc.latitude, loc.longitude], { icon: userLocationIcon(), interactive: false }).addTo(venueMap);
             }
-            venueMap.flyTo({ center: [loc.longitude, loc.latitude], zoom: 14 });
+            venueMap.flyTo([loc.latitude, loc.longitude], 14);
         }
 
         let venueMapMarkers = [];
@@ -1398,13 +1403,12 @@
 
         function renderVenueMarkers(venues) {
             if (!venueMap) return;
-            venueMapMarkers.forEach(m => m.remove());
+            venueMapMarkers.forEach(m => venueMap.removeLayer(m));
             venueMapMarkers = [];
 
-            venues.forEach(v => {
-                const el = document.createElement('div');
-                el.className = 'venue-map-marker';
+            const venueIcon = L.divIcon({ className: '', html: '<div class="venue-map-marker"></div>', iconSize: [30, 30], iconAnchor: [15, 15] });
 
+            venues.forEach(v => {
                 const popupHtml = `
                     <div class="venue-popup-box">
                         <p class="venue-popup-name">${escapeHtml(v.eventName)}</p>
@@ -1412,11 +1416,8 @@
                         <button class="venue-popup-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select Venue</button>
                     </div>
                 `;
-                const popup = new maplibregl.Popup({ offset: 22, closeButton: true }).setHTML(popupHtml);
-
-                const marker = new maplibregl.Marker({ element: el })
-                    .setLngLat([v.longitude, v.latitude])
-                    .setPopup(popup)
+                const marker = L.marker([v.latitude, v.longitude], { icon: venueIcon })
+                    .bindPopup(popupHtml, { offset: [0, -18], closeButton: true })
                     .addTo(venueMap);
                 venueMapMarkers.push(marker);
             });
@@ -2481,7 +2482,7 @@
         setInterval(pollNowPlaying, 4000);
     </script>
 
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 </body>
 </html>
