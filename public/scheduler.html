@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
     <title>Music Scheduler</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Playfair+Display:wght@700&family=Poppins:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Fonts above are for the Custom Visual text layer's font picker only
+         (cvRenderRightPanel) - they're what actually render on a guest-
+         facing display, not used anywhere else in this admin page. -->
 
     <style>
         :root {
@@ -527,7 +533,7 @@
         .cv-header-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
         .cv-close { background: none; border: none; color: white; font-size: 1.4rem; cursor: pointer; line-height: 1; }
         .cv-body { display: flex; flex: 1; min-height: 0; }
-        .cv-sidebar { width: 170px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 16px 12px; overflow-y: auto; }
+        .cv-sidebar { width: 190px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 16px 12px; overflow-y: auto; }
         .cv-center { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; background: #0a0a0a; }
         .cv-canvas-wrap { position: relative; width: 100%; max-width: 640px; }
         .cv-canvas {
@@ -573,6 +579,28 @@
         }
         .cv-settings-row { display: flex; gap: 8px; }
         .cv-settings-row .cv-settings-field { flex: 1; }
+        /* New in the expanded editor: sub-sections within one layer's
+           settings (Position & Size vs. type-specific Appearance fields)
+           needed a visual break now that there's a lot more per layer. */
+        .cv-settings-divider { border-top: 1px solid var(--border); margin: 14px 0; }
+        .cv-settings-subhead {
+            font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--text-dim); margin: 0 0 8px; font-weight: 700;
+        }
+        .cv-toggle-group { display: flex; gap: 4px; margin-bottom: 12px; }
+        .cv-toggle-btn {
+            flex: 1; background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 6px 0; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+        }
+        .cv-toggle-btn:hover { border-color: #555; }
+        .cv-toggle-btn.active { border-color: var(--spotify-green); background: rgba(29,185,84,0.15); color: var(--spotify-green); }
+        .cv-checkbox-field { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 0.8rem; cursor: pointer; }
+        .cv-checkbox-field input { width: auto; margin: 0; }
+        /* Content for the Clock, Live Queue and Countdown layer types. */
+        .cv-clock-date { font-size: 0.42em; color: #d8d8d8; margin-top: 3px; font-weight: 400; }
+        .cv-queue-title { font-weight: 700; font-size: 1em; display: flex; align-items: center; gap: 6px; }
+        .cv-queue-hint { font-size: 0.78em; color: var(--text-dim); margin-top: 3px; }
+        .cv-shape-el { width: 100%; height: 100%; }
         .cv-footer {
             display: flex; justify-content: space-between; align-items: center;
             padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
@@ -875,6 +903,7 @@
                     <div class="avm-side-section">
                         <div class="avm-side-label">Background</div>
                         <button type="button" class="avm-side-item" onclick="cvSetBackgroundColor()"><span class="avm-side-icon">&#127912;</span> Color</button>
+                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundGradient()"><span class="avm-side-icon">&#127752;</span> Gradient</button>
                         <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
                         <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
                     </div>
@@ -885,6 +914,8 @@
                         <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('video')"><span class="avm-side-icon">&#127916;</span> Video</button>
                         <button type="button" class="avm-side-item" onclick="cvAddLayer('clock')"><span class="avm-side-icon">&#128337;</span> Clock &amp; Date</button>
                         <button type="button" class="avm-side-item" onclick="cvAddLayer('queue')"><span class="avm-side-icon">&#128250;</span> Live Queue</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('countdown')"><span class="avm-side-icon">&#9203;</span> Countdown Timer</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('shape')"><span class="avm-side-icon">&#9636;</span> Shape / Divider</button>
                     </div>
                     <input type="file" id="cv-file-input" accept="image/*" style="display:none;" onchange="onCvFileChosen(event)">
                 </div>
@@ -2176,6 +2207,47 @@
             return ambientMedia.find(m => m.id === mediaId) || null;
         }
 
+        // ---- Small formatting helpers used by the new layer types below ----
+        function cvHexToRgba(hex, pct) {
+            const h = (hex || '#000000').replace('#', '');
+            const r = parseInt(h.substring(0, 2), 16) || 0;
+            const g = parseInt(h.substring(2, 4), 16) || 0;
+            const b = parseInt(h.substring(4, 6), 16) || 0;
+            return `rgba(${r},${g},${b},${(pct != null ? pct : 100) / 100})`;
+        }
+        function cvFormatCountdown(ms) {
+            const totalSec = Math.floor(ms / 1000);
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            const pad = n => String(n).padStart(2, '0');
+            return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+        }
+        // Formats a Date into the value a <input type="datetime-local">
+        // expects, in the browser's own local time (not UTC).
+        function cvToLocalDatetimeValue(date) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        // Shared inline style for a layer's outer wrapper - position, size,
+        // opacity, rotation and (for the types that support it) rounded
+        // corners / a border. Used by both the live draggable canvas and the
+        // static composite preview so the two never drift out of sync.
+        function cvLayerWrapperStyle(l) {
+            const rot = l.rotation ? `rotate(${l.rotation}deg)` : 'none';
+            let radius = '0';
+            if (l.type === 'photo' || l.type === 'video') {
+                radius = l.borderRadius ? `${l.borderRadius}%` : '0';
+            } else if (l.type === 'shape') {
+                radius = l.shapeType === 'circle' ? '50%' : (l.borderRadius ? `${l.borderRadius}%` : '0');
+            }
+            const border = (l.type === 'photo' || l.type === 'video') && l.borderWidth
+                ? `${l.borderWidth}px solid ${l.borderColor || '#ffffff'}`
+                : 'none';
+            return `left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; transform:${rot}; border-radius:${radius}; border:${border};`;
+        }
+
         // Shared HTML for a single layer's *content* - used both for the
         // live, draggable canvas and for the flattened static preview
         // shown back on the main Ambient Visuals editor.
@@ -2183,25 +2255,71 @@
             if (layer.type === 'photo' || layer.type === 'video') {
                 const media = cvMediaFor(layer.mediaId);
                 if (!media) return `<div class="cv-layer-widget">Missing file</div>`;
-                return layer.type === 'video'
-                    ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video>`
-                    : `<img src="${escapeHtml(media.url)}" alt="">`;
+                const fit = layer.fit || 'cover';
+                const mediaTag = layer.type === 'video'
+                    ? `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline style="width:100%; height:100%; object-fit:${fit}; display:block;"></video>`
+                    : `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:${fit}; display:block;">`;
+                const tint = layer.tintEnabled
+                    ? `<div style="position:absolute; inset:0; background:${escapeHtml(layer.tintColor || '#000000')}; opacity:${(layer.tintOpacity != null ? layer.tintOpacity : 40) / 100};"></div>`
+                    : '';
+                return `<div style="position:relative; width:100%; height:100%;">${mediaTag}${tint}</div>`;
             }
             if (layer.type === 'text') {
-                return `<div class="cv-layer-text" style="font-size:${layer.fontSize || 28}px; color:${escapeHtml(layer.color || '#ffffff')};">${escapeHtml(layer.text || '')}</div>`;
+                const align = layer.align === 'left' ? 'flex-start' : layer.align === 'right' ? 'flex-end' : 'center';
+                const textAlign = layer.align || 'center';
+                const weight = layer.bold ? 800 : 400;
+                const fontStyle = layer.italic ? 'italic' : 'normal';
+                const fontFamily = (layer.fontFamily && layer.fontFamily !== 'inherit') ? `'${layer.fontFamily}', sans-serif` : 'inherit';
+                const oc = escapeHtml(layer.outlineColor || '#000000');
+                const outlineShadow = layer.outline
+                    ? `-1.5px -1.5px 0 ${oc}, 1.5px -1.5px 0 ${oc}, -1.5px 1.5px 0 ${oc}, 1.5px 1.5px 0 ${oc}`
+                    : 'none';
+                const bgCss = layer.bgEnabled ? cvHexToRgba(layer.bgColor, layer.bgOpacity != null ? layer.bgOpacity : 60) : 'transparent';
+                return `<div class="cv-layer-text" style="justify-content:${align}; text-align:${textAlign}; font-size:${layer.fontSize || 28}px; font-weight:${weight}; font-style:${fontStyle}; font-family:${fontFamily}; color:${escapeHtml(layer.color || '#ffffff')}; text-shadow:${outlineShadow}; background:${bgCss};">${escapeHtml(layer.text || '')}</div>`;
             }
             if (layer.type === 'clock') {
                 const now = new Date();
-                return `<div class="cv-layer-widget">&#128337; ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`;
+                const use24 = layer.format === '24h';
+                const timeStr = now.toLocaleTimeString([], {
+                    hour: use24 ? '2-digit' : 'numeric', minute: '2-digit',
+                    second: layer.showSeconds ? '2-digit' : undefined, hour12: !use24
+                });
+                const dateStr = layer.showDate !== false
+                    ? `<div class="cv-clock-date">${now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</div>`
+                    : '';
+                return `<div class="cv-layer-widget" style="flex-direction:column; font-size:${layer.fontSize || 28}px; color:${escapeHtml(layer.color || '#ffffff')};">${timeStr}${dateStr}</div>`;
             }
             if (layer.type === 'queue') {
-                return `<div class="cv-layer-widget">&#128250; Live Queue</div>`;
+                const title = escapeHtml(layer.title || 'Up Next');
+                const count = layer.maxItems || 3;
+                return `<div class="cv-layer-widget" style="flex-direction:column; align-items:flex-start; text-align:left; font-size:${layer.fontSize || 16}px; color:${escapeHtml(layer.color || '#ffffff')};"><div class="cv-queue-title">&#128250; ${title}</div><div class="cv-queue-hint">Live queue - next ${count} song${count === 1 ? '' : 's'}${layer.showArtwork === false ? '' : ' with artwork'}</div></div>`;
+            }
+            if (layer.type === 'countdown') {
+                let display = '--:--:--';
+                if (layer.targetDateTime) {
+                    const target = new Date(layer.targetDateTime);
+                    if (!isNaN(target.getTime())) {
+                        const diffMs = target.getTime() - Date.now();
+                        display = diffMs > 0 ? cvFormatCountdown(diffMs) : '00:00:00';
+                    }
+                }
+                return `<div class="cv-layer-widget" style="flex-direction:column; font-size:${layer.fontSize || 32}px; color:${escapeHtml(layer.color || '#ffffff')};">${layer.label ? `<div class="cv-clock-date">${escapeHtml(layer.label)}</div>` : ''}<div>${display}</div></div>`;
+            }
+            if (layer.type === 'shape') {
+                const shapeType = layer.shapeType || 'rectangle';
+                if (shapeType === 'line') {
+                    return `<div style="width:100%; height:100%; display:flex; align-items:center;"><div style="width:100%; height:${Math.max(1, layer.thickness || 6)}px; background:${escapeHtml(layer.color || '#1DB954')};"></div></div>`;
+                }
+                return `<div class="cv-shape-el" style="background:${escapeHtml(layer.color || '#1DB954')};"></div>`;
             }
             return '';
         }
         function cvBackgroundHtml(bg) {
             if (bg.type === 'color') {
                 return `<div style="position:absolute; inset:0; background:${escapeHtml(bg.color || '#000000')};"></div>`;
+            }
+            if (bg.type === 'gradient') {
+                return `<div style="position:absolute; inset:0; background:linear-gradient(${bg.angle != null ? bg.angle : 135}deg, ${escapeHtml(bg.color1 || '#1DB954')}, ${escapeHtml(bg.color2 || '#121212')});"></div>`;
             }
             const media = cvMediaFor(bg.mediaId);
             if (!media) return `<div style="position:absolute; inset:0; background:#000;"></div>`;
@@ -2215,7 +2333,7 @@
         function cvRenderComposite(item) {
             const bg = item.background || { type: 'color', color: '#000000' };
             const layers = (item.layers || []).map(l => `
-                <div style="position:absolute; left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100}; overflow:hidden;">
+                <div style="position:absolute; ${cvLayerWrapperStyle(l)} overflow:hidden;">
                     ${cvLayerContentHtml(l)}
                 </div>
             `).join('');
@@ -2226,7 +2344,7 @@
             const canvas = document.getElementById('cv-canvas');
             const layersHtml = cvWorking.layers.map((l, idx) => `
                 <div class="cv-layer${idx === cvSelectedLayerIndex ? ' selected' : ''}"
-                     style="left:${l.x}%; top:${l.y}%; width:${l.width}%; height:${l.height}%; opacity:${(l.opacity != null ? l.opacity : 100) / 100};"
+                     style="${cvLayerWrapperStyle(l)}"
                      onmousedown="cvLayerMouseDown(event, ${idx})">
                     ${cvLayerContentHtml(l)}
                 </div>
@@ -2265,6 +2383,8 @@
             if (layer.type === 'text') return layer.text ? layer.text.slice(0, 24) : 'Text';
             if (layer.type === 'clock') return 'Clock & Date';
             if (layer.type === 'queue') return 'Live Queue';
+            if (layer.type === 'countdown') return layer.label ? layer.label.slice(0, 24) : 'Countdown';
+            if (layer.type === 'shape') return 'Shape';
             return 'Layer';
         }
 
@@ -2282,14 +2402,33 @@
             let settingsHtml = '';
             if (cvSelectedLayerIndex === -1) {
                 const bg = cvWorking.background;
-                settingsHtml = `
-                    <div class="cv-right-section-label">Background Settings</div>
-                    ${bg.type === 'color' ? `
+                let bgFields = '';
+                if (bg.type === 'color') {
+                    bgFields = `
                         <div class="cv-settings-field">
                             <label>Color</label>
                             <input type="color" value="${escapeHtml(bg.color || '#000000')}" oninput="cvUpdateBackgroundField('color', this.value)">
                         </div>
-                    ` : `
+                    `;
+                } else if (bg.type === 'gradient') {
+                    bgFields = `
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Color 1</label>
+                                <input type="color" value="${escapeHtml(bg.color1 || '#1DB954')}" oninput="cvUpdateBackgroundField('color1', this.value)">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Color 2</label>
+                                <input type="color" value="${escapeHtml(bg.color2 || '#121212')}" oninput="cvUpdateBackgroundField('color2', this.value)">
+                            </div>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Angle ${bg.angle != null ? bg.angle : 135}&deg;</label>
+                            <input type="range" min="0" max="360" value="${bg.angle != null ? bg.angle : 135}" oninput="cvUpdateBackgroundField('angle', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Angle ' + this.value + '\u00b0';">
+                        </div>
+                    `;
+                } else {
+                    bgFields = `
                         <div class="cv-settings-field">
                             <label>Fit</label>
                             <select onchange="cvUpdateBackgroundField('fit', this.value)">
@@ -2297,30 +2436,83 @@
                                 <option value="contain" ${bg.fit === 'contain' ? 'selected' : ''}>Contain</option>
                             </select>
                         </div>
-                    `}
-                `;
+                    `;
+                }
+                settingsHtml = `<div class="cv-right-section-label">Background Settings</div>${bgFields}`;
             } else {
                 const l = cvWorking.layers[cvSelectedLayerIndex];
                 let typeFields = '';
+
                 if (l.type === 'text') {
                     typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Text</div>
                         <div class="cv-settings-field">
                             <label>Text</label>
                             <input type="text" value="${escapeHtml(l.text || '')}" maxlength="80" onchange="cvUpdateLayerField('text', this.value)">
                         </div>
+                        <div class="cv-settings-field">
+                            <label>Font</label>
+                            <select onchange="cvUpdateLayerField('fontFamily', this.value)">
+                                <option value="inherit" ${(!l.fontFamily || l.fontFamily === 'inherit') ? 'selected' : ''}>System Default</option>
+                                <option value="Poppins" ${l.fontFamily === 'Poppins' ? 'selected' : ''}>Poppins</option>
+                                <option value="Bebas Neue" ${l.fontFamily === 'Bebas Neue' ? 'selected' : ''}>Bebas Neue</option>
+                                <option value="Playfair Display" ${l.fontFamily === 'Playfair Display' ? 'selected' : ''}>Playfair Display</option>
+                                <option value="Space Mono" ${l.fontFamily === 'Space Mono' ? 'selected' : ''}>Space Mono</option>
+                            </select>
+                        </div>
                         <div class="cv-settings-row">
                             <div class="cv-settings-field">
                                 <label>Font size</label>
-                                <input type="number" min="8" max="120" value="${l.fontSize || 28}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
+                                <input type="number" min="8" max="160" value="${l.fontSize || 28}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
                             </div>
                             <div class="cv-settings-field">
                                 <label>Color</label>
                                 <input type="color" value="${escapeHtml(l.color || '#ffffff')}" oninput="cvUpdateLayerField('color', this.value)">
                             </div>
                         </div>
+                        <div class="cv-settings-field">
+                            <label>Style</label>
+                            <div class="cv-toggle-group">
+                                <button type="button" class="cv-toggle-btn${l.bold ? ' active' : ''}" onclick="cvUpdateLayerField('bold', ${!l.bold}); cvRenderRightPanel();"><b>B</b></button>
+                                <button type="button" class="cv-toggle-btn${l.italic ? ' active' : ''}" onclick="cvUpdateLayerField('italic', ${!l.italic}); cvRenderRightPanel();"><i>I</i></button>
+                            </div>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Alignment</label>
+                            <div class="cv-toggle-group">
+                                <button type="button" class="cv-toggle-btn${(l.align || 'center') === 'left' ? ' active' : ''}" onclick="cvUpdateLayerField('align', 'left'); cvRenderRightPanel();">Left</button>
+                                <button type="button" class="cv-toggle-btn${(l.align || 'center') === 'center' ? ' active' : ''}" onclick="cvUpdateLayerField('align', 'center'); cvRenderRightPanel();">Center</button>
+                                <button type="button" class="cv-toggle-btn${(l.align || 'center') === 'right' ? ' active' : ''}" onclick="cvUpdateLayerField('align', 'right'); cvRenderRightPanel();">Right</button>
+                            </div>
+                        </div>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.outline ? 'checked' : ''} onchange="cvUpdateLayerField('outline', this.checked); cvRenderRightPanel();"> Outline
+                        </label>
+                        ${l.outline ? `
+                        <div class="cv-settings-field">
+                            <label>Outline color</label>
+                            <input type="color" value="${escapeHtml(l.outlineColor || '#000000')}" oninput="cvUpdateLayerField('outlineColor', this.value)">
+                        </div>` : ''}
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.bgEnabled ? 'checked' : ''} onchange="cvUpdateLayerField('bgEnabled', this.checked); cvRenderRightPanel();"> Background behind text
+                        </label>
+                        ${l.bgEnabled ? `
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Fill color</label>
+                                <input type="color" value="${escapeHtml(l.bgColor || '#000000')}" oninput="cvUpdateLayerField('bgColor', this.value)">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Fill opacity</label>
+                                <input type="number" min="0" max="100" value="${l.bgOpacity != null ? l.bgOpacity : 60}" onchange="cvUpdateLayerField('bgOpacity', parseInt(this.value,10))">
+                            </div>
+                        </div>` : ''}
                     `;
                 } else if (l.type === 'photo' || l.type === 'video') {
                     typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Appearance</div>
                         <div class="cv-settings-field">
                             <label>Fit</label>
                             <select onchange="cvUpdateLayerField('fit', this.value)">
@@ -2328,10 +2520,144 @@
                                 <option value="contain" ${l.fit === 'contain' ? 'selected' : ''}>Contain</option>
                             </select>
                         </div>
+                        <div class="cv-settings-field">
+                            <label>Rounded corners ${l.borderRadius || 0}%</label>
+                            <input type="range" min="0" max="50" value="${l.borderRadius || 0}" oninput="cvUpdateLayerField('borderRadius', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Rounded corners ' + this.value + '%';">
+                        </div>
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Border width</label>
+                                <input type="number" min="0" max="20" value="${l.borderWidth || 0}" onchange="cvUpdateLayerField('borderWidth', parseInt(this.value,10))">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Border color</label>
+                                <input type="color" value="${escapeHtml(l.borderColor || '#ffffff')}" oninput="cvUpdateLayerField('borderColor', this.value)">
+                            </div>
+                        </div>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.tintEnabled ? 'checked' : ''} onchange="cvUpdateLayerField('tintEnabled', this.checked); cvRenderRightPanel();"> Darken / tint overlay
+                        </label>
+                        ${l.tintEnabled ? `
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Tint color</label>
+                                <input type="color" value="${escapeHtml(l.tintColor || '#000000')}" oninput="cvUpdateLayerField('tintColor', this.value)">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Tint strength</label>
+                                <input type="number" min="0" max="100" value="${l.tintOpacity != null ? l.tintOpacity : 40}" onchange="cvUpdateLayerField('tintOpacity', parseInt(this.value,10))">
+                            </div>
+                        </div>` : ''}
+                    `;
+                } else if (l.type === 'clock') {
+                    typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Clock</div>
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Format</label>
+                                <select onchange="cvUpdateLayerField('format', this.value)">
+                                    <option value="12h" ${(l.format || '12h') === '12h' ? 'selected' : ''}>12-hour</option>
+                                    <option value="24h" ${l.format === '24h' ? 'selected' : ''}>24-hour</option>
+                                </select>
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Font size</label>
+                                <input type="number" min="8" max="120" value="${l.fontSize || 28}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
+                            </div>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Color</label>
+                            <input type="color" value="${escapeHtml(l.color || '#ffffff')}" oninput="cvUpdateLayerField('color', this.value)">
+                        </div>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.showDate !== false ? 'checked' : ''} onchange="cvUpdateLayerField('showDate', this.checked)"> Show date
+                        </label>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.showSeconds ? 'checked' : ''} onchange="cvUpdateLayerField('showSeconds', this.checked)"> Show seconds
+                        </label>
+                    `;
+                } else if (l.type === 'queue') {
+                    typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Live Queue</div>
+                        <div class="cv-settings-field">
+                            <label>Title</label>
+                            <input type="text" value="${escapeHtml(l.title || 'Up Next')}" maxlength="30" onchange="cvUpdateLayerField('title', this.value)">
+                        </div>
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Songs shown</label>
+                                <input type="number" min="1" max="10" value="${l.maxItems || 3}" onchange="cvUpdateLayerField('maxItems', parseInt(this.value,10))">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Font size</label>
+                                <input type="number" min="8" max="60" value="${l.fontSize || 16}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
+                            </div>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Color</label>
+                            <input type="color" value="${escapeHtml(l.color || '#ffffff')}" oninput="cvUpdateLayerField('color', this.value)">
+                        </div>
+                        <label class="cv-checkbox-field">
+                            <input type="checkbox" ${l.showArtwork !== false ? 'checked' : ''} onchange="cvUpdateLayerField('showArtwork', this.checked)"> Show album artwork
+                        </label>
+                    `;
+                } else if (l.type === 'countdown') {
+                    typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Countdown</div>
+                        <div class="cv-settings-field">
+                            <label>Counts down to</label>
+                            <input type="datetime-local" value="${escapeHtml(l.targetDateTime || '')}" onchange="cvUpdateLayerField('targetDateTime', this.value)">
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Label</label>
+                            <input type="text" value="${escapeHtml(l.label || '')}" maxlength="30" onchange="cvUpdateLayerField('label', this.value)">
+                        </div>
+                        <div class="cv-settings-row">
+                            <div class="cv-settings-field">
+                                <label>Font size</label>
+                                <input type="number" min="8" max="120" value="${l.fontSize || 32}" onchange="cvUpdateLayerField('fontSize', parseInt(this.value,10))">
+                            </div>
+                            <div class="cv-settings-field">
+                                <label>Color</label>
+                                <input type="color" value="${escapeHtml(l.color || '#ffffff')}" oninput="cvUpdateLayerField('color', this.value)">
+                            </div>
+                        </div>
+                    `;
+                } else if (l.type === 'shape') {
+                    typeFields = `
+                        <div class="cv-settings-divider"></div>
+                        <div class="cv-settings-subhead">Shape</div>
+                        <div class="cv-settings-field">
+                            <label>Shape</label>
+                            <select onchange="cvUpdateLayerField('shapeType', this.value); cvRenderRightPanel();">
+                                <option value="rectangle" ${(l.shapeType || 'rectangle') === 'rectangle' ? 'selected' : ''}>Rectangle</option>
+                                <option value="circle" ${l.shapeType === 'circle' ? 'selected' : ''}>Circle</option>
+                                <option value="line" ${l.shapeType === 'line' ? 'selected' : ''}>Line / Divider</option>
+                            </select>
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Color</label>
+                            <input type="color" value="${escapeHtml(l.color || '#1DB954')}" oninput="cvUpdateLayerField('color', this.value)">
+                        </div>
+                        ${(l.shapeType || 'rectangle') === 'rectangle' ? `
+                        <div class="cv-settings-field">
+                            <label>Rounded corners ${l.borderRadius || 0}%</label>
+                            <input type="range" min="0" max="50" value="${l.borderRadius || 0}" oninput="cvUpdateLayerField('borderRadius', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Rounded corners ' + this.value + '%';">
+                        </div>` : ''}
+                        ${l.shapeType === 'line' ? `
+                        <div class="cv-settings-field">
+                            <label>Thickness (px)</label>
+                            <input type="number" min="1" max="40" value="${l.thickness || 6}" onchange="cvUpdateLayerField('thickness', parseInt(this.value,10))">
+                        </div>` : ''}
                     `;
                 }
+
                 settingsHtml = `
                     <div class="cv-right-section-label">Layer Settings</div>
+                    <div class="cv-settings-subhead">Position &amp; Size</div>
                     <div class="cv-settings-row">
                         <div class="cv-settings-field">
                             <label>X %</label>
@@ -2352,9 +2678,15 @@
                             <input type="number" min="5" max="100" value="${Math.round(l.height)}" onchange="cvUpdateLayerField('height', parseFloat(this.value))">
                         </div>
                     </div>
-                    <div class="cv-settings-field">
-                        <label>Opacity ${l.opacity != null ? l.opacity : 100}%</label>
-                        <input type="range" min="0" max="100" value="${l.opacity != null ? l.opacity : 100}" oninput="cvUpdateLayerField('opacity', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Opacity ' + this.value + '%';">
+                    <div class="cv-settings-row">
+                        <div class="cv-settings-field">
+                            <label>Rotation&deg;</label>
+                            <input type="number" min="-180" max="180" value="${l.rotation || 0}" onchange="cvUpdateLayerField('rotation', parseFloat(this.value))">
+                        </div>
+                        <div class="cv-settings-field">
+                            <label>Opacity ${l.opacity != null ? l.opacity : 100}%</label>
+                            <input type="range" min="0" max="100" value="${l.opacity != null ? l.opacity : 100}" oninput="cvUpdateLayerField('opacity', parseInt(this.value,10)); this.previousElementSibling.textContent = 'Opacity ' + this.value + '%';">
+                        </div>
                     </div>
                     ${typeFields}
                 `;
@@ -2371,6 +2703,18 @@
                 </div>
                 ${settingsHtml}
             `;
+        }
+
+        function cvSetBackgroundGradient() {
+            const existing = cvWorking.background.type === 'gradient' ? cvWorking.background : {};
+            cvWorking.background = {
+                type: 'gradient',
+                color1: existing.color1 || '#1DB954',
+                color2: existing.color2 || '#121212',
+                angle: existing.angle != null ? existing.angle : 135
+            };
+            cvSelectedLayerIndex = -1;
+            cvRenderAll();
         }
 
         function cvUpdateBackgroundField(field, val) {
@@ -2416,7 +2760,9 @@
                 } else {
                     cvWorking.layers.push({
                         id: genId(), type: media.type === 'video' ? 'video' : 'photo', mediaId: media.id,
-                        x: 30, y: 40, width: 35, height: 25, opacity: 100, fit: 'cover'
+                        x: 30, y: 40, width: 35, height: 25, opacity: 100, fit: 'cover', rotation: 0,
+                        borderRadius: 0, borderWidth: 0, borderColor: '#ffffff',
+                        tintEnabled: false, tintColor: '#000000', tintOpacity: 40
                     });
                     cvSelectedLayerIndex = cvWorking.layers.length - 1;
                 }
@@ -2427,8 +2773,30 @@
             }
         }
         function cvAddLayer(kind) {
-            const layer = { id: genId(), type: kind, x: 30, y: 40, width: 35, height: 20, opacity: 100 };
-            if (kind === 'text') { layer.text = 'Your text here'; layer.fontSize = 28; layer.color = '#ffffff'; }
+            const layer = { id: genId(), type: kind, x: 30, y: 40, width: 35, height: 20, opacity: 100, rotation: 0 };
+            if (kind === 'text') {
+                layer.text = 'Your text here'; layer.fontSize = 28; layer.color = '#ffffff';
+                layer.fontFamily = 'inherit'; layer.bold = false; layer.italic = false; layer.align = 'center';
+                layer.outline = false; layer.outlineColor = '#000000';
+                layer.bgEnabled = false; layer.bgColor = '#000000'; layer.bgOpacity = 60;
+            } else if (kind === 'clock') {
+                layer.fontSize = 28; layer.color = '#ffffff'; layer.format = '12h';
+                layer.showDate = true; layer.showSeconds = false;
+                layer.width = 24; layer.height = 16;
+            } else if (kind === 'queue') {
+                layer.fontSize = 16; layer.color = '#ffffff'; layer.title = 'Up Next';
+                layer.maxItems = 3; layer.showArtwork = true;
+                layer.width = 28; layer.height = 24;
+            } else if (kind === 'countdown') {
+                const inOneHour = new Date(Date.now() + 60 * 60 * 1000);
+                inOneHour.setSeconds(0, 0);
+                layer.targetDateTime = cvToLocalDatetimeValue(inOneHour);
+                layer.label = 'Starts In'; layer.fontSize = 32; layer.color = '#ffffff';
+                layer.width = 26; layer.height = 16;
+            } else if (kind === 'shape') {
+                layer.shapeType = 'rectangle'; layer.color = '#1DB954'; layer.borderRadius = 0; layer.thickness = 6;
+                layer.width = 30; layer.height = 4;
+            }
             cvWorking.layers.push(layer);
             cvSelectedLayerIndex = cvWorking.layers.length - 1;
             cvRenderAll();
