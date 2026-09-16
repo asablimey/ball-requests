@@ -1092,7 +1092,7 @@
                 <p>Requests, votes, and names are kept only for the duration of the event and are cleared when the server restarts between events. Nothing here is stored in a long-term database.</p>
 
                 <h4>Third parties</h4>
-                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. The venue map is rendered using tiles from MapTiler, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Spotify's and MapTiler's own handling of this data is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's</a> and <a href="https://www.maptiler.com/privacy-policy/" target="_blank" rel="noopener">MapTiler's</a> privacy policies, not this one.</p>
+                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. The venue map is rendered using tiles from OpenFreeMap, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Spotify's and OpenFreeMap's own handling of this data is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's</a> and <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap's</a> policies, not this one.</p>
 
                 <h4>Questions</h4>
                 <p>This site is made and maintained by Sam B. If you have questions about how it works, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
@@ -1332,7 +1332,11 @@
             const loc = await getUserLocation();
             venueMap = new maplibregl.Map({
                 container: 'venue-map',
-                style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
+                // Switched from a personal MapTiler key/style to OpenFreeMap:
+                // no API key, no account, no request quota to run out of -
+                // this is what silently took every map on the site down at
+                // once when the old key stopped resolving.
+                style: 'https://tiles.openfreemap.org/styles/liberty',
                 // Always opens centred on New Zealand, regardless of where
                 // the guest actually is - the "locate me" button below is
                 // how they zoom to their own position instead.
