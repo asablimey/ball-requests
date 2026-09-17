@@ -170,8 +170,9 @@
            current track has a confident YouTube match (see pollMusicVideo).
            View-only, no controls, no way for anything on this screen to be
            clicked - #video-click-blocker sits transparently on top of the
-           iframe per spec, since this display has no input device attached
-           and is never meant to be interacted with. ---------- */
+           iframe and catches every pointer event itself (does nothing with
+           them), so the iframe underneath never sees a hover/click and
+           never shows its own title/share/pause overlay. ---------- */
         #video-view {
             position: fixed; inset: 0; display: none; background: #000;
         }
@@ -180,7 +181,7 @@
             position: absolute; inset: 0; width: 100% !important; height: 100% !important; border: 0;
         }
         #video-click-blocker {
-            position: absolute; inset: 0; z-index: 5; pointer-events: none;
+            position: absolute; inset: 0; z-index: 5;
         }
     </style>
 </head>
@@ -675,7 +676,24 @@
             if (mvDriftInterval) { clearInterval(mvDriftInterval); mvDriftInterval = null; }
         }
 
-        function startMusicVideo(videoId, trackId, progressMs, durationMs, isPlaying) {
+        // np.progressMs/updatedAt reflect whenever the server last actually
+        // polled Spotify - up to a few seconds stale by the time this data
+        // reaches the client (poll interval + network + however long the
+        // YouTube search/scoring took for a brand new track). Bridges that
+        // gap with wall-clock time elapsed since the server's own capture,
+        // same idea as the interpolation the drift-correction loop below
+        // already does between polls of this endpoint.
+        function correctedMusicVideoState(data) {
+            const sinceServerUpdate = data.isPlaying ? Math.max(0, Date.now() - (data.updatedAt || Date.now())) : 0;
+            return {
+                progressMs: (data.progressMs || 0) + sinceServerUpdate,
+                durationMs: data.durationMs || 0,
+                isPlaying: !!data.isPlaying,
+                fetchedAt: Date.now()
+            };
+        }
+
+        function startMusicVideo(videoId, trackId, mvState) {
             musicVideoActive = true;
             currentVideoTrackId = trackId;
             showView('video');
@@ -685,11 +703,11 @@
             clearAmbientAdvanceTimer();
             clearSlideCleanup();
 
-            mvNpState = { progressMs: progressMs || 0, durationMs: durationMs || 0, isPlaying: !!isPlaying, fetchedAt: Date.now() };
+            mvNpState = mvState;
 
             if (ytPlayerReady) {
-                ytPlayer.loadVideoById({ videoId, startSeconds: Math.max(0, (progressMs || 0) / 1000) });
-                if (!isPlaying) ytPlayer.pauseVideo();
+                ytPlayer.loadVideoById({ videoId, startSeconds: Math.max(0, mvState.progressMs / 1000) });
+                if (!mvState.isPlaying) ytPlayer.pauseVideo();
             }
 
             clearMvDriftInterval();
@@ -741,9 +759,9 @@
                         // Same video already playing - just refresh the
                         // drift-correction baseline with the latest server
                         // progress reading.
-                        mvNpState = { progressMs: data.progressMs || 0, durationMs: data.durationMs || 0, isPlaying: !!data.isPlaying, fetchedAt: Date.now() };
+                        mvNpState = correctedMusicVideoState(data);
                     } else {
-                        startMusicVideo(data.videoId, data.trackId, data.progressMs, data.durationMs, data.isPlaying);
+                        startMusicVideo(data.videoId, data.trackId, correctedMusicVideoState(data));
                     }
                 } else if (musicVideoActive) {
                     // No match (or the track this decision was for has
