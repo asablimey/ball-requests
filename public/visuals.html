@@ -156,6 +156,15 @@
             flex: 1; display: flex; align-items: center; justify-content: center;
             color: #666; font-size: 1.3rem; text-align: center;
         }
+
+        /* ---------- Full blackout, toggled from Admin -> Settings -> Content ---------- */
+        /* Sits above both #ambient-view and #queue-view regardless of which
+           is active. Purely visual - polling and slide timers keep running
+           underneath, so nothing needs to resync when this switches off. */
+        #mute-overlay {
+            position: fixed; inset: 0; background: #000; z-index: 9999; display: none;
+        }
+        #mute-overlay.is-visible { display: block; }
     </style>
 </head>
 <body>
@@ -189,6 +198,8 @@
         <div class="qv-list" id="qv-list"></div>
     </div>
 
+    <div id="mute-overlay"></div>
+
     <script>
         const EVENT_SLUG = location.pathname.split('/')[2] || '';
         function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
@@ -219,6 +230,13 @@
         let ambientAdvanceTimer = null;
         let ambientInactiveStreak = 0;
         const AMBIENT_INACTIVE_TOLERANCE = 2; // consecutive misses before falling back
+
+        // Admin -> Settings -> Content overrides, read from every
+        // /api/ambient-visuals poll below (see pollAmbientVisuals).
+        let visualsForceQueue = false;
+        function applyMuteOverlay(muted) {
+            document.getElementById('mute-overlay').classList.toggle('is-visible', !!muted);
+        }
 
         // Anything a widget slide (clock/queue) sets up while it's on
         // screen - a ticking clock or a refreshing queue poll - gets torn
@@ -441,6 +459,28 @@
                 const res = await fetch(eventUrl('/api/ambient-visuals'));
                 if (!res.ok) return;
                 const data = await res.json();
+
+                applyMuteOverlay(data.muted);
+
+                const forceQueue = !!data.showQueue;
+                if (forceQueue && !visualsForceQueue) {
+                    // Just switched on: stop whatever ambient content is
+                    // running and pin the fallback board up until this is
+                    // switched off again from Admin -> Settings -> Content.
+                    clearAmbientAdvanceTimer();
+                    clearSlideCleanup();
+                    showView('queue');
+                } else if (!forceQueue && visualsForceQueue) {
+                    // Just switched off: forget the last-known ambient state
+                    // so the logic below treats this like a fresh block
+                    // becoming active and restarts a slide from scratch,
+                    // rather than assuming nothing changed while pinned.
+                    ambientItems = [];
+                    ambientRuleId = null;
+                    ambientInactiveStreak = 0;
+                }
+                visualsForceQueue = forceQueue;
+                if (visualsForceQueue) return;
 
                 if (!data.active) {
                     ambientInactiveStreak++;
