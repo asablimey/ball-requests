@@ -903,10 +903,16 @@
         }
 
         /* Popup shown when a marker is tapped - venue info on top, the
-           Select Venue button pinned at the bottom of the box. */
+           Select Venue button pinned at the bottom of the box.
+           NOTE: these use ".venue-popup-box .venue-popup-name" (not just
+           ".venue-popup-name") on purpose - Leaflet's own default CSS ships
+           ".leaflet-popup-content p { margin: 18px 0; }", which is MORE
+           specific than a bare class selector (class+element beats class
+           alone) and was winning over a plain ".venue-popup-name" rule,
+           leaving a huge 18px gap above and below each line. */
         .venue-popup-box { min-width: 200px; }
-        .venue-popup-name { font-weight: 800; font-size: 1rem; margin: 0 0 4px 0; color: var(--spotify-black); }
-        .venue-popup-sub { font-size: 0.8rem; color: #555; margin: 0 0 12px 0; }
+        .venue-popup-box .venue-popup-name { font-weight: 800; font-size: 1rem; margin: 0 0 4px 0; color: var(--spotify-black); }
+        .venue-popup-box .venue-popup-sub { font-size: 0.8rem; color: #555; margin: 0 0 12px 0; }
         .venue-popup-select-btn {
             display: block; width: 100%; background-color: var(--spotify-green); color: white;
             border: none; padding: 9px 0; border-radius: 50px; font-weight: 700;
