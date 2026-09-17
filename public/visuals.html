@@ -165,6 +165,23 @@
             position: fixed; inset: 0; background: #000; z-index: 9999; display: none;
         }
         #mute-overlay.is-visible { display: block; }
+
+        /* ---------- Music Video overlay: replaces ambient visuals when the
+           current track has a confident YouTube match (see pollMusicVideo).
+           View-only, no controls, no way for anything on this screen to be
+           clicked - #video-click-blocker sits transparently on top of the
+           iframe per spec, since this display has no input device attached
+           and is never meant to be interacted with. ---------- */
+        #video-view {
+            position: fixed; inset: 0; display: none; background: #000;
+        }
+        #video-view.is-visible { display: block; }
+        #yt-player, #yt-player iframe {
+            position: absolute; inset: 0; width: 100% !important; height: 100% !important; border: 0;
+        }
+        #video-click-blocker {
+            position: absolute; inset: 0; z-index: 5; pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -198,8 +215,18 @@
         <div class="qv-list" id="qv-list"></div>
     </div>
 
+    <!-- Music Video overlay: shown in place of Ambient Visuals whenever the
+         current track has a confident YouTube match. Never shown at the
+         same time as the forced Show Queue override (Admin -> Settings ->
+         Content), which always wins - see pollMusicVideo. -->
+    <div id="video-view">
+        <div id="yt-player"></div>
+        <div id="video-click-blocker"></div>
+    </div>
+
     <div id="mute-overlay"></div>
 
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const EVENT_SLUG = location.pathname.split('/')[2] || '';
         function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
@@ -253,6 +280,7 @@
         function showView(name) {
             document.getElementById('ambient-view').classList.toggle('is-visible', name === 'ambient');
             document.getElementById('queue-view').classList.toggle('is-visible', name === 'queue');
+            document.getElementById('video-view').classList.toggle('is-visible', name === 'video');
         }
 
         function clearAmbientAdvanceTimer() {
@@ -455,6 +483,13 @@
         }
 
         async function pollAmbientVisuals() {
+            // The Music Video overlay owns the screen while it's active -
+            // this poll still isn't allowed to switch the view out from
+            // under it. Its own ambient state naturally goes stale while
+            // paused here; stopMusicVideo() resets it before handing back
+            // so the next call renders a fresh slide rather than assuming
+            // whatever was mid-flight is still valid.
+            if (musicVideoActive) return;
             try {
                 const res = await fetch(eventUrl('/api/ambient-visuals'));
                 if (!res.ok) return;
@@ -590,15 +625,146 @@
             } catch (e) { /* keep last known state */ }
         }
 
+        /* =========================================================
+           Music Video overlay (YouTube)
+           - Polls /api/music-video. When the current track has a
+             confident match, tears down ambient visuals and plays the
+             video (muted, no UI, no interaction) roughly in sync with
+             Spotify's reported progress, resyncing on drift.
+           - Never overrides the forced Show Queue setting (Admin ->
+             Settings -> Content) - that always wins, same as it does
+             over ambient visuals.
+           - Falls straight back to whatever pollAmbientVisuals would
+             otherwise be showing the moment there's no match. This
+             feature never blanks the screen on its own - it only ever
+             substitutes for the ambient layer.
+           ========================================================= */
+        let ytPlayer = null;
+        let ytPlayerReady = false;
+        let musicVideoActive = false;
+        let currentVideoTrackId = null;
+        let mvNpState = null; // interpolation baseline for drift correction, same shape as npState above
+        let mvDriftInterval = null;
+        const MUSIC_VIDEO_RESYNC_THRESHOLD_MS = 450;
+
+        // Called by the YouTube IFrame API script once it's finished
+        // loading - the player is created once, empty, and reused (via
+        // loadVideoById) for every track from then on rather than being
+        // torn down and rebuilt each switch.
+        window.onYouTubeIframeAPIReady = function () {
+            ytPlayer = new YT.Player('yt-player', {
+                width: '100%', height: '100%',
+                playerVars: {
+                    autoplay: 1, mute: 1, controls: 0, disablekb: 1, fs: 0,
+                    iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1
+                },
+                events: {
+                    onReady: () => { ytPlayerReady = true; },
+                    // A video can fail at actual playback time even after
+                    // passing the server-side embeddable check (region
+                    // locks, an owner opt-out that only surfaces here) -
+                    // treat that the same as "no match" and fall back to
+                    // ambient immediately rather than sit on a frozen or
+                    // black video view.
+                    onError: () => { stopMusicVideo(); }
+                }
+            });
+        };
+
+        function clearMvDriftInterval() {
+            if (mvDriftInterval) { clearInterval(mvDriftInterval); mvDriftInterval = null; }
+        }
+
+        function startMusicVideo(videoId, trackId, progressMs, durationMs, isPlaying) {
+            musicVideoActive = true;
+            currentVideoTrackId = trackId;
+            showView('video');
+            // Same teardown pollAmbientVisuals does whenever it switches
+            // views itself - a widget slide's clock/queue timers shouldn't
+            // keep running underneath the video.
+            clearAmbientAdvanceTimer();
+            clearSlideCleanup();
+
+            mvNpState = { progressMs: progressMs || 0, durationMs: durationMs || 0, isPlaying: !!isPlaying, fetchedAt: Date.now() };
+
+            if (ytPlayerReady) {
+                ytPlayer.loadVideoById({ videoId, startSeconds: Math.max(0, (progressMs || 0) / 1000) });
+                if (!isPlaying) ytPlayer.pauseVideo();
+            }
+
+            clearMvDriftInterval();
+            mvDriftInterval = setInterval(() => {
+                if (!ytPlayerReady || !mvNpState) return;
+                const elapsed = mvNpState.isPlaying ? (Date.now() - mvNpState.fetchedAt) : 0;
+                const expectedSec = (mvNpState.progressMs + elapsed) / 1000;
+                let ytSec;
+                try { ytSec = ytPlayer.getCurrentTime(); } catch (e) { return; }
+                if (typeof ytSec !== 'number') return;
+                if (Math.abs(ytSec - expectedSec) * 1000 > MUSIC_VIDEO_RESYNC_THRESHOLD_MS) {
+                    ytPlayer.seekTo(expectedSec, true);
+                }
+            }, 1500);
+        }
+
+        function stopMusicVideo() {
+            if (!musicVideoActive) return;
+            musicVideoActive = false;
+            currentVideoTrackId = null;
+            mvNpState = null;
+            clearMvDriftInterval();
+            if (ytPlayerReady) {
+                try { ytPlayer.stopVideo(); } catch (e) { /* ignore */ }
+            }
+            // Force a fresh render rather than assuming whatever ambient
+            // state was current before the video started is still valid -
+            // same reset pollAmbientVisuals does when Show Queue switches
+            // back off.
+            ambientItems = [];
+            ambientRuleId = null;
+            ambientInactiveStreak = 0;
+            pollAmbientVisuals();
+        }
+
+        async function pollMusicVideo() {
+            try {
+                const res = await fetch(eventUrl('/api/music-video'));
+                if (!res.ok) return;
+                const data = await res.json();
+
+                if (visualsForceQueue) {
+                    if (musicVideoActive) stopMusicVideo();
+                    return;
+                }
+
+                if (data.enabled && data.matched && data.videoId) {
+                    if (musicVideoActive && currentVideoTrackId === data.trackId) {
+                        // Same video already playing - just refresh the
+                        // drift-correction baseline with the latest server
+                        // progress reading.
+                        mvNpState = { progressMs: data.progressMs || 0, durationMs: data.durationMs || 0, isPlaying: !!data.isPlaying, fetchedAt: Date.now() };
+                    } else {
+                        startMusicVideo(data.videoId, data.trackId, data.progressMs, data.durationMs, data.isPlaying);
+                    }
+                } else if (musicVideoActive) {
+                    // No match (or the track this decision was for has
+                    // already moved on) - tear the video down and hand
+                    // back to ambient visuals.
+                    stopMusicVideo();
+                }
+            } catch (e) { /* keep showing whatever's already on screen */ }
+        }
+
         // Ambient view is checked most often since it drives an active
         // slideshow; the fallback board's data is cheap and only visible
         // when ambient visuals aren't running.
         pollAmbientVisuals();
         pollQueueBoard();
         pollNowPlaying();
+        pollMusicVideo();
         setInterval(pollAmbientVisuals, 8000);
         setInterval(pollQueueBoard, 8000);
         setInterval(pollNowPlaying, 4000);
+        setInterval(pollMusicVideo, 3000);
     </script>
 </body>
 </html>
