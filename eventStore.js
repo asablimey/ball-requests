@@ -154,6 +154,19 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             displayOnlyMode: false
         },
 
+        // Admin -> Settings -> Content overrides for the Visuals Display
+        // page. muteVisuals just blacks the screen; muteAll does the same
+        // AND best-effort pauses/resumes the connected Spotify playback
+        // alongside it (see the /api/admin/visuals/* routes in server.js).
+        // showQueue pins the fallback Now Playing + Up Next board on
+        // screen, overriding any active Ambient Visuals block, until
+        // switched back off.
+        visualsConfigs: {
+            muteVisuals: false,
+            muteAll: false,
+            showQueue: false
+        },
+
         activeQueue: [],
         playedHistory: [],
         requestLog: [],
@@ -387,6 +400,17 @@ function ensureSchedulerDefaults(event) {
     // route null-check event.ambientMedia before touching it.
     if (!Array.isArray(event.ambientMedia)) {
         event.ambientMedia = [];
+    }
+    // Events saved before the Content settings tab existed won't have this
+    // at all - back it in with everything off rather than making the
+    // visuals routes and the public /api/ambient-visuals poll null-check
+    // event.visualsConfigs on every request.
+    if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') {
+        event.visualsConfigs = { muteVisuals: false, muteAll: false, showQueue: false };
+    } else {
+        if (typeof event.visualsConfigs.muteVisuals !== 'boolean') event.visualsConfigs.muteVisuals = false;
+        if (typeof event.visualsConfigs.muteAll !== 'boolean') event.visualsConfigs.muteAll = false;
+        if (typeof event.visualsConfigs.showQueue !== 'boolean') event.visualsConfigs.showQueue = false;
     }
     // Events saved before the fallback/scheduled split existed only have
     // lastSwitchedPlaylist. Seed fallbackPlaylistUri from it once so a gap
