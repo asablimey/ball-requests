@@ -103,6 +103,14 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 // off and every event falls back to needing its own password, same as before.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
+// Optional: powers the Visuals Display's automatic music video playback
+// (see the Music Video section further down). If this isn't set, the
+// feature is simply off everywhere - the visuals display just keeps
+// showing ambient content/the queue board, same as before this existed.
+//   YOUTUBE_API_KEY - a YouTube Data API v3 key (console.cloud.google.com,
+//                      enable "YouTube Data API v3", create an API key).
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+
 // --- DJ Spotify Queue Relay ---
 // Separate from the client-credentials token below (which only reads the public
 // catalog for search) and separate from guests' own read-only PKCE login. This is
@@ -2395,6 +2403,19 @@ app.post('/e/:slug/api/admin/visuals/toggle-show-queue', (req, res) => {
     res.json({ success: true });
 });
 
+// Turning this off clears the live decision immediately (rather than
+// waiting for the next track change to notice) so the Visuals Display
+// falls back to ambient visuals within one poll instead of riding out
+// whatever's currently playing.
+app.post('/e/:slug/api/admin/visuals/toggle-music-videos', (req, res) => {
+    const event = req.event;
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') event.visualsConfigs.musicVideosEnabled = enabled;
+    if (!enabled) clearCachedMusicVideo(event);
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
 // Blocks a specific guest (by voterId, from a row in the admin Stats
 // "Recent Requests" list) from requesting or voting for the rest of this
 // event. `label` is just the name they were requesting under at the time -
@@ -2723,6 +2744,211 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
     res.json({ success: true });
 });
 
+// --- Music Video (YouTube) auto-playback ---------------------------------
+// When a track starts playing, tries to find its official YouTube music
+// video so the Visuals Display can show it (muted, no UI) in place of the
+// ambient visuals lane. Matching is deliberately conservative - see
+// scoreYouTubeCandidate below - a track with no confident match just
+// leaves the ambient visuals running untouched, as if this never ran.
+const MUSIC_VIDEO_MATCH_THRESHOLD = 0.55;
+// How far a candidate's length is allowed to drift from the Spotify
+// track's actual duration before it's rejected outright, regardless of how
+// good the title match looks - this is the single strongest signal that a
+// result is the wrong upload entirely (a "full album" video, a 30s clip,
+// an extended remix, etc).
+const MUSIC_VIDEO_DURATION_TOLERANCE = 0.15; // +/- 15%
+
+function normalizeForMatch(str) {
+    return (str || '')
+        .toLowerCase()
+        .replace(/\(feat\.?[^)]*\)/g, ' ')
+        .replace(/\bfeat\.?\s.+$/g, ' ')
+        .replace(/[[\](){}]/g, ' ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Token-overlap similarity (Sorensen-Dice on word sets) - cheap, dependency-
+// free, and plenty discriminating for "is this candidate's title actually
+// about this song" at the conservative threshold this feature runs at.
+function titleSimilarity(a, b) {
+    const setA = new Set(normalizeForMatch(a).split(' ').filter(Boolean));
+    const setB = new Set(normalizeForMatch(b).split(' ').filter(Boolean));
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let overlap = 0;
+    setA.forEach(tok => { if (setB.has(tok)) overlap++; });
+    return (2 * overlap) / (setA.size + setB.size);
+}
+
+// A candidate carrying one of these is only penalized if the REQUESTED
+// track itself isn't that same version - e.g. a guest who requested the
+// Live version of a song should still get a Live video back, not be
+// penalized for it.
+const MUSIC_VIDEO_VERSION_KEYWORDS = ['cover', 'remix', 'live', 'lyrics', 'karaoke', 'instrumental', 'sped up', 'nightcore', '8d audio'];
+
+function versionKeywordsIn(str) {
+    const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
+    return MUSIC_VIDEO_VERSION_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
+}
+
+function scoreYouTubeCandidate(candidate, track) {
+    // Duration is the hard gate - if it's off by more than the tolerance,
+    // this isn't the right upload at all, no matter what the title says.
+    if (!candidate.durationSec || !track.durationMs) return { score: 0, reason: 'missing duration data' };
+    const expectedSec = track.durationMs / 1000;
+    const diff = Math.abs(candidate.durationSec - expectedSec) / expectedSec;
+    if (diff > MUSIC_VIDEO_DURATION_TOLERANCE) {
+        return { score: 0, reason: `duration off by ${Math.round(diff * 100)}% (candidate ${Math.round(candidate.durationSec)}s vs track ${Math.round(expectedSec)}s)` };
+    }
+
+    const expectedTitle = `${track.artist} ${track.title}`;
+    let score = titleSimilarity(candidate.title, expectedTitle) * 0.7;
+
+    // Penalize a version mismatch unless the track itself is that same
+    // version too (checked against the track's own title, so a "Live"
+    // request still favors "Live" candidates).
+    const candidateVersions = versionKeywordsIn(candidate.title);
+    const trackVersions = versionKeywordsIn(track.title);
+    const unwantedVersions = candidateVersions.filter(v => !trackVersions.includes(v));
+    if (unwantedVersions.length > 0) score -= 0.35;
+
+    // Duration closeness contributes a smaller amount on top of the pass/
+    // fail gate above - an exact-length match nudges score up further.
+    score += (1 - diff / MUSIC_VIDEO_DURATION_TOLERANCE) * 0.15;
+
+    // Channel bonus: the uploading channel matching the artist is a strong
+    // signal this is the real music video and not a fan upload.
+    const normChannel = normalizeForMatch(candidate.channelTitle);
+    const normArtist = normalizeForMatch(track.artist);
+    if (normArtist && (normChannel === normArtist || normChannel.includes(normArtist) || normArtist.includes(normChannel))) {
+        score += 0.15;
+    }
+    if (/vevo|official/.test(normChannel)) score += 0.05;
+
+    score = Math.max(0, Math.min(1, score));
+    return { score, reason: unwantedVersions.length > 0 ? `title/version mismatch (${unwantedVersions.join(', ')})` : null };
+}
+
+function parseISO8601DurationToSeconds(iso) {
+    // e.g. "PT3M42S" -> 222. Only H/M/S components ever appear in YouTube's
+    // video content details.
+    const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso || '');
+    if (!match) return 0;
+    const [, h, m, s] = match;
+    return (parseInt(h || '0', 10) * 3600) + (parseInt(m || '0', 10) * 60) + parseInt(s || '0', 10);
+}
+
+// Two-step YouTube Data API lookup: search.list finds candidate videos,
+// videos.list then fills in duration (search results don't include it) and
+// confirms embeddability. One search call + one follow-up call per unique
+// track - results get cached by trackId afterward, so this only runs once
+// per song, keeping it well within a free-tier daily quota.
+async function fetchYouTubeCandidates(query) {
+    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=5&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
+    const searchRes = await fetch(searchUrl);
+    if (!searchRes.ok) throw new Error(`YouTube search failed: ${searchRes.status}`);
+    const searchData = await searchRes.json();
+    const ids = (searchData.items || []).map(it => it.id?.videoId).filter(Boolean);
+    if (ids.length === 0) return [];
+
+    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet,status&id=${ids.join(',')}&key=${YOUTUBE_API_KEY}`;
+    const detailsRes = await fetch(detailsUrl);
+    if (!detailsRes.ok) throw new Error(`YouTube video details failed: ${detailsRes.status}`);
+    const detailsData = await detailsRes.json();
+
+    return (detailsData.items || [])
+        .filter(v => v.status?.embeddable !== false)
+        .map(v => ({
+            videoId: v.id,
+            title: v.snippet?.title || '',
+            channelTitle: v.snippet?.channelTitle || '',
+            durationSec: parseISO8601DurationToSeconds(v.contentDetails?.duration)
+        }));
+}
+
+// Finds the best-scoring candidate for one track, trying the "official
+// video" query first and falling back to a plain query if that comes back
+// empty (a lot of tracks' official videos are just titled "Artist - Track").
+async function findBestYouTubeMatch(track) {
+    let candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title} official video`);
+    if (candidates.length === 0) {
+        candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title}`);
+    }
+    let best = null;
+    for (const candidate of candidates) {
+        const { score, reason } = scoreYouTubeCandidate(candidate, track);
+        if (!best || score > best.score) best = { ...candidate, score, reason };
+    }
+    return best;
+}
+
+// Clears the "what should the Visuals Display show" readout back to
+// nothing - used whenever there's no current track to match against
+// (Spotify disconnected, nothing playing, etc), same spirit as resetting
+// cachedNowPlaying in those same situations below.
+function clearCachedMusicVideo(event) {
+    event.cachedMusicVideo = { trackId: null, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
+}
+
+// Resolves (and caches) the music video decision for one track, then
+// updates event.cachedMusicVideo so the Visuals Display's poll reflects
+// it. Fire-and-forget from syncNowPlayingForEvent - never awaited on the
+// main sync tick, so a slow/failed YouTube call never holds up the
+// now-playing cache the rest of the site depends on.
+async function resolveMusicVideoForTrack(event, track) {
+    event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: true, videoId: null, updatedAt: Date.now() };
+
+    if (!YOUTUBE_API_KEY) {
+        event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
+        return;
+    }
+
+    const cached = event.musicVideoMatches[track.trackId];
+    if (cached) {
+        event.cachedMusicVideo = { trackId: track.trackId, matched: cached.matched, pending: false, videoId: cached.videoId, updatedAt: Date.now() };
+        console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - using cached ${cached.matched ? `match ${cached.videoId} (score ${cached.score.toFixed(2)})` : 'no-match result'}`);
+        return;
+    }
+
+    try {
+        const best = await findBestYouTubeMatch(track);
+        const matched = !!best && best.score >= MUSIC_VIDEO_MATCH_THRESHOLD;
+        const result = {
+            videoId: matched ? best.videoId : null,
+            score: best ? best.score : 0,
+            matched,
+            title: best ? best.title : null,
+            channel: best ? best.channelTitle : null,
+            reason: matched ? null : (best ? best.reason : 'no candidates found'),
+            checkedAt: Date.now()
+        };
+        event.musicVideoMatches[track.trackId] = result;
+        events.scheduleSave(event.slug);
+
+        // Only apply this result if the track is still the one playing -
+        // the search can take a second or two, and a short track could
+        // already have changed again by the time it resolves.
+        if (event.cachedNowPlaying.trackId === track.trackId) {
+            event.cachedMusicVideo = { trackId: track.trackId, matched, pending: false, videoId: result.videoId, updatedAt: Date.now() };
+        }
+
+        if (matched) {
+            console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - matched ${result.videoId} (score ${result.score.toFixed(2)})`);
+        } else {
+            console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - skipped, best score ${result.score.toFixed(2)} (${result.reason})`);
+        }
+    } catch (err) {
+        console.error(`[MUSIC VIDEO] (${event.slug}) Lookup failed for "${track.title}":`, err.message);
+        // Deliberately not cached - a transient failure (quota, network)
+        // gets another shot next time this track comes up, rather than
+        // being remembered forever as "no match".
+        if (event.cachedNowPlaying.trackId === track.trackId) {
+            event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
+        }
+    }
+}
+
 // --- Auto-sync + now-playing cache (per event) ---
 // Two jobs share this one poll per event so we're not hitting Spotify twice a tick:
 //   1. Remove a request from the local queue the moment Spotify actually starts
@@ -2735,6 +2961,7 @@ async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
     if (!token) {
         event.cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
+        clearCachedMusicVideo(event);
         return;
     }
     try {
@@ -2759,6 +2986,7 @@ async function syncNowPlayingForEvent(event) {
         ]);
         if (res.status === 204 || res.status === 404) {
             event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
+            clearCachedMusicVideo(event);
             return;
         }
         if (!res.ok) return; // leave the last known cache in place on a transient error
@@ -2794,7 +3022,29 @@ async function syncNowPlayingForEvent(event) {
         };
 
         const nowPlayingId = item?.id;
-        if (!nowPlayingId || nowPlayingId === event.lastSyncedNowPlayingId) return;
+        if (!nowPlayingId) {
+            clearCachedMusicVideo(event);
+            return;
+        }
+
+        // Independent of the "already synced this track" gate below (which
+        // only guards the once-per-track queue-removal logic) - this also
+        // needs to catch the toggle being switched on mid-song for a track
+        // that's already playing, not just brand new tracks.
+        if (event.visualsConfigs.musicVideosEnabled) {
+            if (event.cachedMusicVideo.trackId !== nowPlayingId) {
+                resolveMusicVideoForTrack(event, {
+                    trackId: nowPlayingId,
+                    title: item.name,
+                    artist: (item.artists || []).map(a => a.name).join(', '),
+                    durationMs: item.duration_ms || 0
+                }).catch(err => console.error(`[MUSIC VIDEO] (${event.slug}) Unexpected error:`, err.message));
+            }
+        } else if (event.cachedMusicVideo.trackId !== null) {
+            clearCachedMusicVideo(event);
+        }
+
+        if (nowPlayingId === event.lastSyncedNowPlayingId) return;
         event.lastSyncedNowPlayingId = nowPlayingId;
 
         const trackIndex = event.activeQueue.findIndex(t => t.id === nowPlayingId);
@@ -2876,6 +3126,29 @@ setInterval(syncAllLoadedEvents, SCHEDULER_FAST_POLL_MS);
 // the connected account itself.
 app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
     res.json(req.event.cachedNowPlaying);
+});
+
+// Public (no admin auth) - the Visuals Display polls this to know whether
+// it should be showing a YouTube music video instead of ambient visuals
+// right now. Bundles the playback context (progress/duration/isPlaying)
+// used for the initial join-seek and drift correction alongside the match
+// decision itself, so the video overlay only needs the one poll rather
+// than racing this against a separate /api/now-playing call.
+app.get('/e/:slug/api/music-video', publicReadLimiter, (req, res) => {
+    const np = req.event.cachedNowPlaying;
+    const mv = req.event.cachedMusicVideo;
+    res.json({
+        enabled: !!req.event.visualsConfigs.musicVideosEnabled,
+        trackId: mv.trackId,
+        matched: mv.matched,
+        pending: mv.pending,
+        videoId: mv.videoId,
+        connected: np.connected,
+        isPlaying: np.isPlaying,
+        progressMs: np.progressMs,
+        durationMs: np.durationMs,
+        updatedAt: np.updatedAt
+    });
 });
 
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
