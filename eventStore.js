@@ -164,7 +164,13 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         visualsConfigs: {
             muteVisuals: false,
             muteAll: false,
-            showQueue: false
+            showQueue: false,
+            // Admin -> Settings -> Content toggle for the automatic music
+            // video feature (see resolveMusicVideoForTrack in server.js).
+            // Off by default - it only does anything once YOUTUBE_API_KEY
+            // is set on the server anyway, but defaulting an event to
+            // "off" means turning it on is always a deliberate choice.
+            musicVideosEnabled: false
         },
 
         activeQueue: [],
@@ -232,6 +238,30 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             artist: null, artwork: null, progressMs: 0, durationMs: 0,
             updatedAt: Date.now(), upcoming: [],
             deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off'
+        },
+
+        // --- Music Video (YouTube) auto-playback ---------------------------
+        // Persisted so a repeat play of the same Spotify track skips the
+        // YouTube search/scoring entirely (see resolveMusicVideoForTrack in
+        // server.js). Keyed by Spotify track id -> { videoId: string|null,
+        // score, matched, title, channel, reason (why rejected, when
+        // matched is false), checkedAt }. A genuine "searched and nothing
+        // cleared the threshold" result is cached with videoId:null too, so
+        // that track doesn't burn YouTube API quota again on a repeat play -
+        // only a transient error (network/quota) is left uncached so it's
+        // retried next time the track comes up.
+        musicVideoMatches: {},
+
+        // Runtime "what should the Visuals Display show right now" readout -
+        // same spirit as cachedNowPlaying above, updated by
+        // resolveMusicVideoForTrack whenever the now-playing track id
+        // changes. trackId tags which Spotify track this decision is FOR,
+        // so a client polling mid-search (result not back yet) can tell
+        // "still deciding" (pending: true) apart from "decided: no match"
+        // (pending: false, matched: false).
+        cachedMusicVideo: {
+            trackId: null, matched: false, pending: false,
+            videoId: null, updatedAt: Date.now()
         },
 
         // --- Music Scheduler ---------------------------------------------
