@@ -183,6 +183,16 @@
         #video-click-blocker {
             position: absolute; inset: 0; z-index: 5;
         }
+        /* Covers the iframe any time it's not confirmed actively PLAYING -
+           loading, buffering, cued, paused, ended. YouTube's own UI for all
+           of those (the big play button before autoplay kicks in, the
+           paused/"suggested videos" screen, the end-of-video screen) shows
+           underneath this and is never seen. Opaque black so it reads as a
+           normal hard cut, same as any other slide change on this screen. */
+        #video-loading-cover {
+            position: absolute; inset: 0; z-index: 6; background: #000;
+        }
+        #video-loading-cover.is-hidden { display: none; }
     </style>
 </head>
 <body>
@@ -223,6 +233,7 @@
     <div id="video-view">
         <div id="yt-player"></div>
         <div id="video-click-blocker"></div>
+        <div id="video-loading-cover"></div>
     </div>
 
     <div id="mute-overlay"></div>
@@ -632,6 +643,12 @@
              confident match, tears down ambient visuals and plays the
              video (muted, no UI, no interaction) roughly in sync with
              Spotify's reported progress, resyncing on drift.
+           - If a video repeatedly needs a large correction even after
+             seeking - a sign it just doesn't track the song's timeline
+             at all, not normal buffering jitter - this gives up on it,
+             reports it back to the server so it's never offered again
+             for this track (see MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS
+             below), and falls back to ambient visuals immediately.
            - Never overrides the forced Show Queue setting (Admin ->
              Settings -> Content) - that always wins, same as it does
              over ambient visuals.
@@ -644,9 +661,20 @@
         let ytPlayerReady = false;
         let musicVideoActive = false;
         let currentVideoTrackId = null;
+        let currentVideoId = null;
         let mvNpState = null; // interpolation baseline for drift correction, same shape as npState above
         let mvDriftInterval = null;
+        let mvConsecutiveBigDrifts = 0;
+        let mvSubtitlesEnabled = false;
         const MUSIC_VIDEO_RESYNC_THRESHOLD_MS = 450;
+        // A drift bigger than this isn't normal jitter between polls - it
+        // means the video's own timeline doesn't line up with the song at
+        // all (wrong edit, a long intro/outro the audio doesn't have,
+        // etc). Three of these in a row (~4.5s of the drift check below
+        // never catching up even after each seek) is treated as "this
+        // video can't sync", not "one bad reading".
+        const MUSIC_VIDEO_BIG_DRIFT_MS = 2500;
+        const MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS = 3;
 
         // Called by the YouTube IFrame API script once it's finished
         // loading - the player is created once, empty, and reused (via
@@ -660,20 +688,80 @@
                     iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1
                 },
                 events: {
-                    onReady: () => { ytPlayerReady = true; },
+                    onReady: () => { ytPlayerReady = true; applySubtitlesSetting(); },
+                    onStateChange: onYtPlayerStateChange,
                     // A video can fail at actual playback time even after
                     // passing the server-side embeddable check (region
                     // locks, an owner opt-out that only surfaces here) -
-                    // treat that the same as "no match" and fall back to
+                    // treat that the same as a sync failure: blacklist it
+                    // so it's never offered again, and fall back to
                     // ambient immediately rather than sit on a frozen or
                     // black video view.
-                    onError: () => { stopMusicVideo(); }
+                    onError: () => { reportVideoFailureAndStop(); }
                 }
             });
         };
 
+        // Keeps the opaque cover (see #video-loading-cover in the CSS)
+        // over the iframe for every state except actually PLAYING, so
+        // none of YouTube's own UI - the pre-autoplay play button, the
+        // paused/"suggested videos" screen, the end-of-video screen - is
+        // ever visible. A video that ends while its track is still
+        // playing (a music video shorter than the Spotify edit) is looped
+        // back to the start rather than left sitting on that end screen.
+        function onYtPlayerStateChange(e) {
+            const cover = document.getElementById('video-loading-cover');
+            if (e.data === YT.PlayerState.PLAYING) {
+                cover.classList.add('is-hidden');
+            } else {
+                cover.classList.remove('is-hidden');
+                if (e.data === YT.PlayerState.ENDED && musicVideoActive) {
+                    ytPlayer.seekTo(0, true);
+                    ytPlayer.playVideo();
+                }
+            }
+        }
+
+        // Applies the admin's Subtitles toggle to whatever's currently
+        // loaded. Captions are a per-video YouTube module, not something
+        // set once at player creation, so this re-applies on every new
+        // video as well as whenever the toggle itself changes. A video
+        // with no caption track available just does nothing when asked.
+        function applySubtitlesSetting() {
+            if (!ytPlayerReady) return;
+            try {
+                if (mvSubtitlesEnabled) {
+                    ytPlayer.loadModule('captions');
+                    ytPlayer.setOption('captions', 'track', {});
+                } else {
+                    ytPlayer.unloadModule('captions');
+                }
+            } catch (e) { /* no caption track on this video, or module not ready yet */ }
+        }
+
         function clearMvDriftInterval() {
             if (mvDriftInterval) { clearInterval(mvDriftInterval); mvDriftInterval = null; }
+            mvConsecutiveBigDrifts = 0;
+        }
+
+        // Tells the server this specific video didn't work out for this
+        // track (either it never actually stayed in sync, or it errored
+        // at real playback time) so it's blacklisted and not offered
+        // again on a repeat play, then tears the overlay down. Best-
+        // effort - if the report itself fails, the fallback to ambient
+        // still happens; it just might offer the same bad video again
+        // next time this track comes up.
+        function reportVideoFailureAndStop() {
+            const trackId = currentVideoTrackId;
+            const videoId = currentVideoId;
+            stopMusicVideo();
+            if (trackId && videoId) {
+                fetch(eventUrl('/api/music-video/sync-failed'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trackId, videoId })
+                }).catch(() => { /* fine either way - ambient is already back on screen */ });
+            }
         }
 
         // np.progressMs/updatedAt reflect whenever the server last actually
@@ -696,7 +784,9 @@
         function startMusicVideo(videoId, trackId, mvState) {
             musicVideoActive = true;
             currentVideoTrackId = trackId;
+            currentVideoId = videoId;
             showView('video');
+            document.getElementById('video-loading-cover').classList.remove('is-hidden');
             // Same teardown pollAmbientVisuals does whenever it switches
             // views itself - a widget slide's clock/queue timers shouldn't
             // keep running underneath the video.
@@ -708,6 +798,7 @@
             if (ytPlayerReady) {
                 ytPlayer.loadVideoById({ videoId, startSeconds: Math.max(0, mvState.progressMs / 1000) });
                 if (!mvState.isPlaying) ytPlayer.pauseVideo();
+                applySubtitlesSetting();
             }
 
             clearMvDriftInterval();
@@ -718,8 +809,18 @@
                 let ytSec;
                 try { ytSec = ytPlayer.getCurrentTime(); } catch (e) { return; }
                 if (typeof ytSec !== 'number') return;
-                if (Math.abs(ytSec - expectedSec) * 1000 > MUSIC_VIDEO_RESYNC_THRESHOLD_MS) {
+                const driftMs = Math.abs(ytSec - expectedSec) * 1000;
+                if (driftMs > MUSIC_VIDEO_RESYNC_THRESHOLD_MS) {
                     ytPlayer.seekTo(expectedSec, true);
+                }
+                if (driftMs > MUSIC_VIDEO_BIG_DRIFT_MS) {
+                    mvConsecutiveBigDrifts++;
+                    if (mvConsecutiveBigDrifts >= MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS) {
+                        reportVideoFailureAndStop();
+                        return;
+                    }
+                } else {
+                    mvConsecutiveBigDrifts = 0;
                 }
             }, 1500);
         }
@@ -728,11 +829,13 @@
             if (!musicVideoActive) return;
             musicVideoActive = false;
             currentVideoTrackId = null;
+            currentVideoId = null;
             mvNpState = null;
             clearMvDriftInterval();
             if (ytPlayerReady) {
                 try { ytPlayer.stopVideo(); } catch (e) { /* ignore */ }
             }
+            document.getElementById('video-loading-cover').classList.remove('is-hidden');
             // Force a fresh render rather than assuming whatever ambient
             // state was current before the video started is still valid -
             // same reset pollAmbientVisuals does when Show Queue switches
@@ -748,6 +851,10 @@
                 const res = await fetch(eventUrl('/api/music-video'));
                 if (!res.ok) return;
                 const data = await res.json();
+
+                const subtitlesChanged = !!data.subtitlesEnabled !== mvSubtitlesEnabled;
+                mvSubtitlesEnabled = !!data.subtitlesEnabled;
+                if (subtitlesChanged && musicVideoActive) applySubtitlesSetting();
 
                 if (visualsForceQueue) {
                     if (musicVideoActive) stopMusicVideo();
