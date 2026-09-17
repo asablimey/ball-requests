@@ -2416,6 +2416,19 @@ app.post('/e/:slug/api/admin/visuals/toggle-music-videos', (req, res) => {
     res.json({ success: true });
 });
 
+// Purely cosmetic on top of the feature above - just tells the Visuals
+// Display whether to turn YouTube's caption track on for whatever music
+// video is currently showing. Doesn't affect matching/sync at all, so
+// there's nothing to clear here the way toggle-music-videos clears the
+// live decision.
+app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', (req, res) => {
+    const event = req.event;
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') event.visualsConfigs.musicVideoSubtitlesEnabled = enabled;
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
 // Blocks a specific guest (by voterId, from a row in the admin Stats
 // "Recent Requests" list) from requesting or voting for the rest of this
 // event. `label` is just the name they were requesting under at the time -
@@ -2748,8 +2761,13 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
 // When a track starts playing, tries to find its official YouTube music
 // video so the Visuals Display can show it (muted, no UI) in place of the
 // ambient visuals lane. Matching is deliberately conservative - see
-// scoreYouTubeCandidate below - a track with no confident match just
-// leaves the ambient visuals running untouched, as if this never ran.
+// scoreYouTubeCandidate below - a track with no confident match, or whose
+// only candidates are lyric videos/audio uploads/karaoke tracks, just
+// leaves the ambient visuals running untouched, as if this never ran. A
+// video that's found but then turns out not to actually sync with the
+// Spotify audio in practice is caught client-side and reported back (see
+// /api/music-video/sync-failed below) so it's dropped and ambient visuals
+// take back over.
 const MUSIC_VIDEO_MATCH_THRESHOLD = 0.55;
 // How far a candidate's length is allowed to drift from the Spotify
 // track's actual duration before it's rejected outright, regardless of how
@@ -2785,21 +2803,47 @@ function titleSimilarity(a, b) {
 // track itself isn't that same version - e.g. a guest who requested the
 // Live version of a song should still get a Live video back, not be
 // penalized for it.
-const MUSIC_VIDEO_VERSION_KEYWORDS = ['cover', 'remix', 'live', 'lyrics', 'karaoke', 'instrumental', 'sped up', 'nightcore', '8d audio'];
+const MUSIC_VIDEO_VERSION_KEYWORDS = ['cover', 'remix', 'live'];
+
+// Titles carrying any of these are hard-excluded (score forced to 0, never
+// just penalized) - a lyric video, a static audio-only upload, a karaoke
+// backing track, etc. is never an acceptable substitute for the real
+// official music video, even when the requested track's own title happens
+// to say "Lyrics" or "Instrumental" too. "Only original music videos" means
+// this list applies unconditionally, with no version-match exception like
+// MUSIC_VIDEO_VERSION_KEYWORDS gets below.
+const MUSIC_VIDEO_EXCLUDED_KEYWORDS = [
+    'lyric video', 'lyrics', 'karaoke', 'instrumental', 'sped up',
+    'nightcore', '8d audio', 'audio only', 'official audio', 'visualizer',
+    'slowed', 'slowed reverb'
+];
 
 function versionKeywordsIn(str) {
     const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
     return MUSIC_VIDEO_VERSION_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
 }
 
+function excludedKeywordsIn(str) {
+    const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
+    return MUSIC_VIDEO_EXCLUDED_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
+}
+
 function scoreYouTubeCandidate(candidate, track) {
-    // Duration is the hard gate - if it's off by more than the tolerance,
+    // Duration is a hard gate - if it's off by more than the tolerance,
     // this isn't the right upload at all, no matter what the title says.
     if (!candidate.durationSec || !track.durationMs) return { score: 0, reason: 'missing duration data' };
     const expectedSec = track.durationMs / 1000;
     const diff = Math.abs(candidate.durationSec - expectedSec) / expectedSec;
     if (diff > MUSIC_VIDEO_DURATION_TOLERANCE) {
         return { score: 0, reason: `duration off by ${Math.round(diff * 100)}% (candidate ${Math.round(candidate.durationSec)}s vs track ${Math.round(expectedSec)}s)` };
+    }
+
+    // Second hard gate - a lyric video/audio upload/karaoke track is
+    // rejected outright, not scored down, so it can never win out just by
+    // having a strong title match.
+    const excluded = excludedKeywordsIn(candidate.title);
+    if (excluded.length > 0) {
+        return { score: 0, reason: `lyric/audio-only upload, not a music video (${excluded.join(', ')})` };
     }
 
     const expectedTitle = `${track.artist} ${track.title}`;
@@ -2870,11 +2914,17 @@ async function fetchYouTubeCandidates(query) {
 // Finds the best-scoring candidate for one track, trying the "official
 // video" query first and falling back to a plain query if that comes back
 // empty (a lot of tracks' official videos are just titled "Artist - Track").
-async function findBestYouTubeMatch(track) {
+// excludeIds skips videos already reported by the Visuals Display as
+// failing to stay in sync for this track (see the /api/music-video/
+// sync-failed route) - they've been tried in practice and don't work,
+// so re-offering the same one next time this track comes up would just
+// repeat the same failure.
+async function findBestYouTubeMatch(track, excludeIds = new Set()) {
     let candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title} official video`);
     if (candidates.length === 0) {
         candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title}`);
     }
+    if (excludeIds.size > 0) candidates = candidates.filter(c => !excludeIds.has(c.videoId));
     let best = null;
     for (const candidate of candidates) {
         const { score, reason } = scoreYouTubeCandidate(candidate, track);
@@ -2912,7 +2962,8 @@ async function resolveMusicVideoForTrack(event, track) {
     }
 
     try {
-        const best = await findBestYouTubeMatch(track);
+        const excludeIds = new Set(event.musicVideoSyncFailures[track.trackId] || []);
+        const best = await findBestYouTubeMatch(track, excludeIds);
         const matched = !!best && best.score >= MUSIC_VIDEO_MATCH_THRESHOLD;
         const result = {
             videoId: matched ? best.videoId : null,
@@ -3139,6 +3190,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, (req, res) => {
     const mv = req.event.cachedMusicVideo;
     res.json({
         enabled: !!req.event.visualsConfigs.musicVideosEnabled,
+        subtitlesEnabled: !!req.event.visualsConfigs.musicVideoSubtitlesEnabled,
         trackId: mv.trackId,
         matched: mv.matched,
         pending: mv.pending,
@@ -3149,6 +3201,31 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, (req, res) => {
         durationMs: np.durationMs,
         updatedAt: np.updatedAt
     });
+});
+
+// Public (no admin auth) - the Visuals Display calls this when a video it's
+// showing turns out not to actually track the Spotify audio (repeated large
+// drift even after seeking to correct it), or fails at real playback time
+// after passing the server-side embeddable check (region lock, owner
+// opt-out). Blacklists that specific videoId for that track so it's never
+// offered again on a repeat play, forces a fresh lookup next time, and
+// clears the live decision immediately so the display falls back to
+// ambient visuals within one poll rather than riding out a bad video.
+app.post('/e/:slug/api/music-video/sync-failed', publicActionLimiter, (req, res) => {
+    const event = req.event;
+    const { trackId, videoId } = req.body;
+    if (typeof trackId !== 'string' || !trackId || typeof videoId !== 'string' || !videoId) {
+        return res.status(400).json({ error: 'Missing trackId or videoId.' });
+    }
+    if (!event.musicVideoSyncFailures[trackId]) event.musicVideoSyncFailures[trackId] = [];
+    if (!event.musicVideoSyncFailures[trackId].includes(videoId)) {
+        event.musicVideoSyncFailures[trackId].push(videoId);
+    }
+    delete event.musicVideoMatches[trackId];
+    if (event.cachedMusicVideo.trackId === trackId) clearCachedMusicVideo(event);
+    events.scheduleSave(event.slug);
+    console.log(`[MUSIC VIDEO] (${event.slug}) Blacklisted ${videoId} for track ${trackId} after a reported sync failure.`);
+    res.json({ success: true });
 });
 
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
