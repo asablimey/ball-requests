@@ -1225,12 +1225,20 @@
                             <div class="settings-section-label">Music Videos</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
                                 When a song plays, automatically find its official YouTube music video and show it
-                                (muted, no controls) on the Visuals Display in place of the Ambient Visuals lane. If no
-                                confident match is found for a track, the ambient visuals just keep running as usual.
+                                (muted, no controls) on the Visuals Display in place of the Ambient Visuals lane. Only
+                                original music videos are used - lyric videos, karaoke tracks, and audio-only uploads
+                                are never shown. If no confident match is found, or the video turns out not to actually
+                                stay in sync with the Spotify audio once it's playing, the ambient visuals just take
+                                back over as usual.
                             </p>
                             <div class="control-bar">
                                 <button id="toggle-music-videos" class="toggle-btn closed-status" onclick="toggleMusicVideos()">Music Videos: OFF</button>
+                                <button id="toggle-music-video-subtitles" class="toggle-btn closed-status" onclick="toggleMusicVideoSubtitles()">Subtitles: OFF</button>
                             </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                <strong>Subtitles</strong> turns on YouTube's caption track for whatever video is
+                                currently showing, when that video has one available.
+                            </p>
                         </div>
                     </div>
 
@@ -1366,6 +1374,7 @@
         let visualsMuteAll = false;
         let visualsShowQueue = false;
         let musicVideosEnabled = false;
+        let musicVideoSubtitlesEnabled = false;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1877,6 +1886,16 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function toggleMusicVideoSubtitles() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/visuals/toggle-music-video-subtitles'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !musicVideoSubtitlesEnabled })
+            });
+            updateDashboard();
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2207,6 +2226,11 @@ async function verifyPassword() {
                     musicVideosEnabled = !!data.visuals.musicVideosEnabled;
                     musicVideosBtn.innerText = musicVideosEnabled ? "Music Videos: ON" : "Music Videos: OFF";
                     musicVideosBtn.className = musicVideosEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    const musicVideoSubtitlesBtn = document.getElementById('toggle-music-video-subtitles');
+                    musicVideoSubtitlesEnabled = !!data.visuals.musicVideoSubtitlesEnabled;
+                    musicVideoSubtitlesBtn.innerText = musicVideoSubtitlesEnabled ? "Subtitles: ON" : "Subtitles: OFF";
+                    musicVideoSubtitlesBtn.className = musicVideoSubtitlesEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
                 }
 
                 if (!filtersInitialized) {
