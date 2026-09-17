@@ -407,6 +407,19 @@
             });
             activeLayer = incoming;
 
+            // With only one item there's nothing to advance to - scheduling
+            // the usual timer just re-runs this same slide from scratch on
+            // a loop, which visibly crossfades to black and back in for no
+            // reason. Let it sit instead: a video loops quietly in place,
+            // and everything else (photo, clock, queue, ad, custom) simply
+            // stays on screen with no timer at all.
+            if (ambientItems.length <= 1) {
+                if (item.type === 'video') {
+                    incomingEl.querySelector('video').loop = true;
+                }
+                return;
+            }
+
             if (item.type === 'video') {
                 const videoEl = incomingEl.querySelector('video');
                 videoEl.onended = advanceAmbientSlide;
