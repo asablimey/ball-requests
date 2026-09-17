@@ -978,6 +978,9 @@
                     <button type="button" id="settings-nav-kiosk" class="settings-nav-item" onclick="switchSettingsCategory('kiosk')">
                         Kiosk
                     </button>
+                    <button type="button" id="settings-nav-content" class="settings-nav-item" onclick="switchSettingsCategory('content')">
+                        Content
+                    </button>
                     <button type="button" id="settings-nav-danger" class="settings-nav-item danger-nav" onclick="switchSettingsCategory('danger')">
                         Danger Zone
                     </button>
@@ -1184,7 +1187,9 @@
                                 <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
                             </div>
                         </div>
+                    </div>
 
+                    <div id="settings-category-content" class="settings-category-panel">
                         <div class="settings-card">
                             <div class="settings-section-label">Visuals Display (visuals.html)</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
@@ -1195,6 +1200,25 @@
                             <div class="control-bar">
                                 <button class="toggle-btn neutral-status" onclick="openVisualsPage()">Open Visuals Display</button>
                             </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Screen Controls</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                Quick overrides for whatever's currently on the venue screen - handy for a speech,
+                                an announcement, or any moment you need the room's attention off the visuals.
+                            </p>
+                            <div class="control-bar">
+                                <button id="toggle-mute-visuals" class="toggle-btn closed-status" onclick="toggleMuteVisuals()">Mute Visuals: OFF</button>
+                                <button id="toggle-mute-all" class="toggle-btn closed-status" onclick="toggleMuteAll()">Mute All: OFF</button>
+                                <button id="toggle-show-queue" class="toggle-btn closed-status" onclick="toggleShowQueue()">Show Queue: OFF</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                <strong>Mute Visuals</strong> turns the visuals display fully black. <strong>Mute All</strong> does
+                                the same and also pauses playback (resuming it when switched back off). <strong>Show Queue</strong>
+                                pins the Now Playing + Up Next board on screen, overriding any scheduled Ambient Visuals content,
+                                until switched off.
+                            </p>
                         </div>
                     </div>
 
@@ -1326,6 +1350,9 @@
         let kioskRequestsAllowed = true;
         let kioskSpotifyEnabled = false;
         let kioskDisplayOnlyMode = false;
+        let visualsMuted = false;
+        let visualsMuteAll = false;
+        let visualsShowQueue = false;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1387,7 +1414,7 @@
             window.open(eventUrl('/admin/scheduler'), '_blank');
         }
 
-        const SETTINGS_CATEGORIES = ['general', 'access', 'location', 'spotify', 'kiosk', 'danger'];
+        const SETTINGS_CATEGORIES = ['general', 'access', 'location', 'spotify', 'kiosk', 'content', 'danger'];
         function switchSettingsCategory(category) {
             SETTINGS_CATEGORIES.forEach(name => {
                 const isActive = name === category;
@@ -1797,6 +1824,36 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function toggleMuteVisuals() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/visuals/toggle-mute'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !visualsMuted })
+            });
+            updateDashboard();
+        }
+
+        async function toggleMuteAll() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/visuals/toggle-mute-all'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !visualsMuteAll })
+            });
+            updateDashboard();
+        }
+
+        async function toggleShowQueue() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/visuals/toggle-show-queue'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !visualsShowQueue })
+            });
+            updateDashboard();
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2105,6 +2162,23 @@ async function verifyPassword() {
                     if (document.activeElement !== document.getElementById('input-kiosk-countdown')) {
                         document.getElementById('input-kiosk-countdown').value = data.kiosk.countdownLength;
                     }
+                }
+
+                if (data.visuals) {
+                    const muteVisualsBtn = document.getElementById('toggle-mute-visuals');
+                    visualsMuted = !!data.visuals.muteVisuals;
+                    muteVisualsBtn.innerText = visualsMuted ? "Mute Visuals: ON" : "Mute Visuals: OFF";
+                    muteVisualsBtn.className = visualsMuted ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    const muteAllBtn = document.getElementById('toggle-mute-all');
+                    visualsMuteAll = !!data.visuals.muteAll;
+                    muteAllBtn.innerText = visualsMuteAll ? "Mute All: ON" : "Mute All: OFF";
+                    muteAllBtn.className = visualsMuteAll ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    const showQueueBtn = document.getElementById('toggle-show-queue');
+                    visualsShowQueue = !!data.visuals.showQueue;
+                    showQueueBtn.innerText = visualsShowQueue ? "Show Queue: ON" : "Show Queue: OFF";
+                    showQueueBtn.className = visualsShowQueue ? "toggle-btn open-status" : "toggle-btn closed-status";
                 }
 
                 if (!filtersInitialized) {
