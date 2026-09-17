@@ -1780,6 +1780,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         fallbackPlaylistUri: event.systemConfigs.fallbackPlaylistUri || '',
         kiosk: event.kioskConfigs,
+        visuals: event.visualsConfigs,
         queue: buildSortedQueueForAdmin(event),
         history: event.playedHistory,
         blockedVoters: Object.entries(event.blockedVoters || {}).map(([voterId, info]) => ({
@@ -2361,6 +2362,39 @@ app.post('/e/:slug/api/admin/kiosk/config', (req, res) => {
     res.json({ success: true });
 });
 
+// --- Visuals Display controls (Admin -> Settings -> Content) ---
+// Read by the public /api/ambient-visuals poll below, which is what
+// visuals.html actually acts on.
+app.post('/e/:slug/api/admin/visuals/toggle-mute', (req, res) => {
+    const event = req.event;
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') event.visualsConfigs.muteVisuals = enabled;
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
+// Same blackout as toggle-mute above, plus a best-effort pause/resume of
+// the connected Spotify playback - a single "kill the room" switch for a
+// speech or announcement. The Spotify side is fire-and-forget: if nothing's
+// connected or there's no active device, the visuals mute still takes
+// effect either way, so this doesn't await or surface its result.
+app.post('/e/:slug/api/admin/visuals/toggle-mute-all', (req, res) => {
+    const event = req.event;
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') event.visualsConfigs.muteAll = enabled;
+    events.scheduleSave(event.slug);
+    spotifyPlayerCommand(event, 'PUT', enabled ? '/pause' : '/play');
+    res.json({ success: true });
+});
+
+app.post('/e/:slug/api/admin/visuals/toggle-show-queue', (req, res) => {
+    const event = req.event;
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') event.visualsConfigs.showQueue = enabled;
+    events.scheduleSave(event.slug);
+    res.json({ success: true });
+});
+
 // Blocks a specific guest (by voterId, from a row in the admin Stats
 // "Recent Requests" list) from requesting or voting for the rest of this
 // event. `label` is just the name they were requesting under at the time -
@@ -2855,12 +2889,21 @@ app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
 // rather than blank the screen on a brief gap.
 app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
     const event = req.event;
+    // Admin -> Settings -> Content overrides ride along with every reply
+    // from this route (regardless of scheduler/active state) since
+    // visuals.html polls this same endpoint to drive both the mute overlay
+    // and the forced Show Queue view.
+    const vc = event.visualsConfigs || {};
+    const visualsFlags = {
+        muted: !!(vc.muteVisuals || vc.muteAll),
+        showQueue: !!vc.showQueue
+    };
     if (!event.musicScheduler?.enabled) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...visualsFlags });
     }
     const rule = getActiveAmbientRule(event);
     if (!rule) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...visualsFlags });
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
     const items = (rule.items || []).map(it => {
@@ -2886,12 +2929,13 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
         return { id: it.id, type: it.type, durationSec: it.durationSec || 8, ...shared };
     }).filter(Boolean);
     if (items.length === 0) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...visualsFlags });
     }
     res.json({
         active: true,
         ruleId: rule.id,
-        items
+        items,
+        ...visualsFlags
     });
 });
 
