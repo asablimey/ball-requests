@@ -436,18 +436,49 @@
         .avm-right { flex: 0 0 310px; border-left: 1px solid var(--border); padding: 22px; overflow-y: auto; }
 
         .avm-preview-row { display: flex; gap: 14px; }
+        /* Fixed 16:9 box that never resizes based on what's inside it -
+           every kind of content below (image, video, widget preview,
+           placeholder icon) is positioned absolutely to fill it exactly,
+           rather than being flex-centered at its own intrinsic size, so
+           nothing can stretch, shrink, or squish the box itself. */
         .avm-preview-stage {
             flex: 1; min-width: 0; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; position: relative;
-            background: var(--card-bg); display: flex; align-items: center; justify-content: center;
+            background: var(--card-bg);
         }
-        .avm-preview-stage img, .avm-preview-stage video { width: 100%; height: 100%; object-fit: cover; }
-        .avm-preview-placeholder { color: var(--text-dim); font-size: 2rem; }
+        .avm-preview-stage img, .avm-preview-stage video, .avm-preview-fill {
+            position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        .avm-preview-placeholder {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: var(--text-dim); font-size: 2rem;
+        }
+        .avm-cv-stage-inner { position: absolute; inset: 0; }
         .avm-preview-caption {
             position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px;
             background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
         }
         .avm-preview-caption .name { font-weight: 800; font-size: 0.95rem; }
         .avm-preview-caption .type { font-size: 0.7rem; color: #d8d8d8; text-transform: uppercase; letter-spacing: 0.4px; }
+
+        /* ---------- Live-ish previews for the widget types (clock / queue / ad) ---------- */
+        .avm-pw-clock {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            width: 100%; height: 100%; background: var(--spotify-black); color: white; gap: 4px;
+        }
+        .avm-pw-clock .time { font-size: 2.2rem; font-weight: 800; letter-spacing: 0.5px; }
+        .avm-pw-clock .date { font-size: 0.8rem; color: #a7a7a7; }
+        .avm-pw-queue { width: 100%; height: 100%; padding: 14px 16px; color: white; overflow: hidden; display: flex; flex-direction: column; }
+        .avm-pw-queue .hdr { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #a7a7a7; margin-bottom: 8px; flex-shrink: 0; }
+        .avm-pw-queue .row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 0.78rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .avm-pw-queue .row img { width: 26px; height: 26px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+        .avm-pw-queue .row .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .avm-pw-queue .empty { color: #a7a7a7; font-size: 0.78rem; font-style: italic; }
+        .avm-pw-ad {
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+            width: 100%; height: 100%; background: var(--spotify-black); color: white; padding: 16px; text-align: center;
+        }
+        .avm-pw-ad img { width: 64px; height: 64px; border-radius: 4px; background: white; padding: 4px; }
+        .avm-pw-ad .txt { font-size: 0.9rem; font-weight: 700; }
 
         .avm-currently {
             flex: 0 0 240px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
@@ -724,6 +755,10 @@
                     </span>
                     Scheduler enabled
                 </label>
+                <div class="zoom-controls" title="Undo / redo">
+                    <button type="button" class="zoom-btn" id="undo-btn" onclick="performUndo()" title="Undo (Ctrl+Z)" disabled>&#8630;</button>
+                    <button type="button" class="zoom-btn" id="redo-btn" onclick="performRedo()" title="Redo (Ctrl+Y)" disabled>&#8631;</button>
+                </div>
                 <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
             </div>
         </div>
@@ -1015,6 +1050,76 @@
         let lastBlockClickRuleId = null;
         const DOUBLE_CLICK_MS = 400;
 
+        // ---------- Undo / redo ----------
+        // Snapshots are of `rules` only (not playlists/media) since those
+        // are the only thing block-level actions - create, move, resize,
+        // delete, duplicate, and modal edits - ever touch.
+        let undoStack = [];
+        let redoStack = [];
+        const MAX_UNDO = 50;
+        function snapshotRules() { return JSON.parse(JSON.stringify(rules)); }
+        function pushUndo() {
+            undoStack.push(snapshotRules());
+            if (undoStack.length > MAX_UNDO) undoStack.shift();
+            redoStack = [];
+            updateUndoRedoButtons();
+        }
+        function performUndo() {
+            if (undoStack.length === 0) return;
+            redoStack.push(snapshotRules());
+            rules = undoStack.pop();
+            selectedRuleId = null;
+            renderDayBoxes();
+            updateUndoRedoButtons();
+        }
+        function performRedo() {
+            if (redoStack.length === 0) return;
+            undoStack.push(snapshotRules());
+            rules = redoStack.pop();
+            selectedRuleId = null;
+            renderDayBoxes();
+            updateUndoRedoButtons();
+        }
+        function updateUndoRedoButtons() {
+            const undoBtn = document.getElementById('undo-btn');
+            const redoBtn = document.getElementById('redo-btn');
+            if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+            if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+        }
+        // Any modal being open means keyboard shortcuts below should leave
+        // undo/copy/paste alone - editing a text field inside one shouldn't
+        // rewrite the block list underneath it.
+        function anyModalOpen() {
+            return ['modal-backdrop', 'ambient-modal-backdrop', 'cv-modal-backdrop'].some(id => {
+                const el = document.getElementById(id);
+                return el && el.classList.contains('show');
+            });
+        }
+
+        // ---------- Copy / paste (duplicate) ----------
+        let copiedRule = null;
+        function copySelectedRule() {
+            const rule = rules.find(r => r.id === selectedRuleId);
+            if (!rule) return;
+            copiedRule = JSON.parse(JSON.stringify(rule));
+            showToast('Block copied.');
+        }
+        function pasteCopiedRule() {
+            if (!copiedRule) return;
+            const clone = JSON.parse(JSON.stringify(copiedRule));
+            clone.id = genId();
+            const duration = hhmmToMinutes(clone.end) - hhmmToMinutes(clone.start);
+            const laneGroup = ruleLaneGroup(clone);
+            const freeStart = findFreeStart(clone.days, duration, laneGroup, hhmmToMinutes(clone.start));
+            clone.start = minutesToHHMM(freeStart);
+            clone.end = minutesToHHMM(freeStart + duration);
+            pushUndo();
+            rules.push(clone);
+            selectedRuleId = clone.id;
+            renderDayBoxes();
+            showToast('Block pasted.');
+        }
+
         // getActiveScheduleRule on the server checks the CURRENT TIME against
         // each rule's HH:MM - and it has to check that in *some* timezone.
         // Since the server itself just runs on whatever the host defaults to
@@ -1262,6 +1367,27 @@
                 if (s >= curEnd && s < nextStart) nextStart = s;
             });
             return { minStart: prevEnd, maxStart: nextStart - duration };
+        }
+
+        // Straight yes/no room check (as opposed to gapBoundsForDay, which
+        // finds the edges of whatever gap a block already sits in) - used
+        // by paste/duplicate to scan for the first open slot rather than
+        // adjust one already in place.
+        function hasRoom(dayIdx, start, duration, excludeRuleId, laneGroup) {
+            const end = start + duration;
+            return occupiedRangesForDay(dayIdx, excludeRuleId, laneGroup).every(([s, e]) => end <= s || start >= e);
+        }
+
+        // Scans forward in 15-minute steps from `preferredStart` (wrapping
+        // around to the start of the day if nothing after it fits) for the
+        // first start time with room on every one of `days` at once. Falls
+        // back to `preferredStart` itself if the day is simply full -
+        // Save's conflict check is the backstop for that case.
+        function findFreeStart(days, duration, laneGroup, preferredStart) {
+            const fits = s => days.every(d => hasRoom(d, s, duration, null, laneGroup));
+            for (let s = preferredStart; s <= TRACK_MINUTES - duration; s += 15) if (fits(s)) return s;
+            for (let s = 0; s < preferredStart; s += 15) if (fits(s)) return s;
+            return preferredStart;
         }
 
         // A dragged block's start/end apply to every day it's assigned to
@@ -1695,6 +1821,7 @@
                     volume: null,
                     requestsAllowed: null
                 };
+            pushUndo();
             rules.push(rule);
             renderDayBoxes();
             openModal(rule.id);
@@ -1709,19 +1836,66 @@
                 if (!rule) return;
                 const track = el.parentElement;
                 const trackWidth = track.getBoundingClientRect().width;
+                const laneType = ruleLaneType(rule);
+                const originDay = parseInt(track.dataset.day, 10);
                 const startX = e.clientX;
                 const origStart = hhmmToMinutes(rule.start);
                 const origEnd = hhmmToMinutes(rule.end);
                 const duration = origEnd - origStart;
-                // Computed once up front (the other rules don't move during
-                // this drag) so the block hits a hard wall at a neighbor
-                // instead of just being flagged red after the fact.
-                const { minStart, maxStart } = computeMoveBounds(rule, ruleId);
+                let dragDay = originDay;
                 let moved = false;
+                let undoPushed = false;
+                // Computed up front, then recomputed only when the block
+                // actually switches to a different day mid-drag (see
+                // dayMoveBounds below) - the other rules don't move during
+                // this drag, so bounds otherwise stay fixed for its length.
+                let { minStart, maxStart } = computeMoveBounds(rule, ruleId);
+
+                // Bounds for the whole rule if the day it started on
+                // (originDay) were swapped for `targetDay` instead, leaving
+                // any of its other recurring days untouched - mirrors
+                // computeMoveBounds but for a hypothetical day set.
+                function dayMoveBounds(targetDay) {
+                    const days = [...new Set([...rule.days.filter(d => d !== originDay), targetDay])];
+                    const laneGroup = ruleLaneGroup(rule);
+                    let minS = 0, maxS = TRACK_MINUTES - duration;
+                    days.forEach(d => {
+                        const b = gapBoundsForDay(d, origStart, duration, ruleId, laneGroup);
+                        minS = Math.max(minS, b.minStart);
+                        maxS = Math.min(maxS, b.maxStart);
+                    });
+                    return { minStart: minS, maxStart: maxS };
+                }
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
+
+                    // The day boxes are stacked vertically, one per day, so
+                    // dragging up/down onto a different one (in the same
+                    // lane) reassigns this block's day instead of just its
+                    // time. Only the vertical position matters here -
+                    // horizontal position within that day still drives
+                    // start/end below. Detected here without mutating
+                    // anything yet, so the undo snapshot below is captured
+                    // before either kind of change lands.
+                    const hoverEl = document.elementFromPoint(ev.clientX, ev.clientY);
+                    const hoverTrack = hoverEl ? hoverEl.closest('.day-track') : null;
+                    const hoverDay = hoverTrack && hoverTrack.dataset.lane === laneType ? parseInt(hoverTrack.dataset.day, 10) : null;
+                    const dayChanged = hoverDay !== null && hoverDay !== dragDay;
+
+                    if ((dayChanged || Math.abs(deltaX) > 3) && !undoPushed) { pushUndo(); undoPushed = true; }
                     if (Math.abs(deltaX) > 3) moved = true;
+
+                    if (dayChanged) {
+                        dragDay = hoverDay;
+                        moved = true;
+                        ({ minStart, maxStart } = dayMoveBounds(dragDay));
+                        const withoutOrigin = rule.days.filter(d => d !== originDay);
+                        rule.days = dragDay === originDay
+                            ? [...new Set([...withoutOrigin, originDay])]
+                            : [...new Set([...withoutOrigin, dragDay])];
+                    }
+
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
                     let newStart = Math.max(minStart, Math.min(maxStart, origStart + deltaMin));
                     rule.start = minutesToHHMM(newStart);
@@ -1773,10 +1947,14 @@
                 // the fact.
                 const bound = side === 'end' ? computeResizeMaxEnd(rule, ruleId) : computeResizeMinStart(rule, ruleId);
                 let moved = false;
+                let undoPushed = false;
 
                 function onMove(ev) {
                     const deltaX = ev.clientX - startX;
-                    if (Math.abs(deltaX) > 3) moved = true;
+                    if (Math.abs(deltaX) > 3) {
+                        if (!undoPushed) { pushUndo(); undoPushed = true; }
+                        moved = true;
+                    }
                     let deltaMin = Math.round(((deltaX / trackWidth) * TRACK_MINUTES) / 15) * 15;
                     if (side === 'end') {
                         rule.end = minutesToHHMM(Math.max(origStart + 15, Math.min(bound, origEnd + deltaMin)));
@@ -1982,6 +2160,65 @@
             }).join('');
         }
 
+        // Cleans up whatever interval/timer the previous preview (clock
+        // tick, live queue poll) left running - called before rendering
+        // anything new into the stage so switching items never leaves an
+        // orphaned timer updating a slide that's no longer shown.
+        let avmPreviewCleanup = null;
+        function avmClearPreviewCleanup() {
+            if (avmPreviewCleanup) { avmPreviewCleanup(); avmPreviewCleanup = null; }
+        }
+
+        function avmRenderClockPreview(stage) {
+            stage.innerHTML = `<div class="avm-preview-fill avm-pw-clock"><div class="time" id="avm-pw-clock-time"></div><div class="date" id="avm-pw-clock-date"></div></div>`;
+            const timeEl = document.getElementById('avm-pw-clock-time');
+            const dateEl = document.getElementById('avm-pw-clock-date');
+            const tick = () => {
+                const now = new Date();
+                timeEl.textContent = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+            };
+            tick();
+            const intervalId = setInterval(tick, 1000);
+            return () => clearInterval(intervalId);
+        }
+
+        function avmRenderQueuePreview(stage) {
+            stage.innerHTML = `<div class="avm-preview-fill avm-pw-queue"><div class="hdr">Up Next</div><div id="avm-pw-queue-list"></div></div>`;
+            const list = document.getElementById('avm-pw-queue-list');
+            const refresh = async () => {
+                try {
+                    const res = await fetch(eventUrl('/kiosk-data'));
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    const top = (data.queue || []).slice(0, 5);
+                    list.innerHTML = top.length === 0
+                        ? '<div class="empty">No requests queued right now</div>'
+                        : top.map(song => `
+                            <div class="row">
+                                <img src="${escapeHtml(song.artwork || '')}" alt="">
+                                <div class="t">${escapeHtml(song.title)} &ndash; ${escapeHtml(song.artist)}</div>
+                            </div>
+                        `).join('');
+                } catch (e) { /* keep showing whatever's already there */ }
+            };
+            refresh();
+            const intervalId = setInterval(refresh, 5000);
+            return () => clearInterval(intervalId);
+        }
+
+        function avmRenderAdPreview(stage, item) {
+            const qrSrc = item.adQrUrl
+                ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(item.adQrUrl)}`
+                : '';
+            stage.innerHTML = `
+                <div class="avm-preview-fill avm-pw-ad">
+                    ${qrSrc ? `<img src="${escapeHtml(qrSrc)}" alt="QR code">` : ''}
+                    ${item.adText ? `<div class="txt">${escapeHtml(item.adText)}</div>` : '<div class="txt" style="color:#a7a7a7; font-weight:400;">No ad text or QR link set yet</div>'}
+                </div>`;
+            return null;
+        }
+
         function renderAvmPreview() {
             const stage = document.getElementById('avm-preview-stage');
             const thumbEl = document.getElementById('avm-currently-thumb');
@@ -1989,6 +2226,7 @@
             const subEl = document.getElementById('avm-currently-sub');
             const durEl = document.getElementById('avm-currently-duration');
             const countEl = document.getElementById('avm-nav-count');
+            avmClearPreviewCleanup();
 
             if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
                 stage.innerHTML = `<span class="avm-preview-placeholder">&#128250;</span>`;
@@ -2014,6 +2252,15 @@
             } else if (item.type === 'customVisual') {
                 stage.innerHTML = `<div class="avm-cv-stage-inner">${cvRenderComposite(item)}</div><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Custom Visual</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#10024;</span>`;
+            } else if (item.type === 'clock') {
+                avmPreviewCleanup = avmRenderClockPreview(stage);
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128337;</span>`;
+            } else if (item.type === 'queue') {
+                avmPreviewCleanup = avmRenderQueuePreview(stage);
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128250;</span>`;
+            } else if (item.type === 'ad') {
+                avmRenderAdPreview(stage, item);
+                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128227;</span>`;
             } else {
                 stage.innerHTML = `<span class="avm-preview-placeholder">${m.icon}</span><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
                 thumbEl.innerHTML = `<span style="font-size:1.1rem;">${m.icon}</span>`;
@@ -3168,6 +3415,7 @@
             const days = [...document.querySelectorAll(`#${daysId} .day-toggle.active`)].map(b => parseInt(b.dataset.day, 10));
             if (days.length === 0) return showToast('Pick at least one day.', 'error');
 
+            pushUndo();
             rule.start = start;
             rule.end = end;
             rule.days = days;
@@ -3203,6 +3451,7 @@
             renderDayBoxes();
         }
         function deleteModalRule() {
+            pushUndo();
             rules = rules.filter(r => r.id !== modalRuleId);
             closeModal();
             renderDayBoxes();
@@ -3219,11 +3468,23 @@
             }
         });
         document.addEventListener('keydown', (e) => {
+            const tag = (e.target.tagName || '').toLowerCase();
+            const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+            const cmd = e.ctrlKey || e.metaKey;
+
+            if (cmd && !typing && !anyModalOpen()) {
+                const key = e.key.toLowerCase();
+                if (key === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); return; }
+                if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); performRedo(); return; }
+                if (key === 'c') { e.preventDefault(); copySelectedRule(); return; }
+                if (key === 'v') { e.preventDefault(); pasteCopiedRule(); return; }
+            }
+
             if (e.key !== 'Backspace' && e.key !== 'Delete') return;
             if (!selectedRuleId) return;
-            const tag = (e.target.tagName || '').toLowerCase();
-            if (tag === 'input' || tag === 'textarea' || tag === 'select') return; // typing elsewhere shouldn't delete a block
+            if (typing) return; // typing elsewhere shouldn't delete a block
             e.preventDefault();
+            pushUndo();
             rules = rules.filter(r => r.id !== selectedRuleId);
             selectedRuleId = null;
             renderDayBoxes();
