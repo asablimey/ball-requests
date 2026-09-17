@@ -2818,6 +2818,21 @@ const MUSIC_VIDEO_EXCLUDED_KEYWORDS = [
     'slowed', 'slowed reverb'
 ];
 
+// Channel names that are essentially always a lyric-video/karaoke/hype
+// farm, whatever the video's own title says - checked as plain substrings
+// against the raw channel name (not the token-based matching above) since
+// these brands are routinely mashed together with no spaces at all, e.g.
+// "RockHype", "LyricsHD", "KaraokeCentral". Any hit here is a hard exclude,
+// same tier as MUSIC_VIDEO_EXCLUDED_KEYWORDS.
+const MUSIC_VIDEO_EXCLUDED_CHANNEL_SUBSTRINGS = [
+    'lyric', 'karaoke', 'nightcore', 'hype', 'trapnation', 'audio only'
+];
+
+function channelIsExcluded(channelTitle) {
+    const lower = (channelTitle || '').toLowerCase();
+    return MUSIC_VIDEO_EXCLUDED_CHANNEL_SUBSTRINGS.some(kw => lower.includes(kw));
+}
+
 function versionKeywordsIn(str) {
     const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
     return MUSIC_VIDEO_VERSION_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
@@ -2840,10 +2855,17 @@ function scoreYouTubeCandidate(candidate, track) {
 
     // Second hard gate - a lyric video/audio upload/karaoke track is
     // rejected outright, not scored down, so it can never win out just by
-    // having a strong title match.
+    // having a strong title match. Checked against the channel name too -
+    // this is the gate that actually catches most lyric-video uploads in
+    // practice, since a lot of them title the video plainly ("Artist -
+    // Song", no "Lyrics" disclaimer at all) and only give the game away in
+    // their channel branding.
     const excluded = excludedKeywordsIn(candidate.title);
     if (excluded.length > 0) {
         return { score: 0, reason: `lyric/audio-only upload, not a music video (${excluded.join(', ')})` };
+    }
+    if (channelIsExcluded(candidate.channelTitle)) {
+        return { score: 0, reason: `channel "${candidate.channelTitle}" is a lyric/karaoke-style upload channel, not an official source` };
     }
 
     const expectedTitle = `${track.artist} ${track.title}`;
@@ -2861,17 +2883,33 @@ function scoreYouTubeCandidate(candidate, track) {
     // fail gate above - an exact-length match nudges score up further.
     score += (1 - diff / MUSIC_VIDEO_DURATION_TOLERANCE) * 0.15;
 
-    // Channel bonus: the uploading channel matching the artist is a strong
-    // signal this is the real music video and not a fan upload.
+    // Channel authority: matching the artist, or reading as a label/VEVO
+    // channel, is a strong signal this is the real music video - and the
+    // absence of either is itself a real signal it's NOT, worth a
+    // meaningful penalty rather than just "no bonus". This is what keeps a
+    // well-titled fan upload with the right runtime from coasting through
+    // on title/duration alone the way "RockHype" or similar channels do -
+    // it now has to clear a much higher bar to still be picked.
     const normChannel = normalizeForMatch(candidate.channelTitle);
     const normArtist = normalizeForMatch(track.artist);
-    if (normArtist && (normChannel === normArtist || normChannel.includes(normArtist) || normArtist.includes(normChannel))) {
+    const channelMatchesArtist = !!normArtist && (normChannel === normArtist || normChannel.includes(normArtist) || normArtist.includes(normChannel));
+    const looksOfficial = /vevo|official|records/.test(normChannel);
+    if (channelMatchesArtist) {
         score += 0.15;
+        if (looksOfficial) score += 0.05;
+    } else if (looksOfficial) {
+        score += 0.1;
+    } else {
+        score -= 0.35;
     }
-    if (/vevo|official/.test(normChannel)) score += 0.05;
 
     score = Math.max(0, Math.min(1, score));
-    return { score, reason: unwantedVersions.length > 0 ? `title/version mismatch (${unwantedVersions.join(', ')})` : null };
+    return {
+        score,
+        reason: unwantedVersions.length > 0
+            ? `title/version mismatch (${unwantedVersions.join(', ')})`
+            : (!channelMatchesArtist && !looksOfficial ? `channel "${candidate.channelTitle}" doesn't read as the artist or a label/VEVO channel` : null)
+    };
 }
 
 function parseISO8601DurationToSeconds(iso) {
