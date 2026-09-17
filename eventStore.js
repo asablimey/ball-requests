@@ -170,7 +170,11 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             // Off by default - it only does anything once YOUTUBE_API_KEY
             // is set on the server anyway, but defaulting an event to
             // "off" means turning it on is always a deliberate choice.
-            musicVideosEnabled: false
+            musicVideosEnabled: false,
+            // Purely cosmetic toggle for whatever video is currently
+            // showing - turns YouTube's caption track on/off client-side.
+            // Independent of musicVideosEnabled above.
+            musicVideoSubtitlesEnabled: false
         },
 
         activeQueue: [],
@@ -251,6 +255,16 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         // only a transient error (network/quota) is left uncached so it's
         // retried next time the track comes up.
         musicVideoMatches: {},
+
+        // trackId -> [videoId, ...]. A video that resolveMusicVideoForTrack
+        // matched but which the Visuals Display later reported couldn't
+        // actually stay in sync with the Spotify audio in practice (or
+        // failed at real playback time) via /api/music-video/sync-failed.
+        // Excluded from candidates on every future lookup for that track -
+        // see findBestYouTubeMatch's excludeIds. Persists for the life of
+        // the event, same as musicVideoMatches above, since a bad sync
+        // result for a given upload isn't going to fix itself on a replay.
+        musicVideoSyncFailures: {},
 
         // Runtime "what should the Visuals Display show right now" readout -
         // same spirit as cachedNowPlaying above, updated by
@@ -441,6 +455,14 @@ function ensureSchedulerDefaults(event) {
         if (typeof event.visualsConfigs.muteVisuals !== 'boolean') event.visualsConfigs.muteVisuals = false;
         if (typeof event.visualsConfigs.muteAll !== 'boolean') event.visualsConfigs.muteAll = false;
         if (typeof event.visualsConfigs.showQueue !== 'boolean') event.visualsConfigs.showQueue = false;
+        if (typeof event.visualsConfigs.musicVideosEnabled !== 'boolean') event.visualsConfigs.musicVideosEnabled = false;
+        if (typeof event.visualsConfigs.musicVideoSubtitlesEnabled !== 'boolean') event.visualsConfigs.musicVideoSubtitlesEnabled = false;
+    }
+    // Events saved before the sync-failure blacklist existed won't have
+    // this at all - back it in as an empty map rather than making the
+    // sync-failed route and resolveMusicVideoForTrack null-check it.
+    if (!event.musicVideoSyncFailures || typeof event.musicVideoSyncFailures !== 'object') {
+        event.musicVideoSyncFailures = {};
     }
     // Events saved before the fallback/scheduled split existed only have
     // lastSwitchedPlaylist. Seed fallbackPlaylistUri from it once so a gap
