@@ -399,6 +399,21 @@
             color: white; padding: 8px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
         }
         .avm-btn-preview:hover { border-color: #555; }
+        /* Share menu (export/import) - one quiet button in the header that
+           opens a two-item menu, so the header stays as clean as before. */
+        .avm-menu-wrap { position: relative; }
+        .avm-menu {
+            display: none; position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px; z-index: 20;
+            background: var(--card-bg); border: 1px solid #444; border-radius: 10px; padding: 4px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+        }
+        .avm-menu.open { display: block; }
+        .avm-menu button {
+            display: block; width: 100%; text-align: left; background: none; border: none; color: white;
+            padding: 9px 12px; border-radius: 7px; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+        }
+        .avm-menu button:hover { background: #404040; }
+        .avm-menu button .sub { display: block; font-size: 0.72rem; font-weight: 400; color: var(--text-dim); margin-top: 2px; }
         .avm-close {
             width: 32px; height: 32px; border-radius: 8px; background: transparent; border: none;
             color: var(--text-dim); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -719,7 +734,7 @@
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: var(--card-bg); border: 1px solid #333; color: white;
             padding: 12px 20px; border-radius: 8px; font-size: 0.9rem; opacity: 0;
-            transition: opacity 0.2s ease; pointer-events: none; z-index: 10000;
+            transition: opacity 0.2s ease; pointer-events: none; z-index: 10010;
         }
         .toast.show { opacity: 1; }
         .toast.error { border-color: var(--red-action); }
@@ -786,6 +801,7 @@
                     </div>
                     <div id="new-ambient-fields" style="display:none;">
                         <button class="btn btn-ghost btn-small" style="width:100%;" onclick="startNewAmbientBlock()">+ Add Visual</button>
+                        <button class="btn btn-ghost btn-small" style="width:100%; margin-top:8px;" onclick="importVisualsAsNewBlock()">Import from file</button>
                     </div>
                 </div>
             </div>
@@ -869,6 +885,13 @@
                 </div>
                 <div class="avm-header-actions">
                     <button type="button" class="avm-btn-preview" onclick="avmPreviewCurrent()">&#9654; Preview</button>
+                    <div class="avm-menu-wrap">
+                        <button type="button" class="avm-btn-preview" onclick="avmToggleShareMenu(event)">Share</button>
+                        <div class="avm-menu" id="avm-share-menu">
+                            <button type="button" onclick="avmExportBlock()">Export block<span class="sub">Save these visuals as a file</span></button>
+                            <button type="button" onclick="avmImportIntoBlock()">Import from file<span class="sub">Add exported visuals to this block</span></button>
+                        </div>
+                    </div>
                     <button type="button" class="avm-close" onclick="closeModal()">&times;</button>
                 </div>
             </div>
@@ -1016,12 +1039,16 @@
                 <div class="cv-right" id="cv-right-panel"></div>
             </div>
             <div class="cv-footer">
-                <button type="button" class="btn btn-ghost" onclick="closeCustomVisualEditor()">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveCustomVisual()">Save Visual</button>
+                <button type="button" class="btn btn-ghost" onclick="cvExport()">Export</button>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn btn-ghost" onclick="closeCustomVisualEditor()">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveCustomVisual()">Save Visual</button>
+                </div>
             </div>
         </div>
     </div>
 
+    <input type="file" id="visuals-import-input" accept=".json,application/json" style="display:none;" onchange="onVisualsImportFileChosen(event)">
     <div class="toast" id="toast"></div>
 
     <script>
@@ -1184,11 +1211,13 @@
 
         document.getElementById('back-to-admin').href = eventUrl('/admin');
 
+        let toastTimer = null;
         function showToast(message, kind) {
             const el = document.getElementById('toast');
             el.textContent = message;
             el.className = 'toast show' + (kind === 'error' ? ' error' : '');
-            setTimeout(() => { el.className = 'toast'; }, 3000);
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { el.className = 'toast'; }, 3000);
         }
 
         async function verifyLogin() {
@@ -2301,7 +2330,10 @@
                         <input type="text" placeholder="e.g. Sponsor Slide" value="${escapeHtml(item.customLabel || '')}"
                                onchange="updateModalCustomLabel(${idx}, this.value)">
                     </div>
-                    <button type="button" class="btn btn-ghost btn-small" style="width:100%; margin-bottom:12px;" onclick="openCustomVisualEditor(modalAmbientItems[${idx}])">Edit Layers</button>
+                    <div style="display:flex; gap:8px; margin-bottom:12px;">
+                        <button type="button" class="btn btn-ghost btn-small" style="flex:1;" onclick="openCustomVisualEditor(modalAmbientItems[${idx}])">Edit Layers</button>
+                        <button type="button" class="btn btn-ghost btn-small" style="flex:1;" onclick="avmExportItem(${idx})">Export</button>
+                    </div>
                 `;
             }
             if (item.type === 'ad') {
@@ -2455,6 +2487,354 @@
                 showToast(`${failures} file${failures === 1 ? '' : 's'} failed to upload. Try again.`, 'error');
             }
             renderModalAmbientFileList();
+        }
+
+        // ---------- Export / import ----------
+        // A visuals file is a small, self-describing JSON document that can
+        // be carried between events. It's deliberately "clean":
+        //   - no internal ids (items/layers get fresh ones on import),
+        //   - no schedule (days/times belong to the event, not the visuals),
+        //   - uploaded files are listed once under "media" and referenced by
+        //     a short ref ("m1", "m2"...) instead of this event's own ids.
+        // On import every field is whitelisted/clamped before it reaches the
+        // editor, since these end up rendered on venue screens.
+        const VISUALS_FILE_FORMAT = 'crowddj-visuals';
+        const VISUALS_FILE_VERSION = 1;
+        const VISUALS_MAX_FILE_BYTES = 2 * 1024 * 1024;
+        const VISUALS_MAX_ITEMS = 60;
+        const VISUALS_MAX_LAYERS = 40;
+        const VISUALS_MAX_MEDIA = 100;
+        const VISUALS_ITEM_TYPES = ['photo', 'video', 'queue', 'clock', 'ad', 'customVisual'];
+        const VISUALS_LAYER_TYPES = ['text', 'photo', 'video', 'clock', 'queue', 'countdown', 'shape'];
+        const VISUALS_FIELDS = {
+            numbers: {
+                x: [0, 100], y: [0, 100], width: [1, 100], height: [1, 100], opacity: [0, 100],
+                rotation: [-360, 360], fontSize: [4, 400], bgOpacity: [0, 100], maxItems: [1, 10],
+                borderRadius: [0, 100], borderWidth: [0, 50], thickness: [1, 100], tintOpacity: [0, 100],
+                angle: [0, 360], dimOpacity: [0, 100]
+            },
+            bools: ['flipH', 'flipV', 'lockAspect', 'bold', 'italic', 'outline', 'bgEnabled', 'showDate',
+                    'showSeconds', 'showArtwork', 'tintEnabled', 'dimEnabled'],
+            colors: ['color', 'outlineColor', 'bgColor', 'borderColor', 'tintColor', 'color1', 'color2', 'dimColor'],
+            enums: {
+                align: ['left', 'center', 'right'],
+                fit: ['cover', 'contain'],
+                format: ['12h', '24h'],
+                shapeType: ['rectangle', 'circle', 'line'],
+                fontFamily: ['inherit', 'Poppins', 'Bebas Neue', 'Playfair Display', 'Space Mono']
+            },
+            strings: { text: 500, title: 60, label: 60 }
+        };
+
+        // ----- Export -----
+        function visualsSlug(name) {
+            return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'visuals';
+        }
+
+        function exportCleanItem(it, refFor) {
+            if (it.type === 'photo' || it.type === 'video') {
+                const ref = refFor(it.mediaId);
+                if (!ref) return null;
+                const out = { type: it.type, mediaRef: ref };
+                if (it.type === 'photo') out.durationSec = it.durationSec || 8;
+                return out;
+            }
+            if (it.type === 'queue' || it.type === 'clock') {
+                return { type: it.type, durationSec: it.durationSec || 10 };
+            }
+            if (it.type === 'ad') {
+                return { type: 'ad', durationSec: it.durationSec || 8, adText: it.adText || '', adQrUrl: it.adQrUrl || '' };
+            }
+            if (it.type === 'customVisual') {
+                let bg = { ...(it.background || { type: 'color', color: '#000000', fit: 'cover' }) };
+                if (bg.type === 'photo' || bg.type === 'video') {
+                    const ref = refFor(bg.mediaId);
+                    delete bg.mediaId;
+                    if (ref) bg.mediaRef = ref;
+                    else bg = { type: 'color', color: '#000000', fit: 'cover' }; // file no longer in the library
+                }
+                const layers = [];
+                for (const l of (it.layers || [])) {
+                    const copy = { ...l };
+                    delete copy.id;
+                    if (l.type === 'photo' || l.type === 'video') {
+                        const ref = refFor(l.mediaId);
+                        delete copy.mediaId;
+                        if (!ref) continue;
+                        copy.mediaRef = ref;
+                    }
+                    layers.push(copy);
+                }
+                return {
+                    type: 'customVisual',
+                    customLabel: it.customLabel || '',
+                    durationSec: it.durationSec || 10,
+                    background: bg,
+                    layers
+                };
+            }
+            return null;
+        }
+
+        function exportVisuals(items, name, kind) {
+            const media = [];
+            const refByMediaId = new Map();
+            const refFor = (mediaId) => {
+                const m = ambientMedia.find(x => x.id === mediaId);
+                if (!m) return null;
+                if (!refByMediaId.has(mediaId)) {
+                    const ref = 'm' + (media.length + 1);
+                    refByMediaId.set(mediaId, ref);
+                    media.push({ ref, type: m.type, filename: m.filename, url: m.url });
+                }
+                return refByMediaId.get(mediaId);
+            };
+            const outItems = [];
+            let skipped = 0;
+            for (const it of items) {
+                const out = exportCleanItem(it, refFor);
+                if (out) outItems.push(out); else skipped++;
+            }
+            if (outItems.length === 0) return showToast('Nothing to export - every item is missing its file.', 'error');
+
+            const payload = {
+                format: VISUALS_FILE_FORMAT,
+                version: VISUALS_FILE_VERSION,
+                kind,
+                name: name || '',
+                exportedAt: new Date().toISOString(),
+                media,
+                items: outItems
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${visualsSlug(name)}.visuals.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showToast(skipped > 0
+                ? `Exported. ${skipped} item${skipped === 1 ? ' was' : 's were'} left out (missing file).`
+                : 'Exported.');
+        }
+
+        function avmToggleShareMenu(e) {
+            e.stopPropagation();
+            document.getElementById('avm-share-menu').classList.toggle('open');
+        }
+        function avmCloseShareMenu() {
+            const menu = document.getElementById('avm-share-menu');
+            if (menu) menu.classList.remove('open');
+        }
+        document.addEventListener('click', avmCloseShareMenu);
+
+        function avmExportBlock() {
+            avmCloseShareMenu();
+            if (modalAmbientItems.length === 0) return showToast('Add something to the sequence first.', 'error');
+            const name = document.getElementById('ambient-modal-block-name').value.trim() || 'Ambient Visuals';
+            exportVisuals(modalAmbientItems, name, 'block');
+        }
+        function avmExportItem(idx) {
+            const item = modalAmbientItems[idx];
+            if (!item) return;
+            exportVisuals([item], item.customLabel || 'Custom Visual', 'visual');
+        }
+        // Exports whatever is currently on the canvas, saved or not.
+        function cvExport() {
+            if (!cvWorking) return;
+            exportVisuals([{
+                type: 'customVisual',
+                customLabel: cvWorking.customLabel,
+                durationSec: cvWorking.durationSec,
+                background: cvWorking.background,
+                layers: cvWorking.layers
+            }], cvWorking.customLabel || 'Custom Visual', 'visual');
+        }
+
+        // ----- Import -----
+        let visualsImportMode = null; // 'new' (library panel) | 'append' (inside the block editor)
+        function importVisualsAsNewBlock() {
+            visualsImportMode = 'new';
+            document.getElementById('visuals-import-input').click();
+        }
+        function avmImportIntoBlock() {
+            avmCloseShareMenu();
+            visualsImportMode = 'append';
+            document.getElementById('visuals-import-input').click();
+        }
+
+        const VISUALS_HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
+        function importPickFields(src) {
+            const out = {};
+            for (const [k, [lo, hi]] of Object.entries(VISUALS_FIELDS.numbers)) {
+                if (typeof src[k] === 'number' && Number.isFinite(src[k])) out[k] = Math.max(lo, Math.min(hi, src[k]));
+            }
+            for (const k of VISUALS_FIELDS.bools) if (typeof src[k] === 'boolean') out[k] = src[k];
+            for (const k of VISUALS_FIELDS.colors) if (typeof src[k] === 'string' && VISUALS_HEX.test(src[k])) out[k] = src[k];
+            for (const [k, allowed] of Object.entries(VISUALS_FIELDS.enums)) {
+                if (allowed.includes(src[k])) out[k] = src[k];
+            }
+            for (const [k, max] of Object.entries(VISUALS_FIELDS.strings)) {
+                if (typeof src[k] === 'string') out[k] = src[k].slice(0, max);
+            }
+            if (typeof src.targetDateTime === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(src.targetDateTime)) {
+                out.targetDateTime = src.targetDateTime;
+            }
+            return out;
+        }
+
+        function importSanitizeBackground(raw, resolve) {
+            const black = { type: 'color', color: '#000000', fit: 'cover' };
+            if (!raw || typeof raw !== 'object') return black;
+            const f = importPickFields(raw);
+            if (raw.type === 'gradient') {
+                return { type: 'gradient', color1: f.color1 || '#1DB954', color2: f.color2 || '#121212', angle: f.angle != null ? f.angle : 135 };
+            }
+            if (raw.type === 'photo' || raw.type === 'video') {
+                const media = resolve(raw.mediaRef);
+                if (!media || media.type !== raw.type) return black;
+                const bg = { type: raw.type, mediaId: media.id, fit: f.fit || 'cover' };
+                if (f.dimEnabled) {
+                    bg.dimEnabled = true;
+                    bg.dimColor = f.dimColor || '#000000';
+                    bg.dimOpacity = f.dimOpacity != null ? f.dimOpacity : 40;
+                }
+                return bg;
+            }
+            return { type: 'color', color: f.color || '#000000', fit: 'cover' };
+        }
+
+        function importSanitizeLayer(raw, resolve) {
+            if (!raw || typeof raw !== 'object' || !VISUALS_LAYER_TYPES.includes(raw.type)) return null;
+            const layer = { id: genId(), type: raw.type, ...importPickFields(raw) };
+            for (const [k, d] of [['x', 30], ['y', 40], ['width', 30], ['height', 20], ['opacity', 100], ['rotation', 0]]) {
+                if (typeof layer[k] !== 'number') layer[k] = d;
+            }
+            layer.x = Math.max(0, Math.min(100 - layer.width, layer.x));
+            layer.y = Math.max(0, Math.min(100 - layer.height, layer.y));
+            if (raw.type === 'photo' || raw.type === 'video') {
+                const media = resolve(raw.mediaRef);
+                if (!media || media.type !== raw.type) return null;
+                layer.mediaId = media.id;
+            }
+            return layer;
+        }
+
+        // Returns a ready-to-use item (fresh ids) or null if it can't be
+        // rebuilt - e.g. it points at a file that couldn't be added here.
+        function importSanitizeItem(raw, resolve) {
+            if (!raw || typeof raw !== 'object' || !VISUALS_ITEM_TYPES.includes(raw.type)) return null;
+            const fallbackDur = (raw.type === 'photo' || raw.type === 'video' || raw.type === 'ad') ? 8 : 10;
+            const durationSec = Number.isInteger(raw.durationSec) && raw.durationSec >= 1 && raw.durationSec <= 120 ? raw.durationSec : fallbackDur;
+            const item = { id: genId(), type: raw.type, durationSec };
+
+            if (raw.type === 'photo' || raw.type === 'video') {
+                const media = resolve(raw.mediaRef);
+                if (!media || media.type !== raw.type) return null;
+                item.mediaId = media.id;
+            } else if (raw.type === 'ad') {
+                item.adText = typeof raw.adText === 'string' ? raw.adText.trim().slice(0, 200) : '';
+                const qr = typeof raw.adQrUrl === 'string' ? raw.adQrUrl.trim().slice(0, 500) : '';
+                item.adQrUrl = /^https?:\/\//i.test(qr) ? qr : '';
+                if (!item.adText && !item.adQrUrl) return null;
+            } else if (raw.type === 'customVisual') {
+                item.customLabel = typeof raw.customLabel === 'string' ? raw.customLabel.trim().slice(0, 60) : '';
+                item.background = importSanitizeBackground(raw.background, resolve);
+                item.layers = (Array.isArray(raw.layers) ? raw.layers : [])
+                    .slice(0, VISUALS_MAX_LAYERS)
+                    .map(l => importSanitizeLayer(l, resolve))
+                    .filter(Boolean);
+            }
+            return item;
+        }
+
+        async function registerAmbientMediaUrl(url, filename, type) {
+            const res = await fetch(eventUrl('/api/admin/ambient-media'), {
+                method: 'POST',
+                headers: adminHeaders(),
+                body: JSON.stringify({ url, filename, type })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Could not add that file.');
+            ambientMedia.push(data.item);
+            renderPlaylists();
+            renderAvmLibraryList();
+            return data.item;
+        }
+
+        // Maps each file-local media ref to a record in THIS event's library:
+        // reuses an existing entry when the same URL is already there,
+        // otherwise registers it (the file itself already lives on
+        // Cloudinary, so nothing is re-uploaded).
+        async function importResolveMedia(fileMedia) {
+            const map = new Map();
+            let failed = 0;
+            for (const m of fileMedia) {
+                if (!m || typeof m.ref !== 'string' || typeof m.url !== 'string' || (m.type !== 'photo' && m.type !== 'video')) continue;
+                const existing = ambientMedia.find(x => x.url === m.url);
+                if (existing) { map.set(m.ref, existing); continue; }
+                try {
+                    const filename = typeof m.filename === 'string' ? m.filename.slice(0, 120) : '';
+                    map.set(m.ref, await registerAmbientMediaUrl(m.url, filename, m.type));
+                } catch (err) {
+                    failed++;
+                    console.error('Visuals import: could not add file', err);
+                }
+            }
+            return { map, failed };
+        }
+
+        async function onVisualsImportFileChosen(e) {
+            const file = e.target.files[0];
+            e.target.value = '';
+            const mode = visualsImportMode;
+            visualsImportMode = null;
+            if (!file) return;
+            if (file.size > VISUALS_MAX_FILE_BYTES) return showToast('That file is too large to be a visuals export.', 'error');
+
+            let parsed;
+            try {
+                parsed = JSON.parse(await file.text());
+            } catch (err) {
+                return showToast('That file is not a valid visuals export.', 'error');
+            }
+            if (!parsed || parsed.format !== VISUALS_FILE_FORMAT || !Array.isArray(parsed.items)) {
+                return showToast('That file is not a visuals export.', 'error');
+            }
+            if (typeof parsed.version === 'number' && parsed.version > VISUALS_FILE_VERSION) {
+                return showToast('That file was made by a newer version and cannot be read here.', 'error');
+            }
+            if (mode === 'append' && !modalRuleId) return;
+
+            showToast('Importing...');
+            const fileMedia = Array.isArray(parsed.media) ? parsed.media.slice(0, VISUALS_MAX_MEDIA) : [];
+            const { map, failed } = await importResolveMedia(fileMedia);
+            const resolve = (ref) => (typeof ref === 'string' && map.get(ref)) || null;
+
+            const rawItems = parsed.items.slice(0, VISUALS_MAX_ITEMS);
+            const items = rawItems.map(it => importSanitizeItem(it, resolve)).filter(Boolean);
+            const skipped = parsed.items.length - items.length;
+            if (items.length === 0) {
+                return showToast(failed > 0 ? 'None of that file\'s media could be added to this event.' : 'Nothing in that file could be imported.', 'error');
+            }
+
+            if (mode === 'append') {
+                modalAmbientItems.push(...items);
+                avmSelectedIndex = modalAmbientItems.length - items.length;
+                renderModalAmbientFileList();
+            } else {
+                const rule = { id: genId(), laneType: 'ambient', items, days: [], start: '', end: '' };
+                const nm = typeof parsed.name === 'string' ? parsed.name.trim().slice(0, 60) : '';
+                if (nm) rule.name = nm;
+                rules.push(rule);
+                isNewAmbientRule = true;
+                openAmbientBlockModal(rule);
+            }
+            showToast(skipped > 0
+                ? `Imported ${items.length} item${items.length === 1 ? '' : 's'}. ${skipped} skipped (unsupported or missing file).`
+                : `Imported ${items.length} item${items.length === 1 ? '' : 's'}.`);
         }
 
         // ---------- Custom Visual Editor ----------
