@@ -36,6 +36,28 @@ const adminAuthLimiter = rateLimit({
     message: { error: 'Too many failed admin attempts. Try again later.' }
 });
 
+// Account signup/login - same shape as adminAuthLimiter (only failures
+// count), keyed by IP alone since there's no per-event slug to scope it to.
+const accountAuthLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Too many attempts. Try again later.' }
+});
+
+// Forgot-password is rate-limited harder and on BOTH outcomes (not just
+// failures) - each successful call sends a real email through Brevo's daily
+// quota, so this needs to cap total volume, not just brute-force guessing.
+const forgotPasswordLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many reset requests from this address. Try again later.' }
+});
+
 // Render (and most hosts) terminate HTTPS at a proxy in front of your app -
 // needed so secure cookies and req.protocol behave correctly.
 app.set('trust proxy', 1);
@@ -97,19 +119,124 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
+// --- Account sessions -------------------------------------------------
+// Deliberately in-memory only, never written to Redis. That's not a
+// shortcut - it's what makes "log back in after a Render restart" true for
+// free: a restart wipes this Map by definition, no separate expiry logic
+// needed for that case. Sliding inactivity timeout and manual logout both
+// just operate on the same Map.
+const ACCOUNT_COOKIE = 'crowddj_session';
+const SESSION_IDLE_TIMEOUT_MS = 72 * 60 * 60 * 1000; // 72 hours of inactivity
+const accountSessions = new Map(); // token -> { username, lastUsedAt }
+
+function createAccountSession(username) {
+    const token = crypto.randomUUID();
+    accountSessions.set(token, { username, lastUsedAt: Date.now() });
+    return token;
+}
+
+// Reads the session cookie, validates + slides its expiry, and returns the
+// logged-in username or null. Called on every request that cares about
+// account state - cheap, since it's just a Map lookup, not a Redis call.
+function getSessionUsername(req) {
+    const cookies = parseCookies(req);
+    const token = cookies[ACCOUNT_COOKIE];
+    if (!token) return null;
+    const session = accountSessions.get(token);
+    if (!session) return null;
+    if (Date.now() - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
+        accountSessions.delete(token);
+        return null;
+    }
+    session.lastUsedAt = Date.now();
+    return session.username;
+}
+
+function destroySessionFromCookie(req) {
+    const cookies = parseCookies(req);
+    const token = cookies[ACCOUNT_COOKIE];
+    if (token) accountSessions.delete(token);
+}
+
+function setSessionCookie(res, token) {
+    res.cookie(ACCOUNT_COOKIE, token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 1000 * 60 * 60 * 24 * 30 // 30-day cap on the cookie itself; the
+        // 60-hour idle timeout above is what actually ends a session sooner
+    });
+}
+
+// Periodic sweep so a browser that never explicitly logs out doesn't leave
+// its entry sitting in memory forever - mirrors evictIdleEvents in eventStore.js.
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, session] of accountSessions.entries()) {
+        if (now - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) accountSessions.delete(token);
+    }
+}, 1000 * 60 * 15);
+
+// Gate for routes that require a logged-in account (creating an event,
+// viewing "My Events", etc).
+function requireAccountAuth(req, res, next) {
+    const username = getSessionUsername(req);
+    if (!username) return res.status(401).json({ error: 'Please log in first.' });
+    req.accountUsername = username;
+    next();
+}
+
+// --- Password-reset email (Brevo) --------------------------------------
+// Plain REST call, same style as the Upstash calls in eventStore.js - no
+// SMTP driver or SDK needed. BREVO_FROM_EMAIL must be verified as a sender
+// in the Brevo dashboard before this will deliver to real recipients (their
+// shared/unverified state only delivers to the Brevo account's own inbox).
+const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim();
+const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim();
+const BREVO_FROM_NAME = process.env.BREVO_FROM_NAME || 'Song Request Station';
+
+async function sendPasswordResetEmail(toEmail, resetUrl) {
+    if (!BREVO_API_KEY || !BREVO_FROM_EMAIL) {
+        console.error('[EMAIL] Missing BREVO_API_KEY / BREVO_FROM_EMAIL env vars - reset email not sent.');
+        return false;
+    }
+    try {
+        const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                'api-key': BREVO_API_KEY,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                sender: { email: BREVO_FROM_EMAIL, name: BREVO_FROM_NAME },
+                to: [{ email: toEmail }],
+                subject: 'Reset your Song Request Station password',
+                htmlContent: `
+                    <p>Someone requested a password reset for your Song Request Station account.</p>
+                    <p><a href="${resetUrl}">Click here to set a new password</a> (expires in 30 minutes).</p>
+                    <p>If this wasn't you, you can safely ignore this email - your password hasn't changed.</p>
+                `
+            })
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            console.error(`[EMAIL] Brevo send failed (${res.status}):`, text);
+            return false;
+        }
+        return true;
+    } catch (err) {
+        console.error('[EMAIL] Brevo send error:', err.message);
+        return false;
+    }
+}
+
 // Optional master admin password (set as ADMIN_PASSWORD in Render's env vars).
 // Lets you get into ANY event's admin page - and close it - without knowing
 // that event's individual password. If it's not set, this feature is simply
 // off and every event falls back to needing its own password, same as before.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-
-// Optional: powers the Visuals Display's automatic music video playback
-// (see the Music Video section further down). If this isn't set, the
-// feature is simply off everywhere - the visuals display just keeps
-// showing ambient content/the queue board, same as before this existed.
-//   YOUTUBE_API_KEY - a YouTube Data API v3 key (console.cloud.google.com,
-//                      enable "YouTube Data API v3", create an API key).
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
 // --- DJ Spotify Queue Relay ---
 // Separate from the client-credentials token below (which only reads the public
@@ -1034,7 +1161,12 @@ function slugifyEventName(str) {
         .slice(0, 30); // leaves room for the "-xxxxxx" suffix below, under the 40-char slug cap
 }
 
-app.post('/api/events', createEventLimiter, async (req, res) => {
+// Creating an event now requires a logged-in account (see requireAccountAuth
+// above) - anyone-can-create is gone. The account's username is stamped
+// onto the event as ownerUsername, which is what lets that account's
+// current password double as an admin credential later (requireAdminAuth
+// below) and what makes the event show up in "My Events".
+app.post('/api/events', createEventLimiter, requireAccountAuth, async (req, res) => {
     const { eventName, adminPassword, latitude, longitude, venueName, templateConfig } = req.body || {};
     // A venue location is now required at creation time - a client-side
     // check enforces this in new-event.html, but that's bypassable via a
@@ -1048,11 +1180,100 @@ app.post('/api/events', createEventLimiter, async (req, res) => {
     let result;
     for (let attempt = 0; attempt < 5; attempt++) {
         const candidateSlug = attempt === 0 ? base : `${base}-${crypto.randomBytes(3).toString('hex')}`;
-        result = await events.createEvent(candidateSlug, eventName, adminPassword, venue, templateConfig);
+        result = await events.createEvent(candidateSlug, eventName, adminPassword, venue, templateConfig, req.accountUsername);
         if (!result.error || result.error !== 'That event URL is already taken.') break;
     }
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ success: true, slug: result.event.slug });
+});
+
+// The account store returns a plain { error } object for both "that's
+// invalid" (400) and "Redis is unreachable" (503) cases - this tells them
+// apart by message so a transient DB outage isn't reported the same way as
+// a bad username, without threading a status code through every store
+// function. `fallback` is the status for anything that isn't the DB error.
+function statusForAccountError(message, fallback) {
+    return message && message.startsWith('Could not reach the database') ? 503 : fallback;
+}
+
+// ============================================================
+// Accounts: signup / login / logout / session / My Events
+// ============================================================
+
+app.post('/api/account/signup', accountAuthLimiter, async (req, res) => {
+    const { username, email, password } = req.body || {};
+    const result = await events.createUser(username, email, password);
+    if (result.error) return res.status(statusForAccountError(result.error, 400)).json({ error: result.error });
+    const token = createAccountSession(result.user.username);
+    setSessionCookie(res, token);
+    res.json({ success: true, username: result.user.username });
+});
+
+app.post('/api/account/login', accountAuthLimiter, async (req, res) => {
+    const { username, password } = req.body || {};
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Username and password are required.' });
+    }
+    const user = await events.verifyUserCredentials(username, password);
+    if (!user) return res.status(401).json({ error: 'Incorrect username or password.' });
+    const token = createAccountSession(user.username);
+    setSessionCookie(res, token);
+    res.json({ success: true, username: user.username });
+});
+
+app.post('/api/account/logout', (req, res) => {
+    destroySessionFromCookie(req);
+    res.clearCookie(ACCOUNT_COOKIE, { path: '/' });
+    res.json({ success: true });
+});
+
+// Lightweight "am I logged in" check - used by new-event.html and
+// admin.html on load to decide whether to show the account bar or the
+// login/signup screen. Always 200; loggedIn:false is not an error.
+app.get('/api/account/me', (req, res) => {
+    const username = getSessionUsername(req);
+    res.json({ loggedIn: !!username, username: username || null });
+});
+
+app.get('/api/account/my-events', requireAccountAuth, async (req, res) => {
+    const list = await events.getUserOwnedEventsSummary(req.accountUsername);
+    res.json({ events: list });
+});
+
+// Always responds the same way regardless of whether the email is
+// registered, so this can't be used to enumerate accounts by email.
+app.post('/api/account/forgot-password', forgotPasswordLimiter, async (req, res) => {
+    const { email } = req.body || {};
+    const generic = { success: true, message: 'If that email is registered, a reset link has been sent.' };
+    if (!events.isValidEmail(email)) return res.json(generic);
+    const user = await events.getUserByEmail(email);
+    if (user) {
+        const token = await events.createPasswordResetToken(user.username);
+        if (token) {
+            const origin = `${req.protocol}://${req.get('host')}`;
+            const resetUrl = `${origin}/reset-password.html?username=${encodeURIComponent(user.username)}&token=${encodeURIComponent(token)}`;
+            sendPasswordResetEmail(user.email, resetUrl).catch(err => console.error('[EMAIL] Unexpected send error:', err.message));
+        }
+        // If token creation failed (DB hiccup), we still return the generic
+        // response below rather than surfacing that - same reasoning as the
+        // no-such-email case, so this endpoint never confirms which emails exist.
+    }
+    res.json(generic);
+});
+
+app.post('/api/account/reset-password', accountAuthLimiter, async (req, res) => {
+    const { username, token, newPassword } = req.body || {};
+    if (typeof username !== 'string' || typeof token !== 'string') {
+        return res.status(400).json({ error: 'Invalid or expired reset link.' });
+    }
+    if (!newPassword || newPassword.length < 8) {
+        return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    }
+    const valid = await events.verifyAndConsumeResetToken(username, token);
+    if (!valid) return res.status(400).json({ error: 'That reset link is invalid or has expired. Request a new one.' });
+    const result = await events.setUserPassword(username, newPassword);
+    if (result.error) return res.status(statusForAccountError(result.error, 400)).json({ error: result.error });
+    res.json({ success: true });
 });
 
 // Public (no auth) - powers the guest-facing "Change Venue" screen (Venue
@@ -1200,18 +1421,24 @@ function verifyMasterPassword(provided) {
 }
 
 // Real, server-side admin auth - gates every /e/:slug/api/admin/* route below.
-// Accepts either that event's own password, or the master password above -
-// either one is enough to manage (and close) any event.
+// Accepts any of three passwords: the master password, this event's own
+// password, or - if the event has an owning account - that account's
+// CURRENT password (checked live against the account record each time, not
+// a snapshot taken at event-creation time, so changing your account
+// password later doesn't lock you out of events you made before the
+// change). Any one of the three is enough to manage (and close) the event.
 async function requireAdminAuth(req, res, next) {
     const provided = req.headers['x-admin-password'];
     if (verifyMasterPassword(provided)) {
         return next();
     }
-    const ok = await events.verifyPassword(provided, req.event.adminPasswordHash);
-    if (!ok) {
-        return res.status(401).json({ error: 'Unauthorized.' });
+    if (await events.verifyPassword(provided, req.event.adminPasswordHash)) {
+        return next();
     }
-    next();
+    if (req.event.ownerUsername && await events.verifyUserPassword(req.event.ownerUsername, provided)) {
+        return next();
+    }
+    return res.status(401).json({ error: 'Unauthorized.' });
 }
 app.use('/e/:slug/api/admin', adminAuthLimiter, requireAdminAuth);
 
@@ -1295,6 +1522,20 @@ app.post('/api/master/events/:slug/reset-password', masterAuthLimiter, async (re
     }
     const result = await events.resetEventPassword(req.params.slug);
     if (result.error) return res.status(404).json({ error: result.error });
+    res.json({ success: true, newPassword: result.newPassword });
+});
+
+// Master-panel-only: resets an account's password the same way
+// reset-password above resets an event's - generates a fresh one, returns
+// it once so it can be handed to the account holder out of band. Covers the
+// "forgot password, and email isn't set up / didn't arrive" case without
+// needing Brevo at all.
+app.post('/api/master/users/:username/reset-password', masterAuthLimiter, async (req, res) => {
+    if (!verifyMasterPassword(req.headers['x-admin-password'])) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+    const result = await events.resetUserPasswordByMaster(req.params.username);
+    if (result.error) return res.status(statusForAccountError(result.error, 404)).json({ error: result.error });
     res.json({ success: true, newPassword: result.newPassword });
 });
 
@@ -1788,7 +2029,6 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         fallbackPlaylistUri: event.systemConfigs.fallbackPlaylistUri || '',
         kiosk: event.kioskConfigs,
-        visuals: event.visualsConfigs,
         queue: buildSortedQueueForAdmin(event),
         history: event.playedHistory,
         blockedVoters: Object.entries(event.blockedVoters || {}).map(([voterId, info]) => ({
@@ -2002,7 +2242,7 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
         pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel,
         // The Ambient Visuals media library - not runtime state like the
         // fields above, but the scheduler page needs it up front to render
-        // the palette and resolve each ambient block's items to actual
+        // the palette and resolve each ambient block's mediaIds to actual
         // files, so it rides along with this same GET rather than a
         // separate round-trip.
         ambientMedia: event.ambientMedia
@@ -2062,60 +2302,18 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 60) : null;
 
         if (r.laneType === 'ambient') {
-            // Each display item plays in the order given here - photos and
-            // the "queue"/"clock"/"ad" widgets hold for their own
-            // durationSec, videos always play to completion. Anything that
-            // doesn't validate (bad type, dangling mediaId, an ad with
-            // nothing to show) is dropped rather than failing the whole
-            // block, same spirit as the rest of this validator.
-            const rawItems = Array.isArray(r.items) ? r.items : [];
-            const items = rawItems.map(it => {
-                if (!it || typeof it !== 'object') return null;
-                const itemId = typeof it.id === 'string' && it.id ? it.id : crypto.randomUUID();
-                const type = ['photo', 'video', 'queue', 'clock', 'ad', 'custom'].includes(it.type) ? it.type : null;
-                if (!type) return null;
-                const durationSec = Number.isInteger(it.durationSec) && it.durationSec >= 1 && it.durationSec <= 120
-                    ? it.durationSec : 8;
-                // Shared display-tweak fields every item type can carry -
-                // how it transitions in/out and how bright it renders.
-                // Malformed/missing values fall back to sane defaults
-                // rather than dropping the whole item.
-                const transition = ['fade', 'cut', 'slide'].includes(it.transition) ? it.transition : 'fade';
-                const brightness = Number.isInteger(it.brightness) && it.brightness >= 40 && it.brightness <= 150
-                    ? it.brightness : 100;
-                if (type === 'photo' || type === 'video') {
-                    if (typeof it.mediaId !== 'string' || !ambientMediaIds.has(it.mediaId)) return null;
-                    const fit = ['cover', 'contain', 'fill'].includes(it.fit) ? it.fit : 'cover';
-                    const position = ['center', 'top', 'bottom', 'left', 'right'].includes(it.position) ? it.position : 'center';
-                    // Optional per-item overlay text (the mockup's "The Beach
-                    // Vibes" style caption) - shown on the venue screen in
-                    // place of the filename/category when set.
-                    const captionTitle = typeof it.captionTitle === 'string' ? it.captionTitle.trim().slice(0, 60) : '';
-                    const captionSubtitle = typeof it.captionSubtitle === 'string' ? it.captionSubtitle.trim().slice(0, 80) : '';
-                    const base = { id: itemId, type, mediaId: it.mediaId, transition, fit, position, brightness };
-                    if (captionTitle) base.captionTitle = captionTitle;
-                    if (captionSubtitle) base.captionSubtitle = captionSubtitle;
-                    // Videos play in full - durationSec is meaningless for
-                    // them, so it isn't even stored.
-                    if (type === 'photo') base.durationSec = durationSec;
-                    return base;
-                }
-                if (type === 'ad') {
-                    const adText = typeof it.adText === 'string' ? it.adText.trim().slice(0, 200) : '';
-                    const adQrUrl = typeof it.adQrUrl === 'string' ? it.adQrUrl.trim().slice(0, 500) : '';
-                    if (!adText && !adQrUrl) return null; // an ad with nothing to show isn't a valid item
-                    return { id: itemId, type, adText, adQrUrl, durationSec, transition, brightness };
-                }
-                if (type === 'custom') {
-                    const text = typeof it.text === 'string' ? it.text.trim().slice(0, 40) : '';
-                    if (!text) return null; // a text card with no text isn't a valid item
-                    return { id: itemId, type, text, durationSec, transition, brightness };
-                }
-                // 'queue' or 'clock' - no extra fields, they're rendered live
-                return { id: itemId, type, durationSec, transition, brightness };
-            }).filter(Boolean).slice(0, 100);
-            if (items.length === 0) return null; // a block with nothing to show isn't a valid block
-            return { id, laneType: 'ambient', days, start: r.start, end: r.end, items, ...(name ? { name } : {}) };
+            // Dedupe while preserving the admin's chosen order (that order
+            // is exactly the shuffle-source ordering the display side will
+            // read), and drop any id that doesn't point at a real,
+            // still-existing library entry - e.g. a file removed from the
+            // library after this block was built.
+            const mediaIds = Array.isArray(r.mediaIds)
+                ? [...new Set(r.mediaIds.filter(mid => typeof mid === 'string' && ambientMediaIds.has(mid)))]
+                : [];
+            if (mediaIds.length === 0) return null; // a block with nothing to show isn't a valid block
+            const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
+                ? r.photoDurationSec : 8;
+            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec, ...(name ? { name } : {}) };
         }
 
         if (!playlistIds.has(r.playlistId)) return null;
@@ -2209,8 +2407,8 @@ app.post('/e/:slug/api/admin/ambient-media', (req, res) => {
 });
 
 // Removes a file from the library and strips it out of every block that
-// referenced it, rather than leaving a dangling id sitting in a block's
-// items - the next schedule save would drop it anyway (see the items filter in
+// referenced it, rather than leaving a dangling id sitting in mediaIds -
+// the next schedule save would drop it anyway (see the mediaIds filter in
 // POST /api/admin/scheduler), but doing it here too means a block doesn't
 // silently lose a file only the next time someone happens to hit Save.
 // The asset itself is left alone in Cloudinary (deleting it there requires
@@ -2227,16 +2425,16 @@ app.delete('/e/:slug/api/admin/ambient-media/:mediaId', (req, res) => {
     }
     const rules = event.musicScheduler?.rules || [];
     for (const rule of rules) {
-        if (rule.laneType === 'ambient' && Array.isArray(rule.items)) {
-            rule.items = rule.items.filter(it => it.mediaId !== mediaId);
+        if (rule.laneType === 'ambient' && Array.isArray(rule.mediaIds)) {
+            rule.mediaIds = rule.mediaIds.filter(id => id !== mediaId);
         }
     }
-    // A block that's had every one of its items removed this way is no
-    // longer valid (see the "items.length === 0 -> drop the rule" check
+    // A block that's had every one of its files removed this way is no
+    // longer valid (see the "mediaIds.length === 0 -> drop the rule" check
     // in POST /api/admin/scheduler) - drop it here too instead of leaving
     // an empty, unreachable block sitting in the timetable until the next
     // save happens to clean it up.
-    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.items.length > 0);
+    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.mediaIds.length > 0);
     events.scheduleSave(event.slug);
     res.json({ success: true, ambientMedia: event.ambientMedia, rules: event.musicScheduler.rules });
 });
@@ -2367,65 +2565,6 @@ app.post('/e/:slug/api/admin/kiosk/config', (req, res) => {
     if (maxCredits !== undefined) kc.maxCredits = parseInt(maxCredits) || kc.maxCredits;
     if (countdownLength !== undefined) kc.countdownLength = parseInt(countdownLength) || kc.countdownLength;
     events.scheduleSave(req.event.slug);
-    res.json({ success: true });
-});
-
-// --- Visuals Display controls (Admin -> Settings -> Content) ---
-// Read by the public /api/ambient-visuals poll below, which is what
-// visuals.html actually acts on.
-app.post('/e/:slug/api/admin/visuals/toggle-mute', (req, res) => {
-    const event = req.event;
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') event.visualsConfigs.muteVisuals = enabled;
-    events.scheduleSave(event.slug);
-    res.json({ success: true });
-});
-
-// Same blackout as toggle-mute above, plus a best-effort pause/resume of
-// the connected Spotify playback - a single "kill the room" switch for a
-// speech or announcement. The Spotify side is fire-and-forget: if nothing's
-// connected or there's no active device, the visuals mute still takes
-// effect either way, so this doesn't await or surface its result.
-app.post('/e/:slug/api/admin/visuals/toggle-mute-all', (req, res) => {
-    const event = req.event;
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') event.visualsConfigs.muteAll = enabled;
-    events.scheduleSave(event.slug);
-    spotifyPlayerCommand(event, 'PUT', enabled ? '/pause' : '/play');
-    res.json({ success: true });
-});
-
-app.post('/e/:slug/api/admin/visuals/toggle-show-queue', (req, res) => {
-    const event = req.event;
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') event.visualsConfigs.showQueue = enabled;
-    events.scheduleSave(event.slug);
-    res.json({ success: true });
-});
-
-// Turning this off clears the live decision immediately (rather than
-// waiting for the next track change to notice) so the Visuals Display
-// falls back to ambient visuals within one poll instead of riding out
-// whatever's currently playing.
-app.post('/e/:slug/api/admin/visuals/toggle-music-videos', (req, res) => {
-    const event = req.event;
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') event.visualsConfigs.musicVideosEnabled = enabled;
-    if (!enabled) clearCachedMusicVideo(event);
-    events.scheduleSave(event.slug);
-    res.json({ success: true });
-});
-
-// Purely cosmetic on top of the feature above - just tells the Visuals
-// Display whether to turn YouTube's caption track on for whatever music
-// video is currently showing. Doesn't affect matching/sync at all, so
-// there's nothing to clear here the way toggle-music-videos clears the
-// live decision.
-app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', (req, res) => {
-    const event = req.event;
-    const { enabled } = req.body;
-    if (typeof enabled === 'boolean') event.visualsConfigs.musicVideoSubtitlesEnabled = enabled;
-    events.scheduleSave(event.slug);
     res.json({ success: true });
 });
 
@@ -2757,287 +2896,6 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
     res.json({ success: true });
 });
 
-// --- Music Video (YouTube) auto-playback ---------------------------------
-// When a track starts playing, tries to find its official YouTube music
-// video so the Visuals Display can show it (muted, no UI) in place of the
-// ambient visuals lane. Matching is deliberately conservative - see
-// scoreYouTubeCandidate below - a track with no confident match, or whose
-// only candidates are lyric videos/audio uploads/karaoke tracks, just
-// leaves the ambient visuals running untouched, as if this never ran. A
-// video that's found but then turns out not to actually sync with the
-// Spotify audio in practice is caught client-side and reported back (see
-// /api/music-video/sync-failed below) so it's dropped and ambient visuals
-// take back over.
-const MUSIC_VIDEO_MATCH_THRESHOLD = 0.55;
-// How far a candidate's length is allowed to drift from the Spotify
-// track's actual duration before it's rejected outright, regardless of how
-// good the title match looks - this is the single strongest signal that a
-// result is the wrong upload entirely (a "full album" video, a 30s clip,
-// an extended remix, etc).
-const MUSIC_VIDEO_DURATION_TOLERANCE = 0.15; // +/- 15%
-
-function normalizeForMatch(str) {
-    return (str || '')
-        .toLowerCase()
-        .replace(/\(feat\.?[^)]*\)/g, ' ')
-        .replace(/\bfeat\.?\s.+$/g, ' ')
-        .replace(/[[\](){}]/g, ' ')
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-// Token-overlap similarity (Sorensen-Dice on word sets) - cheap, dependency-
-// free, and plenty discriminating for "is this candidate's title actually
-// about this song" at the conservative threshold this feature runs at.
-function titleSimilarity(a, b) {
-    const setA = new Set(normalizeForMatch(a).split(' ').filter(Boolean));
-    const setB = new Set(normalizeForMatch(b).split(' ').filter(Boolean));
-    if (setA.size === 0 || setB.size === 0) return 0;
-    let overlap = 0;
-    setA.forEach(tok => { if (setB.has(tok)) overlap++; });
-    return (2 * overlap) / (setA.size + setB.size);
-}
-
-// A candidate carrying one of these is only penalized if the REQUESTED
-// track itself isn't that same version - e.g. a guest who requested the
-// Live version of a song should still get a Live video back, not be
-// penalized for it.
-const MUSIC_VIDEO_VERSION_KEYWORDS = ['cover', 'remix', 'live'];
-
-// Titles carrying any of these are hard-excluded (score forced to 0, never
-// just penalized) - a lyric video, a static audio-only upload, a karaoke
-// backing track, etc. is never an acceptable substitute for the real
-// official music video, even when the requested track's own title happens
-// to say "Lyrics" or "Instrumental" too. "Only original music videos" means
-// this list applies unconditionally, with no version-match exception like
-// MUSIC_VIDEO_VERSION_KEYWORDS gets below.
-const MUSIC_VIDEO_EXCLUDED_KEYWORDS = [
-    'lyric video', 'lyrics', 'karaoke', 'instrumental', 'sped up',
-    'nightcore', '8d audio', 'audio only', 'official audio', 'visualizer',
-    'slowed', 'slowed reverb'
-];
-
-// Channel names that are essentially always a lyric-video/karaoke/hype
-// farm, whatever the video's own title says - checked as plain substrings
-// against the raw channel name (not the token-based matching above) since
-// these brands are routinely mashed together with no spaces at all, e.g.
-// "RockHype", "LyricsHD", "KaraokeCentral". Any hit here is a hard exclude,
-// same tier as MUSIC_VIDEO_EXCLUDED_KEYWORDS.
-const MUSIC_VIDEO_EXCLUDED_CHANNEL_SUBSTRINGS = [
-    'lyric', 'karaoke', 'nightcore', 'hype', 'trapnation', 'audio only'
-];
-
-function channelIsExcluded(channelTitle) {
-    const lower = (channelTitle || '').toLowerCase();
-    return MUSIC_VIDEO_EXCLUDED_CHANNEL_SUBSTRINGS.some(kw => lower.includes(kw));
-}
-
-function versionKeywordsIn(str) {
-    const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
-    return MUSIC_VIDEO_VERSION_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
-}
-
-function excludedKeywordsIn(str) {
-    const tokens = new Set(normalizeForMatch(str).split(' ').filter(Boolean));
-    return MUSIC_VIDEO_EXCLUDED_KEYWORDS.filter(kw => kw.split(' ').every(w => tokens.has(w)));
-}
-
-function scoreYouTubeCandidate(candidate, track) {
-    // Duration is a hard gate - if it's off by more than the tolerance,
-    // this isn't the right upload at all, no matter what the title says.
-    if (!candidate.durationSec || !track.durationMs) return { score: 0, reason: 'missing duration data' };
-    const expectedSec = track.durationMs / 1000;
-    const diff = Math.abs(candidate.durationSec - expectedSec) / expectedSec;
-    if (diff > MUSIC_VIDEO_DURATION_TOLERANCE) {
-        return { score: 0, reason: `duration off by ${Math.round(diff * 100)}% (candidate ${Math.round(candidate.durationSec)}s vs track ${Math.round(expectedSec)}s)` };
-    }
-
-    // Second hard gate - a lyric video/audio upload/karaoke track is
-    // rejected outright, not scored down, so it can never win out just by
-    // having a strong title match. Checked against the channel name too -
-    // this is the gate that actually catches most lyric-video uploads in
-    // practice, since a lot of them title the video plainly ("Artist -
-    // Song", no "Lyrics" disclaimer at all) and only give the game away in
-    // their channel branding.
-    const excluded = excludedKeywordsIn(candidate.title);
-    if (excluded.length > 0) {
-        return { score: 0, reason: `lyric/audio-only upload, not a music video (${excluded.join(', ')})` };
-    }
-    if (channelIsExcluded(candidate.channelTitle)) {
-        return { score: 0, reason: `channel "${candidate.channelTitle}" is a lyric/karaoke-style upload channel, not an official source` };
-    }
-
-    const expectedTitle = `${track.artist} ${track.title}`;
-    let score = titleSimilarity(candidate.title, expectedTitle) * 0.7;
-
-    // Penalize a version mismatch unless the track itself is that same
-    // version too (checked against the track's own title, so a "Live"
-    // request still favors "Live" candidates).
-    const candidateVersions = versionKeywordsIn(candidate.title);
-    const trackVersions = versionKeywordsIn(track.title);
-    const unwantedVersions = candidateVersions.filter(v => !trackVersions.includes(v));
-    if (unwantedVersions.length > 0) score -= 0.35;
-
-    // Duration closeness contributes a smaller amount on top of the pass/
-    // fail gate above - an exact-length match nudges score up further.
-    score += (1 - diff / MUSIC_VIDEO_DURATION_TOLERANCE) * 0.15;
-
-    // Channel authority: matching the artist, or reading as a label/VEVO
-    // channel, is a strong signal this is the real music video - and the
-    // absence of either is itself a real signal it's NOT, worth a
-    // meaningful penalty rather than just "no bonus". This is what keeps a
-    // well-titled fan upload with the right runtime from coasting through
-    // on title/duration alone the way "RockHype" or similar channels do -
-    // it now has to clear a much higher bar to still be picked.
-    const normChannel = normalizeForMatch(candidate.channelTitle);
-    const normArtist = normalizeForMatch(track.artist);
-    const channelMatchesArtist = !!normArtist && (normChannel === normArtist || normChannel.includes(normArtist) || normArtist.includes(normChannel));
-    const looksOfficial = /vevo|official|records/.test(normChannel);
-    if (channelMatchesArtist) {
-        score += 0.15;
-        if (looksOfficial) score += 0.05;
-    } else if (looksOfficial) {
-        score += 0.1;
-    } else {
-        score -= 0.35;
-    }
-
-    score = Math.max(0, Math.min(1, score));
-    return {
-        score,
-        reason: unwantedVersions.length > 0
-            ? `title/version mismatch (${unwantedVersions.join(', ')})`
-            : (!channelMatchesArtist && !looksOfficial ? `channel "${candidate.channelTitle}" doesn't read as the artist or a label/VEVO channel` : null)
-    };
-}
-
-function parseISO8601DurationToSeconds(iso) {
-    // e.g. "PT3M42S" -> 222. Only H/M/S components ever appear in YouTube's
-    // video content details.
-    const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso || '');
-    if (!match) return 0;
-    const [, h, m, s] = match;
-    return (parseInt(h || '0', 10) * 3600) + (parseInt(m || '0', 10) * 60) + parseInt(s || '0', 10);
-}
-
-// Two-step YouTube Data API lookup: search.list finds candidate videos,
-// videos.list then fills in duration (search results don't include it) and
-// confirms embeddability. One search call + one follow-up call per unique
-// track - results get cached by trackId afterward, so this only runs once
-// per song, keeping it well within a free-tier daily quota.
-async function fetchYouTubeCandidates(query) {
-    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=5&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
-    const searchRes = await fetch(searchUrl);
-    if (!searchRes.ok) throw new Error(`YouTube search failed: ${searchRes.status}`);
-    const searchData = await searchRes.json();
-    const ids = (searchData.items || []).map(it => it.id?.videoId).filter(Boolean);
-    if (ids.length === 0) return [];
-
-    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet,status&id=${ids.join(',')}&key=${YOUTUBE_API_KEY}`;
-    const detailsRes = await fetch(detailsUrl);
-    if (!detailsRes.ok) throw new Error(`YouTube video details failed: ${detailsRes.status}`);
-    const detailsData = await detailsRes.json();
-
-    return (detailsData.items || [])
-        .filter(v => v.status?.embeddable !== false)
-        .map(v => ({
-            videoId: v.id,
-            title: v.snippet?.title || '',
-            channelTitle: v.snippet?.channelTitle || '',
-            durationSec: parseISO8601DurationToSeconds(v.contentDetails?.duration)
-        }));
-}
-
-// Finds the best-scoring candidate for one track, trying the "official
-// video" query first and falling back to a plain query if that comes back
-// empty (a lot of tracks' official videos are just titled "Artist - Track").
-// excludeIds skips videos already reported by the Visuals Display as
-// failing to stay in sync for this track (see the /api/music-video/
-// sync-failed route) - they've been tried in practice and don't work,
-// so re-offering the same one next time this track comes up would just
-// repeat the same failure.
-async function findBestYouTubeMatch(track, excludeIds = new Set()) {
-    let candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title} official video`);
-    if (candidates.length === 0) {
-        candidates = await fetchYouTubeCandidates(`${track.artist} ${track.title}`);
-    }
-    if (excludeIds.size > 0) candidates = candidates.filter(c => !excludeIds.has(c.videoId));
-    let best = null;
-    for (const candidate of candidates) {
-        const { score, reason } = scoreYouTubeCandidate(candidate, track);
-        if (!best || score > best.score) best = { ...candidate, score, reason };
-    }
-    return best;
-}
-
-// Clears the "what should the Visuals Display show" readout back to
-// nothing - used whenever there's no current track to match against
-// (Spotify disconnected, nothing playing, etc), same spirit as resetting
-// cachedNowPlaying in those same situations below.
-function clearCachedMusicVideo(event) {
-    event.cachedMusicVideo = { trackId: null, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
-}
-
-// Resolves (and caches) the music video decision for one track, then
-// updates event.cachedMusicVideo so the Visuals Display's poll reflects
-// it. Fire-and-forget from syncNowPlayingForEvent - never awaited on the
-// main sync tick, so a slow/failed YouTube call never holds up the
-// now-playing cache the rest of the site depends on.
-async function resolveMusicVideoForTrack(event, track) {
-    event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: true, videoId: null, updatedAt: Date.now() };
-
-    if (!YOUTUBE_API_KEY) {
-        event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
-        return;
-    }
-
-    const cached = event.musicVideoMatches[track.trackId];
-    if (cached) {
-        event.cachedMusicVideo = { trackId: track.trackId, matched: cached.matched, pending: false, videoId: cached.videoId, updatedAt: Date.now() };
-        console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - using cached ${cached.matched ? `match ${cached.videoId} (score ${cached.score.toFixed(2)})` : 'no-match result'}`);
-        return;
-    }
-
-    try {
-        const excludeIds = new Set(event.musicVideoSyncFailures[track.trackId] || []);
-        const best = await findBestYouTubeMatch(track, excludeIds);
-        const matched = !!best && best.score >= MUSIC_VIDEO_MATCH_THRESHOLD;
-        const result = {
-            videoId: matched ? best.videoId : null,
-            score: best ? best.score : 0,
-            matched,
-            title: best ? best.title : null,
-            channel: best ? best.channelTitle : null,
-            reason: matched ? null : (best ? best.reason : 'no candidates found'),
-            checkedAt: Date.now()
-        };
-        event.musicVideoMatches[track.trackId] = result;
-        events.scheduleSave(event.slug);
-
-        // Only apply this result if the track is still the one playing -
-        // the search can take a second or two, and a short track could
-        // already have changed again by the time it resolves.
-        if (event.cachedNowPlaying.trackId === track.trackId) {
-            event.cachedMusicVideo = { trackId: track.trackId, matched, pending: false, videoId: result.videoId, updatedAt: Date.now() };
-        }
-
-        if (matched) {
-            console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - matched ${result.videoId} (score ${result.score.toFixed(2)})`);
-        } else {
-            console.log(`[MUSIC VIDEO] (${event.slug}) "${track.title}" - skipped, best score ${result.score.toFixed(2)} (${result.reason})`);
-        }
-    } catch (err) {
-        console.error(`[MUSIC VIDEO] (${event.slug}) Lookup failed for "${track.title}":`, err.message);
-        // Deliberately not cached - a transient failure (quota, network)
-        // gets another shot next time this track comes up, rather than
-        // being remembered forever as "no match".
-        if (event.cachedNowPlaying.trackId === track.trackId) {
-            event.cachedMusicVideo = { trackId: track.trackId, matched: false, pending: false, videoId: null, updatedAt: Date.now() };
-        }
-    }
-}
-
 // --- Auto-sync + now-playing cache (per event) ---
 // Two jobs share this one poll per event so we're not hitting Spotify twice a tick:
 //   1. Remove a request from the local queue the moment Spotify actually starts
@@ -3050,7 +2908,6 @@ async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
     if (!token) {
         event.cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
-        clearCachedMusicVideo(event);
         return;
     }
     try {
@@ -3075,7 +2932,6 @@ async function syncNowPlayingForEvent(event) {
         ]);
         if (res.status === 204 || res.status === 404) {
             event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
-            clearCachedMusicVideo(event);
             return;
         }
         if (!res.ok) return; // leave the last known cache in place on a transient error
@@ -3111,29 +2967,7 @@ async function syncNowPlayingForEvent(event) {
         };
 
         const nowPlayingId = item?.id;
-        if (!nowPlayingId) {
-            clearCachedMusicVideo(event);
-            return;
-        }
-
-        // Independent of the "already synced this track" gate below (which
-        // only guards the once-per-track queue-removal logic) - this also
-        // needs to catch the toggle being switched on mid-song for a track
-        // that's already playing, not just brand new tracks.
-        if (event.visualsConfigs.musicVideosEnabled) {
-            if (event.cachedMusicVideo.trackId !== nowPlayingId) {
-                resolveMusicVideoForTrack(event, {
-                    trackId: nowPlayingId,
-                    title: item.name,
-                    artist: (item.artists || []).map(a => a.name).join(', '),
-                    durationMs: item.duration_ms || 0
-                }).catch(err => console.error(`[MUSIC VIDEO] (${event.slug}) Unexpected error:`, err.message));
-            }
-        } else if (event.cachedMusicVideo.trackId !== null) {
-            clearCachedMusicVideo(event);
-        }
-
-        if (nowPlayingId === event.lastSyncedNowPlayingId) return;
+        if (!nowPlayingId || nowPlayingId === event.lastSyncedNowPlayingId) return;
         event.lastSyncedNowPlayingId = nowPlayingId;
 
         const trackIndex = event.activeQueue.findIndex(t => t.id === nowPlayingId);
@@ -3217,113 +3051,33 @@ app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
     res.json(req.event.cachedNowPlaying);
 });
 
-// Public (no admin auth) - the Visuals Display polls this to know whether
-// it should be showing a YouTube music video instead of ambient visuals
-// right now. Bundles the playback context (progress/duration/isPlaying)
-// used for the initial join-seek and drift correction alongside the match
-// decision itself, so the video overlay only needs the one poll rather
-// than racing this against a separate /api/now-playing call.
-app.get('/e/:slug/api/music-video', publicReadLimiter, (req, res) => {
-    const np = req.event.cachedNowPlaying;
-    const mv = req.event.cachedMusicVideo;
-    res.json({
-        enabled: !!req.event.visualsConfigs.musicVideosEnabled,
-        subtitlesEnabled: !!req.event.visualsConfigs.musicVideoSubtitlesEnabled,
-        trackId: mv.trackId,
-        matched: mv.matched,
-        pending: mv.pending,
-        videoId: mv.videoId,
-        connected: np.connected,
-        isPlaying: np.isPlaying,
-        progressMs: np.progressMs,
-        durationMs: np.durationMs,
-        updatedAt: np.updatedAt
-    });
-});
-
-// Public (no admin auth) - the Visuals Display calls this when a video it's
-// showing turns out not to actually track the Spotify audio (repeated large
-// drift even after seeking to correct it), or fails at real playback time
-// after passing the server-side embeddable check (region lock, owner
-// opt-out). Blacklists that specific videoId for that track so it's never
-// offered again on a repeat play, forces a fresh lookup next time, and
-// clears the live decision immediately so the display falls back to
-// ambient visuals within one poll rather than riding out a bad video.
-app.post('/e/:slug/api/music-video/sync-failed', publicActionLimiter, (req, res) => {
-    const event = req.event;
-    const { trackId, videoId } = req.body;
-    if (typeof trackId !== 'string' || !trackId || typeof videoId !== 'string' || !videoId) {
-        return res.status(400).json({ error: 'Missing trackId or videoId.' });
-    }
-    if (!event.musicVideoSyncFailures[trackId]) event.musicVideoSyncFailures[trackId] = [];
-    if (!event.musicVideoSyncFailures[trackId].includes(videoId)) {
-        event.musicVideoSyncFailures[trackId].push(videoId);
-    }
-    delete event.musicVideoMatches[trackId];
-    if (event.cachedMusicVideo.trackId === trackId) clearCachedMusicVideo(event);
-    events.scheduleSave(event.slug);
-    console.log(`[MUSIC VIDEO] (${event.slug}) Blacklisted ${videoId} for track ${trackId} after a reported sync failure.`);
-    res.json({ success: true });
-});
-
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
 // lane (kiosk, a standalone signage screen, etc.) polls this for "what
-// should be on screen right now". Resolves the active block's items into
-// full records here (photo/video items get their {url, filename} looked up;
-// queue/clock/ad items are already self-contained) so the display side
+// should be on screen right now". Resolves the active block's mediaIds
+// into full {id, url, filename, type} records here so the display side
 // never has to also fetch/hold the whole library just to look up a few
 // ids. Returns active:false whenever the scheduler is off or no ambient
 // block covers this moment - callers should hold whatever was last showing
 // rather than blank the screen on a brief gap.
 app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
     const event = req.event;
-    // Admin -> Settings -> Content overrides ride along with every reply
-    // from this route (regardless of scheduler/active state) since
-    // visuals.html polls this same endpoint to drive both the mute overlay
-    // and the forced Show Queue view.
-    const vc = event.visualsConfigs || {};
-    const visualsFlags = {
-        muted: !!(vc.muteVisuals || vc.muteAll),
-        showQueue: !!vc.showQueue
-    };
     if (!event.musicScheduler?.enabled) {
-        return res.json({ active: false, ...visualsFlags });
+        return res.json({ active: false });
     }
     const rule = getActiveAmbientRule(event);
     if (!rule) {
-        return res.json({ active: false, ...visualsFlags });
+        return res.json({ active: false });
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
-    const items = (rule.items || []).map(it => {
-        const shared = { transition: it.transition || 'fade', brightness: it.brightness || 100 };
-        if (it.type === 'photo' || it.type === 'video') {
-            const media = byId.get(it.mediaId);
-            if (!media) return null;
-            return {
-                id: it.id, type: it.type, url: media.url, filename: media.filename, durationSec: it.durationSec || 8,
-                fit: it.fit || 'cover', position: it.position || 'center',
-                ...(it.captionTitle ? { captionTitle: it.captionTitle } : {}),
-                ...(it.captionSubtitle ? { captionSubtitle: it.captionSubtitle } : {}),
-                ...shared
-            };
-        }
-        if (it.type === 'ad') {
-            return { id: it.id, type: 'ad', adText: it.adText || '', adQrUrl: it.adQrUrl || '', durationSec: it.durationSec || 8, ...shared };
-        }
-        if (it.type === 'custom') {
-            return { id: it.id, type: 'custom', text: it.text || '', durationSec: it.durationSec || 8, ...shared };
-        }
-        // 'queue' / 'clock' - rendered live from other endpoints, nothing to resolve
-        return { id: it.id, type: it.type, durationSec: it.durationSec || 8, ...shared };
-    }).filter(Boolean);
-    if (items.length === 0) {
-        return res.json({ active: false, ...visualsFlags });
+    const media = rule.mediaIds.map(id => byId.get(id)).filter(Boolean);
+    if (media.length === 0) {
+        return res.json({ active: false });
     }
     res.json({
         active: true,
         ruleId: rule.id,
-        items,
-        ...visualsFlags
+        photoDurationSec: rule.photoDurationSec || 8,
+        media
     });
 });
 
