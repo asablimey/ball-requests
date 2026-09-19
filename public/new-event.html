@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Start a New Event</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
 
     <style>
         :root {
@@ -146,7 +146,7 @@
         /* Plain floating attribution text, no box/badge - matches how
            Google Maps itself shows required credit: quiet grey text
            with no background, border, or pill shape sitting on the map. */
-        .leaflet-control-attribution {
+        .maplibregl-ctrl-attrib {
             background: none !important;
             box-shadow: none !important;
             color: rgba(255, 255, 255, 0.55) !important;
@@ -154,24 +154,138 @@
             padding: 0 4px !important;
             text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
         }
-        .leaflet-control-attribution a { color: rgba(255, 255, 255, 0.7) !important; }
-        .leaflet-container { border-radius: 8px; background: var(--card-bg); font-family: inherit; }
-        .leaflet-control-zoom a { background: var(--card-bg) !important; color: white !important; border-color: #333 !important; }
-        .leaflet-control-zoom a:hover { background: #2f2f2f !important; }
+        .maplibregl-ctrl-attrib a { color: rgba(255, 255, 255, 0.7) !important; }
+        .maplibregl-ctrl-attrib-button { display: none !important; }
+        .maplibregl-canvas { border-radius: 8px; }
 
-        /* Red teardrop pin for the draggable venue marker. */
-        .venue-pin-dot {
-            width: 16px; height: 16px; border-radius: 50% 50% 50% 0;
-            background: var(--red-action); transform: rotate(-45deg);
-            border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+        /* --- Account gate (login/signup) + account bar + My Events --- */
+        .auth-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+        .auth-tab {
+            flex: 1; background: var(--card-bg); border: 1px solid #333; color: #a7a7a7;
+            padding: 10px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 0.9rem;
         }
+        .auth-tab.active { color: white; border-color: var(--spotify-green); }
+        .auth-form { display: none; }
+        .auth-form.active { display: block; }
+        .link-btn {
+            background: none; border: none; color: var(--spotify-green); font-size: 0.82rem;
+            cursor: pointer; padding: 0; text-decoration: underline; margin-top: -6px; margin-bottom: 14px;
+        }
+        .account-bar {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 10px;
+            padding: 12px 16px; margin-bottom: 16px; font-size: 0.85rem; flex-wrap: wrap;
+        }
+        .account-bar .who { color: #a7a7a7; }
+        .account-bar .who strong { color: white; }
+        .account-bar-actions { display: flex; gap: 10px; }
+        .account-bar-actions button {
+            background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 6px;
+            padding: 6px 12px; font-size: 0.8rem; font-weight: 700; cursor: pointer;
+        }
+        .account-bar-actions button:hover { border-color: #555; }
+        .my-events-list { display: none; margin-bottom: 16px; }
+        .my-events-list.visible { display: block; }
+        .my-event-item {
+            display: flex; justify-content: space-between; align-items: center; gap: 10px;
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 10px;
+            padding: 12px 16px; margin-bottom: 10px;
+        }
+        .my-event-item .name { font-weight: 700; font-size: 0.95rem; }
+        .my-event-item .meta { color: #a7a7a7; font-size: 0.78rem; margin-top: 2px; }
+        .my-event-item a.btn-admin {
+            background: var(--card-bg); border: 1px solid #333; color: white; text-decoration: none;
+            border-radius: 6px; padding: 8px 14px; font-size: 0.82rem; font-weight: 700; white-space: nowrap;
+        }
+        .my-event-item a.btn-admin:hover { border-color: #555; }
+        #main-content { display: none; }
+
+        /* Fullscreen login/signup gate - same pattern as the master-admin
+           and per-event admin lock screens: blocks everything else on the
+           page until a session exists. */
+        #account-gate-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: var(--spotify-black); z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 20px; overflow-y: auto;
+        }
+        #account-gate-overlay .card { max-width: 380px; width: 100%; margin: 0; }
+        #account-gate-overlay h1 { font-size: 1.6rem; margin: 0 0 6px 0; text-align: center; }
+        #account-gate-overlay .subtitle { text-align: center; margin: 0 0 24px 0; }
     </style>
 </head>
 <body>
+    <div id="account-gate-overlay">
+        <h1>🎧 Song Request Station</h1>
+        <p class="subtitle">Every admin gets their own independent event - own queue, own settings, own Spotify connection.</p>
+
+        <!-- Shown only when logged out -->
+        <div class="card" id="account-gate">
+            <div class="auth-tabs">
+                <button type="button" class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Log In</button>
+                <button type="button" class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">Create Account</button>
+            </div>
+
+            <div class="auth-form active" id="form-login">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="login-username" autocapitalize="off" autocorrect="off">
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="login-password" onkeydown="if(event.key === 'Enter') doLogin()">
+                </div>
+                <button class="primary-btn" onclick="doLogin()">Log In</button>
+                <button type="button" class="link-btn" onclick="switchAuthTab('forgot')">Forgot password?</button>
+                <div class="error-msg" id="login-error"></div>
+            </div>
+
+            <div class="auth-form" id="form-signup">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="signup-username" autocapitalize="off" autocorrect="off" placeholder="3-30 characters, no spaces">
+                </div>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="signup-email" autocapitalize="off" autocorrect="off">
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="signup-password" placeholder="At least 8 characters" onkeydown="if(event.key === 'Enter') doSignup()">
+                </div>
+                <button class="primary-btn" onclick="doSignup()">Create Account</button>
+                <div class="error-msg" id="signup-error"></div>
+            </div>
+
+            <div class="auth-form" id="form-forgot">
+                <p class="subtitle" style="text-align:left; margin: 0 0 16px 0;">Enter the email on your account and we'll send a reset link.</p>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="forgot-email" onkeydown="if(event.key === 'Enter') doForgotPassword()">
+                </div>
+                <button class="primary-btn" onclick="doForgotPassword()">Send Reset Link</button>
+                <button type="button" class="link-btn" onclick="switchAuthTab('login')">Back to log in</button>
+                <div class="error-msg" id="forgot-error"></div>
+                <div class="availability ok" id="forgot-success" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="wrap">
         <h1>🎧 Song Request Station</h1>
         <p class="subtitle">Every admin gets their own independent event - own queue, own settings, own Spotify connection.</p>
 
+        <!-- Shown only when logged in -->
+        <div class="account-bar" id="account-bar" style="display:none;">
+            <div class="who">Logged in as <strong id="account-bar-username"></strong></div>
+            <div class="account-bar-actions">
+                <button type="button" onclick="toggleMyEvents()" id="my-events-toggle-btn">My Events</button>
+                <button type="button" onclick="doLogout()">Log Out</button>
+            </div>
+        </div>
+        <div class="my-events-list" id="my-events-list"></div>
+
+        <div id="main-content">
         <div class="card">
             <h2>Start a new event</h2>
             <div id="template-banner" style="display:none; background: var(--card-bg); border: 1px solid #333; border-radius: 6px; padding: 10px 14px; font-size: 0.82rem; color: var(--spotify-green); margin-bottom: 16px;">
@@ -212,14 +326,171 @@
                 <button onclick="goToEvent()">Go</button>
             </div>
         </div>
+        </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script>
-        // Free CARTO API key - get one in ~1 minute, no account needed,
-        // at https://carto.com/basemaps/apikey (5M free tile loads/month).
-        // Without a key CARTO stamps tiles with a "API key required" watermark.
-        const CARTO_API_KEY = 'cb1_3mzu_1_cfa8111e18df6a0e94198c4c';
+        // ============================================================
+        // Accounts: gate this whole page behind login/signup, then reveal
+        // the create-event form. The session itself is an HttpOnly cookie
+        // set by the server - nothing account-related is kept in
+        // localStorage/sessionStorage here, just this page's rendering state.
+        // ============================================================
+        function switchAuthTab(name) {
+            ['login', 'signup', 'forgot'].forEach(n => {
+                document.getElementById(`form-${n}`).classList.toggle('active', n === name);
+            });
+            document.getElementById('tab-login').classList.toggle('active', name === 'login');
+            document.getElementById('tab-signup').classList.toggle('active', name === 'signup');
+        }
+
+        function showLoggedOutState() {
+            document.getElementById('account-gate-overlay').style.display = 'flex';
+            document.getElementById('account-bar').style.display = 'none';
+            document.getElementById('my-events-list').classList.remove('visible');
+            document.getElementById('main-content').style.display = 'none';
+        }
+
+        function showLoggedInState(username) {
+            document.getElementById('account-gate-overlay').style.display = 'none';
+            document.getElementById('account-bar').style.display = 'flex';
+            document.getElementById('account-bar-username').textContent = username;
+            document.getElementById('main-content').style.display = 'block';
+        }
+
+        async function checkSession() {
+            try {
+                const res = await fetch('/api/account/me');
+                const data = await res.json();
+                if (data.loggedIn) showLoggedInState(data.username);
+                else showLoggedOutState();
+            } catch (err) {
+                showLoggedOutState();
+            }
+        }
+
+        async function doLogin() {
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            const errorEl = document.getElementById('login-error');
+            errorEl.style.display = 'none';
+            try {
+                const res = await fetch('/api/account/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    errorEl.textContent = data.error || 'Could not log in.';
+                    errorEl.style.display = 'block';
+                    return;
+                }
+                showLoggedInState(data.username);
+            } catch (err) {
+                errorEl.textContent = 'Could not reach the server. Try again.';
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function doSignup() {
+            const username = document.getElementById('signup-username').value.trim();
+            const email = document.getElementById('signup-email').value.trim();
+            const password = document.getElementById('signup-password').value;
+            const errorEl = document.getElementById('signup-error');
+            errorEl.style.display = 'none';
+            try {
+                const res = await fetch('/api/account/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    errorEl.textContent = data.error || 'Could not create account.';
+                    errorEl.style.display = 'block';
+                    return;
+                }
+                showLoggedInState(data.username);
+            } catch (err) {
+                errorEl.textContent = 'Could not reach the server. Try again.';
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function doForgotPassword() {
+            const email = document.getElementById('forgot-email').value.trim();
+            const errorEl = document.getElementById('forgot-error');
+            const successEl = document.getElementById('forgot-success');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+            try {
+                const res = await fetch('/api/account/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json();
+                successEl.textContent = data.message || 'If that email is registered, a reset link has been sent.';
+                successEl.style.display = 'block';
+            } catch (err) {
+                errorEl.textContent = 'Could not reach the server. Try again.';
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function doLogout() {
+            try {
+                await fetch('/api/account/logout', { method: 'POST' });
+            } catch (err) { /* logging out client-side regardless */ }
+            showLoggedOutState();
+        }
+
+        let myEventsLoaded = false;
+        async function toggleMyEvents() {
+            const list = document.getElementById('my-events-list');
+            const isVisible = list.classList.contains('visible');
+            if (isVisible) { list.classList.remove('visible'); return; }
+            list.classList.add('visible');
+            if (myEventsLoaded) return;
+            list.innerHTML = '<div class="subtitle">Loading...</div>';
+            try {
+                const res = await fetch('/api/account/my-events');
+                const data = await res.json();
+                renderMyEvents(data.events || []);
+                myEventsLoaded = true;
+            } catch (err) {
+                list.innerHTML = '<div class="error-msg" style="display:block;">Could not load your events.</div>';
+            }
+        }
+
+        function renderMyEvents(list) {
+            const container = document.getElementById('my-events-list');
+            if (list.length === 0) {
+                container.innerHTML = '<div class="subtitle" style="text-align:left; margin:0 0 16px 0;">You haven\'t created any events yet.</div>';
+                return;
+            }
+            container.innerHTML = list.map(ev => `
+                <div class="my-event-item">
+                    <div>
+                        <div class="name">${escapeHtmlLocal(ev.eventName || ev.slug)}</div>
+                        <div class="meta">${ev.venueName ? escapeHtmlLocal(ev.venueName) + ' &middot; ' : ''}${ev.requestsAllowed ? 'Requests open' : 'Requests off'}</div>
+                    </div>
+                    <a class="btn-admin" href="/e/${encodeURIComponent(ev.slug)}/admin">Open Admin</a>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtmlLocal(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        checkSession();
+
         const nameInput = document.getElementById('input-event-name');
         const venueNameInput = document.getElementById('input-venue-name');
 
@@ -253,9 +524,8 @@
         }
 
         // ============================================================
-        // Venue location picker - Leaflet + CARTO Positron tiles (plain
-        // DOM/canvas rendering, no WebGL - see the CARTO_API_KEY note
-        // above) + OpenStreetMap Nominatim for search.
+        // Venue location picker - MapLibre GL + your custom MapTiler
+        // style + OpenStreetMap Nominatim for search.
         //
         // Search gets the admin close; the draggable marker lets them
         // fine-tune the exact spot (a geocoded address often lands
@@ -274,24 +544,16 @@
         // this saves almost everyone a manual pan/zoom before they can even
         // start searching. Searching (or an address autofilling) flies the
         // map to the actual result regardless.
-        const map = L.map('location-map', {
-            scrollWheelZoom: false,
-            zoomControl: true,
-            attributionControl: true
-        }).setView([-41.2, 172.8], 4.6); // Leaflet takes [lat, lng], not [lng, lat]
-
-        L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 20
-        }).addTo(map);
-
-        const venuePinIcon = L.divIcon({
-            className: '',
-            html: '<div class="venue-pin-dot"></div>',
-            iconSize: [16, 16],
-            iconAnchor: [8, 14]
+        const map = new maplibregl.Map({
+            container: 'location-map',
+            style: 'https://api.maptiler.com/maps/01a05fbf-a06a-7765-89f4-0dfb2a61f1c9/style.json?key=ptzMWbAi73a8Qnb2bpOZ',
+            center: [172.8, -41.2],
+            zoom: 4.6,
+            scrollZoom: false,
+            attributionControl: false
         });
+        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+        map.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
 
         let marker = null;
 
@@ -299,16 +561,18 @@
             selectedLat = lat;
             selectedLng = lng;
             if (marker) {
-                marker.setLatLng([lat, lng]);
+                marker.setLngLat([lng, lat]);
             } else {
-                marker = L.marker([lat, lng], { draggable: true, icon: venuePinIcon }).addTo(map);
+                marker = new maplibregl.Marker({ draggable: true, color: '#e91429' })
+                    .setLngLat([lng, lat])
+                    .addTo(map);
                 marker.on('dragend', () => {
-                    const pos = marker.getLatLng();
+                    const pos = marker.getLngLat();
                     selectedLat = pos.lat;
                     selectedLng = pos.lng;
                 });
             }
-            if (panZoom) map.flyTo([lat, lng], 16);
+            if (panZoom) map.flyTo({ center: [lng, lat], zoom: 16 });
             clearLocationBtn.style.display = 'inline-block';
         }
 
@@ -318,10 +582,10 @@
             selectedVenueName = '';
             locationSearchInput.value = '';
             if (marker) {
-                map.removeLayer(marker);
+                marker.remove();
                 marker = null;
             }
-            map.flyTo([-41.2, 172.8], 4.6);
+            map.flyTo({ center: [172.8, -41.2], zoom: 4.6 });
             clearLocationBtn.style.display = 'none';
         }
 
