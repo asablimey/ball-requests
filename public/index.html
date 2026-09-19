@@ -282,6 +282,16 @@
         .credit-badge.out-of-range .credit-badge-pin-icon {
             display: block;
         }
+        /* The yellow pin is a shortcut to the venue map, so it only behaves
+           like a button while it's showing. */
+        .credit-badge.out-of-range {
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: filter 0.15s ease, transform 0.1s ease;
+        }
+        .credit-badge.out-of-range:hover { filter: brightness(1.08); }
+        .credit-badge.out-of-range:active { transform: scale(0.94); }
+        .credit-badge.out-of-range:focus-visible { outline: 2px solid white; outline-offset: 2px; }
 
         /* Spotify attribution now lives inline under the title (see
            .spotify-attribution-inline above) - required whenever we display
@@ -1014,7 +1024,7 @@
                         <span id="connect-spotify-label">Connect Spotify</span>
                     </button>
                     <div class="credit-block">
-                        <div id="credits-status" class="credit-badge">
+                        <div id="credits-status" class="credit-badge" onclick="onCreditBadgeClick()" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onCreditBadgeClick(); }">
                             <div id="credit-badge-number" class="credit-badge-number">--</div>
                             <div id="credit-badge-label" class="credit-badge-label">Credits</div>
                             <!-- Shown instead of the number/label (see .out-of-range in
@@ -1262,9 +1272,9 @@
         }
 
         // --- Change Venue screen ---
-        function openVenueScreen() {
+        function openVenueScreen(tab) {
             document.getElementById('venue-screen').classList.add('is-visible');
-            switchVenueTab(activeVenueTab);
+            switchVenueTab(tab === 'map' || tab === 'list' ? tab : activeVenueTab);
         }
         function closeVenueScreen() {
             document.getElementById('venue-screen').classList.remove('is-visible');
@@ -1551,7 +1561,28 @@
         // untouched, CSS just hides them while this class is present.
         function updateLocationCreditState() {
             const badge = document.getElementById('credits-status');
-            if (badge) badge.classList.toggle('out-of-range', outOfGeofenceRange);
+            if (!badge) return;
+            badge.classList.toggle('out-of-range', outOfGeofenceRange);
+            // Only exposed as a button to keyboard/screen-reader users while
+            // it's actually the yellow pin.
+            if (outOfGeofenceRange) {
+                badge.setAttribute('role', 'button');
+                badge.setAttribute('tabindex', '0');
+                badge.setAttribute('aria-label', "Not at the venue - open the venue map");
+            } else {
+                badge.removeAttribute('role');
+                badge.removeAttribute('tabindex');
+                badge.removeAttribute('aria-label');
+            }
+        }
+
+        // Tapping the yellow pin jumps straight to the Map tab of the
+        // Change Venue screen. Does nothing while the badge is showing
+        // credits.
+        function onCreditBadgeClick() {
+            const badge = document.getElementById('credits-status');
+            if (!badge || !badge.classList.contains('out-of-range')) return;
+            openVenueScreen('map');
         }
 
         if (!localStorage.getItem('voterSignatureToken')) {
