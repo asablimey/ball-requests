@@ -89,6 +89,14 @@
         .btn-close:disabled { opacity: 0.5; cursor: default; }
 
         .empty-state { text-align: center; color: #a7a7a7; padding: 60px 20px; font-size: 0.95rem; }
+        .account-recovery-panel {
+            background: var(--panel-bg); border: 1px solid #282828; border-radius: 12px;
+            padding: 20px; margin-top: 24px;
+        }
+        .account-recovery-panel h2 { margin: 0 0 8px 0; font-size: 1.05rem; }
+        .account-recovery-row { display: flex; gap: 10px; }
+        .account-recovery-row input { flex: 1; }
+        .account-recovery-row button { flex-shrink: 0; }
         .toast {
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: var(--card-bg); border: 1px solid #333; color: white;
@@ -120,6 +128,15 @@
             <button class="refresh-btn" onclick="loadEvents()">↻ Refresh</button>
         </div>
         <div id="events-list"></div>
+
+        <div class="account-recovery-panel">
+            <h2>Account Recovery</h2>
+            <p class="subtitle" style="margin: 0 0 14px 0;">Generates a brand new password for a Song Request Station account (not an event) - use this if someone's locked out and email reset isn't working. Their existing events, and every event's own password, are untouched.</p>
+            <div class="account-recovery-row">
+                <input type="text" id="recovery-username" class="lock-input" style="text-align:left; margin-bottom:0;" placeholder="Username" autocapitalize="off" autocorrect="off">
+                <button class="btn btn-admin" onclick="resetAccountPassword()">Reset Account Password</button>
+            </div>
+        </div>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -225,6 +242,30 @@
                     </div>
                 `;
             }).join('');
+        }
+
+        async function resetAccountPassword() {
+            const usernameInput = document.getElementById('recovery-username');
+            const username = usernameInput.value.trim();
+            if (!username) return;
+            const confirmed = confirm(`Generate a brand new password for the account "${username}"?\n\nThis doesn't touch any event they own, its queue, history, settings, or Spotify connection - only the password they use to log in at /new-event.html. The old password stops working immediately.`);
+            if (!confirmed) return;
+
+            try {
+                const res = await fetch(`/api/master/users/${encodeURIComponent(username)}/reset-password`, {
+                    method: 'POST',
+                    headers: { 'x-admin-password': masterPassword }
+                });
+                const data = await res.json();
+                if (res.ok && data.newPassword) {
+                    alert(`New password for account "${username}":\n\n${data.newPassword}\n\nCopy this now - it won't be shown again. Pass it along to them.`);
+                    usernameInput.value = '';
+                } else {
+                    showToast(data.error || 'Could not find or reset that account.', 'error');
+                }
+            } catch (e) {
+                showToast('Could not reach the server. Try again.', 'error');
+            }
         }
 
         async function resetPassword(slug, eventName) {
