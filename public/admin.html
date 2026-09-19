@@ -347,6 +347,19 @@
             overflow-y: auto;
         }
         .sidebar-panel.is-visible { transform: translateX(0); }
+        .sidebar-account-footer {
+            margin-top: auto; padding: 16px 20px; border-top: 1px solid #282828;
+            display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem; flex-shrink: 0;
+        }
+        .sidebar-account-status { color: #a7a7a7; }
+        .sidebar-account-status strong { color: white; }
+        .sidebar-account-link { color: var(--spotify-green, #1DB954); text-decoration: none; font-weight: 600; }
+        .sidebar-account-link:hover { text-decoration: underline; }
+        .sidebar-account-logout {
+            background: var(--card-bg, #242424); border: 1px solid #333; color: white;
+            border-radius: 6px; padding: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+        }
+        .sidebar-account-logout:hover { border-color: #555; }
         .sidebar-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 20px; border-bottom: 1px solid #282828; flex-shrink: 0;
@@ -854,6 +867,17 @@
         <button type="button" id="sidebar-nav-stats" class="sidebar-nav-item" onclick="switchTab('stats')">Stats</button>
         <button type="button" id="sidebar-nav-blocked" class="sidebar-nav-item" onclick="switchTab('blocked')">Blocked</button>
         <button type="button" id="sidebar-nav-scheduler" class="sidebar-nav-item" onclick="openSchedulerTab()">Music Scheduler &#8599;</button>
+
+        <!-- Account status - this is your Song Request Station account
+             session (site-wide, separate from this event's admin password
+             above). Logging out here doesn't lock you out of this admin
+             page; it only ends your account session used for creating
+             events and viewing My Events. -->
+        <div class="sidebar-account-footer" id="sidebar-account-footer">
+            <div class="sidebar-account-status" id="sidebar-account-status">...</div>
+            <a class="sidebar-account-link" href="/new-event.html">My Events</a>
+            <button type="button" class="sidebar-account-logout" id="sidebar-account-logout-btn" onclick="accountLogout()" style="display:none;">Log Out</button>
+        </div>
     </div>
 
     <div class="header">
@@ -977,9 +1001,6 @@
                     </button>
                     <button type="button" id="settings-nav-kiosk" class="settings-nav-item" onclick="switchSettingsCategory('kiosk')">
                         Kiosk
-                    </button>
-                    <button type="button" id="settings-nav-content" class="settings-nav-item" onclick="switchSettingsCategory('content')">
-                        Content
                     </button>
                     <button type="button" id="settings-nav-danger" class="settings-nav-item danger-nav" onclick="switchSettingsCategory('danger')">
                         Danger Zone
@@ -1187,9 +1208,7 @@
                                 <button class="save-config-btn" onclick="saveKioskConfig()">Update Kiosk Rules</button>
                             </div>
                         </div>
-                    </div>
 
-                    <div id="settings-category-content" class="settings-category-panel">
                         <div class="settings-card">
                             <div class="settings-section-label">Visuals Display (visuals.html)</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
@@ -1200,45 +1219,6 @@
                             <div class="control-bar">
                                 <button class="toggle-btn neutral-status" onclick="openVisualsPage()">Open Visuals Display</button>
                             </div>
-                        </div>
-
-                        <div class="settings-card">
-                            <div class="settings-section-label">Screen Controls</div>
-                            <p class="settings-card-hint" style="margin-top: 0;">
-                                Quick overrides for whatever's currently on the venue screen - handy for a speech,
-                                an announcement, or any moment you need the room's attention off the visuals.
-                            </p>
-                            <div class="control-bar">
-                                <button id="toggle-mute-visuals" class="toggle-btn closed-status" onclick="toggleMuteVisuals()">Mute Visuals: OFF</button>
-                                <button id="toggle-mute-all" class="toggle-btn closed-status" onclick="toggleMuteAll()">Mute All: OFF</button>
-                                <button id="toggle-show-queue" class="toggle-btn closed-status" onclick="toggleShowQueue()">Show Queue: OFF</button>
-                            </div>
-                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                                <strong>Mute Visuals</strong> turns the visuals display fully black. <strong>Mute All</strong> does
-                                the same and also pauses playback (resuming it when switched back off). <strong>Show Queue</strong>
-                                pins the Now Playing + Up Next board on screen, overriding any scheduled Ambient Visuals content,
-                                until switched off.
-                            </p>
-                        </div>
-
-                        <div class="settings-card">
-                            <div class="settings-section-label">Music Videos</div>
-                            <p class="settings-card-hint" style="margin-top: 0;">
-                                When a song plays, automatically find its official YouTube music video and show it
-                                (muted, no controls) on the Visuals Display in place of the Ambient Visuals lane. Only
-                                original music videos are used - lyric videos, karaoke tracks, and audio-only uploads
-                                are never shown. If no confident match is found, or the video turns out not to actually
-                                stay in sync with the Spotify audio once it's playing, the ambient visuals just take
-                                back over as usual.
-                            </p>
-                            <div class="control-bar">
-                                <button id="toggle-music-videos" class="toggle-btn closed-status" onclick="toggleMusicVideos()">Music Videos: OFF</button>
-                                <button id="toggle-music-video-subtitles" class="toggle-btn closed-status" onclick="toggleMusicVideoSubtitles()">Subtitles: OFF</button>
-                            </div>
-                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
-                                <strong>Subtitles</strong> turns on YouTube's caption track for whatever video is
-                                currently showing, when that video has one available.
-                            </p>
                         </div>
                     </div>
 
@@ -1370,11 +1350,6 @@
         let kioskRequestsAllowed = true;
         let kioskSpotifyEnabled = false;
         let kioskDisplayOnlyMode = false;
-        let visualsMuted = false;
-        let visualsMuteAll = false;
-        let visualsShowQueue = false;
-        let musicVideosEnabled = false;
-        let musicVideoSubtitlesEnabled = false;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1436,7 +1411,7 @@
             window.open(eventUrl('/admin/scheduler'), '_blank');
         }
 
-        const SETTINGS_CATEGORIES = ['general', 'access', 'location', 'spotify', 'kiosk', 'content', 'danger'];
+        const SETTINGS_CATEGORIES = ['general', 'access', 'location', 'spotify', 'kiosk', 'danger'];
         function switchSettingsCategory(category) {
             SETTINGS_CATEGORIES.forEach(name => {
                 const isActive = name === category;
@@ -1846,56 +1821,6 @@ async function verifyPassword() {
             updateDashboard();
         }
 
-        async function toggleMuteVisuals() {
-            if (!isAuthorized) return;
-            await fetch(eventUrl('/api/admin/visuals/toggle-mute'), {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !visualsMuted })
-            });
-            updateDashboard();
-        }
-
-        async function toggleMuteAll() {
-            if (!isAuthorized) return;
-            await fetch(eventUrl('/api/admin/visuals/toggle-mute-all'), {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !visualsMuteAll })
-            });
-            updateDashboard();
-        }
-
-        async function toggleShowQueue() {
-            if (!isAuthorized) return;
-            await fetch(eventUrl('/api/admin/visuals/toggle-show-queue'), {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !visualsShowQueue })
-            });
-            updateDashboard();
-        }
-
-        async function toggleMusicVideos() {
-            if (!isAuthorized) return;
-            await fetch(eventUrl('/api/admin/visuals/toggle-music-videos'), {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !musicVideosEnabled })
-            });
-            updateDashboard();
-        }
-
-        async function toggleMusicVideoSubtitles() {
-            if (!isAuthorized) return;
-            await fetch(eventUrl('/api/admin/visuals/toggle-music-video-subtitles'), {
-                method: 'POST',
-                headers: adminHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ enabled: !musicVideoSubtitlesEnabled })
-            });
-            updateDashboard();
-        }
-
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2204,33 +2129,6 @@ async function verifyPassword() {
                     if (document.activeElement !== document.getElementById('input-kiosk-countdown')) {
                         document.getElementById('input-kiosk-countdown').value = data.kiosk.countdownLength;
                     }
-                }
-
-                if (data.visuals) {
-                    const muteVisualsBtn = document.getElementById('toggle-mute-visuals');
-                    visualsMuted = !!data.visuals.muteVisuals;
-                    muteVisualsBtn.innerText = visualsMuted ? "Mute Visuals: ON" : "Mute Visuals: OFF";
-                    muteVisualsBtn.className = visualsMuted ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    const muteAllBtn = document.getElementById('toggle-mute-all');
-                    visualsMuteAll = !!data.visuals.muteAll;
-                    muteAllBtn.innerText = visualsMuteAll ? "Mute All: ON" : "Mute All: OFF";
-                    muteAllBtn.className = visualsMuteAll ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    const showQueueBtn = document.getElementById('toggle-show-queue');
-                    visualsShowQueue = !!data.visuals.showQueue;
-                    showQueueBtn.innerText = visualsShowQueue ? "Show Queue: ON" : "Show Queue: OFF";
-                    showQueueBtn.className = visualsShowQueue ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    const musicVideosBtn = document.getElementById('toggle-music-videos');
-                    musicVideosEnabled = !!data.visuals.musicVideosEnabled;
-                    musicVideosBtn.innerText = musicVideosEnabled ? "Music Videos: ON" : "Music Videos: OFF";
-                    musicVideosBtn.className = musicVideosEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
-
-                    const musicVideoSubtitlesBtn = document.getElementById('toggle-music-video-subtitles');
-                    musicVideoSubtitlesEnabled = !!data.visuals.musicVideoSubtitlesEnabled;
-                    musicVideoSubtitlesBtn.innerText = musicVideoSubtitlesEnabled ? "Subtitles: ON" : "Subtitles: OFF";
-                    musicVideoSubtitlesBtn.className = musicVideoSubtitlesEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
                 }
 
                 if (!filtersInitialized) {
@@ -2775,11 +2673,44 @@ async function verifyPassword() {
             localStorage.setItem('adminHintsOn', hintsOn ? '1' : '0');
         }
 
+        // Account status in the sidebar - this is the site-wide Song Request
+        // Station account session (see new-event.html), entirely separate
+        // from this event's own admin password lock above. Logging out
+        // here only ends the account session; it doesn't re-lock this
+        // admin page (that's controlled by the `adminPassword` variable,
+        // which only ever lives in this tab and clears on refresh).
+        async function refreshAccountFooter() {
+            const statusEl = document.getElementById('sidebar-account-status');
+            const logoutBtn = document.getElementById('sidebar-account-logout-btn');
+            try {
+                const res = await fetch('/api/account/me');
+                const data = await res.json();
+                if (data.loggedIn) {
+                    statusEl.innerHTML = `Logged in as <strong>${escapeHtml(data.username)}</strong>`;
+                    logoutBtn.style.display = 'block';
+                } else {
+                    statusEl.innerHTML = '<a class="sidebar-account-link" href="/new-event.html">Log in</a> to create events';
+                    logoutBtn.style.display = 'none';
+                }
+            } catch (err) {
+                statusEl.textContent = '';
+                logoutBtn.style.display = 'none';
+            }
+        }
+
+        async function accountLogout() {
+            try {
+                await fetch('/api/account/logout', { method: 'POST' });
+            } catch (err) { /* proceed regardless */ }
+            refreshAccountFooter();
+        }
+
         window.onload = () => {
             document.getElementById('password-input').focus();
             const savedHints = localStorage.getItem('adminHintsOn');
             // Default to hints visible if nothing saved yet.
             applyHintsVisibility(savedHints === null ? true : savedHints === '1');
+            refreshAccountFooter();
         };
 
         setInterval(updateDashboard, 3000);
