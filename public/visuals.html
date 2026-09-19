@@ -65,10 +65,9 @@
 
         .amb-queue {
             position: absolute; inset: 0; display: flex; flex-direction: column;
-            color: white; padding: 40px 56px; background: var(--spotify-black);
+            color: white; padding: clamp(20px, 4.5vh, 40px) clamp(24px, 4vw, 56px); background: var(--spotify-black);
             overflow: hidden; box-sizing: border-box;
         }
-        .amb-queue .qv-header { text-align: center; margin-bottom: 24px; }
 
         .amb-ad {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -83,26 +82,27 @@
         /* ---------- Queue view: fallback "up next" board ---------- */
         #queue-view {
             position: fixed; inset: 0; display: none; flex-direction: column;
-            color: white; padding: 40px 56px; box-sizing: border-box; overflow: hidden;
+            color: white; padding: clamp(20px, 4.5vh, 40px) clamp(24px, 4vw, 56px); box-sizing: border-box; overflow: hidden;
         }
         #queue-view.is-visible { display: flex; }
-        .qv-header { text-align: center; margin-bottom: 28px; }
+        .qv-header { text-align: center; margin-bottom: clamp(12px, 2.5vh, 28px); flex-shrink: 0; }
         .qv-event-name {
             font-family: 'Khula', sans-serif; font-weight: 700;
-            font-size: 2.6rem; margin: 0; letter-spacing: -0.5px;
+            font-size: clamp(1.6rem, 4.5vh, 2.6rem); margin: 0; letter-spacing: -0.5px;
         }
         .qv-venue-name { color: #a7a7a7; font-size: 1.1rem; margin-top: 6px; }
 
         .qv-now-playing {
-            display: flex; align-items: center; gap: 24px;
+            display: flex; align-items: center; gap: clamp(14px, 2vw, 24px);
             background: var(--panel-bg); border: 1px solid #282828; border-radius: 18px;
-            padding: 24px 28px; margin-bottom: 32px;
-            overflow: hidden; min-width: 0; max-width: 100%; box-sizing: border-box;
+            padding: clamp(14px, 2.4vh, 24px) clamp(18px, 2.4vw, 28px); margin-bottom: clamp(14px, 2.8vh, 32px);
+            overflow: hidden; min-width: 0; max-width: 100%; box-sizing: border-box; flex-shrink: 0;
         }
         .qv-artwork {
             display: block;
-            width: 110px; height: 110px; max-width: 110px; max-height: 110px;
-            flex: 0 0 110px; border-radius: 10px; object-fit: cover;
+            width: clamp(64px, 12vh, 110px); height: clamp(64px, 12vh, 110px);
+            max-width: clamp(64px, 12vh, 110px); max-height: clamp(64px, 12vh, 110px);
+            flex: 0 0 clamp(64px, 12vh, 110px); border-radius: 10px; object-fit: cover;
             background: var(--card-bg);
         }
         .qv-np-text { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
@@ -120,33 +120,36 @@
         .qv-live-dot.is-paused { animation: none; opacity: 0.3; }
         @keyframes qv-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
         .qv-np-title {
-            font-size: 1.7rem; font-weight: 700; margin: 0 0 4px;
+            font-size: clamp(1.2rem, 3vh, 1.7rem); font-weight: 700; margin: 0 0 4px;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .qv-np-artist {
-            color: #a7a7a7; font-size: 1.15rem; margin: 0;
+            color: #a7a7a7; font-size: clamp(0.95rem, 2.2vh, 1.15rem); margin: 0;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .qv-progress-track {
-            width: 100%; height: 5px; background: #333; border-radius: 3px; margin-top: 14px; overflow: hidden;
+            width: 100%; height: 5px; background: #333; border-radius: 3px; margin-top: clamp(8px, 1.6vh, 14px); overflow: hidden;
         }
         .qv-progress-fill { height: 100%; background: var(--spotify-green); width: 0%; }
 
         .qv-upnext-label {
             font-family: 'Khula', sans-serif; font-size: 1.2rem; font-weight: 700;
-            color: #a7a7a7; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 16px;
+            color: #a7a7a7; text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 clamp(8px, 1.6vh, 16px); flex-shrink: 0;
         }
-        .qv-list { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+        /* position:relative + min-height:0 let fitQueueRows() measure each
+           row against the list's real height; rows never shrink, so
+           whatever doesn't fit is hidden whole instead of half-cut. */
+        .qv-list { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: clamp(8px, 1.2vh, 12px); }
         .qv-row {
-            display: flex; align-items: center; gap: 18px;
+            display: flex; align-items: center; gap: 18px; flex-shrink: 0;
             background: var(--panel-bg); border: 1px solid #282828; border-radius: 12px;
-            padding: 14px 18px;
+            padding: clamp(8px, 1.4vh, 14px) 18px;
         }
         .qv-row-rank {
             font-family: 'Khula', sans-serif; font-size: 1.4rem; font-weight: 700;
             color: #555; width: 34px; text-align: center; flex-shrink: 0;
         }
-        .qv-row img { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--card-bg); }
+        .qv-row img, .qv-row-art { width: clamp(40px, 6vh, 56px); height: clamp(40px, 6vh, 56px); border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--card-bg); }
         .qv-row-text { flex: 1; min-width: 0; }
         .qv-row-title { font-size: 1.15rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .qv-row-artist { color: #a7a7a7; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -250,6 +253,153 @@
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
+
+        function safeImageUrl(url) {
+            return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : '';
+        }
+
+        /* =========================================================
+           Shared "Now Playing" progress bar
+           The old bars measured elapsed time from when THIS page received
+           the reading, but the reading itself was already up to a few
+           seconds old (it's whatever the server last got from Spotify).
+           So every 4s poll the bar was re-based onto a differently-stale
+           number and visibly jumped backwards/forwards. This tracker:
+             - back-dates each reading using the server's own capture
+               time (updatedAt) when the two clocks plausibly agree,
+             - keeps counting through small disagreements instead of
+               re-basing on every poll (only real seeks / track changes /
+               play-pause snap),
+             - owns exactly one timer, which dispose() always clears, so
+               a torn-down widget can never keep painting a bar that a
+               newer copy of the widget is also painting.
+           ========================================================= */
+        const PROGRESS_MAX_PLAUSIBLE_AGE_MS = 15000;
+        const PROGRESS_FORWARD_SNAP_MS = 600;
+        const PROGRESS_BACK_SNAP_CORRECTED_MS = 1500;
+        const PROGRESS_BACK_SNAP_UNCORRECTED_MS = 6000;
+
+        function makeProgressTracker(getFillEl) {
+            let s = null;
+            let timer = null;
+
+            const currentMs = () => {
+                if (!s) return 0;
+                const ms = s.baseMs + (s.isPlaying ? Date.now() - s.baseAt : 0);
+                return Math.max(0, s.durationMs ? Math.min(ms, s.durationMs) : ms);
+            };
+            const paint = () => {
+                const el = getFillEl();
+                if (!el) return;
+                const pct = s && s.durationMs ? (currentMs() / s.durationMs) * 100 : 0;
+                el.style.width = pct.toFixed(2) + '%';
+            };
+            const ensureTimer = () => { if (!timer) timer = setInterval(paint, 250); };
+            const stopTimer = () => { if (timer) { clearInterval(timer); timer = null; } };
+
+            return {
+                update(np) {
+                    const now = Date.now();
+                    const age = np.isPlaying && typeof np.updatedAt === 'number' ? now - np.updatedAt : 0;
+                    const corrected = age >= 0 && age <= PROGRESS_MAX_PLAUSIBLE_AGE_MS && np.isPlaying;
+                    const estimate = (np.progressMs || 0) + (corrected ? age : 0);
+                    const next = { trackId: np.trackId || null, durationMs: np.durationMs || 0, isPlaying: !!np.isPlaying };
+
+                    const sameTrack = s && next.trackId && s.trackId === next.trackId;
+                    if (sameTrack && s.isPlaying && next.isPlaying) {
+                        const diff = estimate - currentMs();
+                        const backLimit = corrected ? PROGRESS_BACK_SNAP_CORRECTED_MS : PROGRESS_BACK_SNAP_UNCORRECTED_MS;
+                        if (diff > -backLimit && diff <= PROGRESS_FORWARD_SNAP_MS) {
+                            s.durationMs = next.durationMs; // close enough - keep counting undisturbed
+                            ensureTimer();
+                            return;
+                        }
+                    }
+                    s = { ...next, baseMs: estimate, baseAt: now };
+                    paint();
+                    ensureTimer();
+                },
+                clear() {
+                    stopTimer();
+                    s = null;
+                    paint();
+                },
+                dispose() {
+                    stopTimer();
+                    s = null;
+                }
+            };
+        }
+
+        /* =========================================================
+           Shared "Up Next" list
+           Guest requests come first (with their net votes), followed by
+           whatever Spotify has lined up after them - the same merge the
+           guest page and kiosk do. Before, only guest requests were
+           shown, so any time nobody had requested anything the board
+           read "No requests queued" even with a full Spotify queue.
+           ========================================================= */
+        const QUEUE_MAX_ROWS = 12;
+
+        function buildQueueRows(requests, upcoming) {
+            const reqs = (requests || []).map(r => ({ ...r, isRequest: true }));
+            const reqIds = new Set(reqs.map(r => r.id));
+            const extra = (upcoming || []).filter(t => t && !reqIds.has(t.id)).map(t => ({ ...t, isRequest: false }));
+            return [...reqs, ...extra].slice(0, QUEUE_MAX_ROWS);
+        }
+
+        function queueRowHtml(song, idx) {
+            const art = safeImageUrl(song.artwork);
+            let votes = '';
+            if (song.isRequest) {
+                const net = (song.ups || 0) - (song.downs || 0);
+                votes = `<div class="qv-row-votes">${net > 0 ? '+' : ''}${net}</div>`;
+            }
+            return `
+                <div class="qv-row">
+                    <div class="qv-row-rank">${idx + 1}</div>
+                    ${art ? `<img src="${escapeHtml(art)}" alt="">` : '<div class="qv-row-art"></div>'}
+                    <div class="qv-row-text">
+                        <div class="qv-row-title">${escapeHtml(song.title)}</div>
+                        <div class="qv-row-artist">${escapeHtml(song.artist)}</div>
+                    </div>
+                    ${votes}
+                </div>`;
+        }
+
+        // Hides any row that wouldn't fully fit, so the list never ends on
+        // a half-cut row. Cheap enough to re-run on resize / view change.
+        function fitQueueRows(listEl) {
+            if (!listEl) return;
+            const rows = [...listEl.querySelectorAll('.qv-row')];
+            rows.forEach(r => { r.style.display = ''; });
+            const limit = listEl.clientHeight;
+            if (!limit) return;
+            let cut = false;
+            rows.forEach(r => {
+                if (cut || r.offsetTop + r.offsetHeight > limit + 1) { r.style.display = 'none'; cut = true; }
+            });
+        }
+        function refitAllQueueLists() {
+            document.querySelectorAll('.qv-list').forEach(fitQueueRows);
+        }
+        window.addEventListener('resize', refitAllQueueLists);
+
+        // Only touches the DOM when the list actually changed - rebuilding
+        // identical rows every poll made every artwork reload and flash.
+        function applyQueueList(listEl, requests, upcoming) {
+            if (!listEl) return;
+            const rows = buildQueueRows(requests, upcoming);
+            const sig = rows.map(r => [r.id, r.title, r.artist, r.ups, r.downs, r.isRequest ? 1 : 0].join('|')).join(';');
+            if (listEl.dataset.sig !== sig) {
+                listEl.dataset.sig = sig;
+                listEl.innerHTML = rows.length === 0
+                    ? '<div class="qv-empty">Nothing queued right now</div>'
+                    : rows.map(queueRowHtml).join('');
+            }
+            fitQueueRows(listEl);
+        }
+
         /* =========================================================
            Ambient Visuals slideshow
            - Polls /api/ambient-visuals. When active, cycles through the
@@ -293,6 +443,7 @@
             document.getElementById('ambient-view').classList.toggle('is-visible', name === 'ambient');
             document.getElementById('queue-view').classList.toggle('is-visible', name === 'queue');
             document.getElementById('video-view').classList.toggle('is-visible', name === 'video');
+            requestAnimationFrame(refitAllQueueLists);
         }
 
         function clearAmbientAdvanceTimer() {
@@ -318,16 +469,10 @@
         }
 
         function renderQueueInto(el) {
-            let ambNpState = null;
-            let ambNpTicker = null;
-
-            function renderAmbNpProgress() {
-                if (!ambNpState || !ambNpState.durationMs) return;
-                const elapsed = ambNpState.isPlaying ? (Date.now() - ambNpState.fetchedAt) : 0;
-                const pct = Math.min(100, ((ambNpState.progressMs + elapsed) / ambNpState.durationMs) * 100);
-                const fillEl = el.querySelector('#amb-qv-progress-fill');
-                if (fillEl) fillEl.style.width = pct + '%';
-            }
+            let disposed = false;
+            let requests = [];
+            let upcoming = [];
+            const tracker = makeProgressTracker(() => el.querySelector('#amb-qv-progress-fill'));
 
             el.innerHTML = `
                 <div class="amb-queue">
@@ -348,68 +493,57 @@
                     <div class="qv-list" id="amb-qv-list"></div>
                 </div>`;
 
+            const renderList = () => applyQueueList(el.querySelector('#amb-qv-list'), requests, upcoming);
+
             const refresh = async () => {
                 try {
                     const [kioskRes, npRes] = await Promise.all([
                         fetch(eventUrl('/kiosk-data')),
                         fetch(eventUrl('/api/now-playing'))
                     ]);
+                    // This slide may have been torn down while those were in
+                    // flight - never touch the DOM or start timers after that.
+                    if (disposed) return;
                     if (kioskRes.ok) {
                         const data = await kioskRes.json();
+                        if (disposed) return;
                         const nameEl = el.querySelector('#amb-qv-event-name');
                         const venueEl = el.querySelector('#amb-qv-venue-name');
                         if (nameEl) nameEl.innerText = data.eventName || 'Now Playing';
                         if (venueEl) venueEl.innerText = data.venueName || '';
-                        const list = el.querySelector('#amb-qv-list');
-                        const top = (data.queue || []).slice(0, 8);
-                        if (list) {
-                            list.innerHTML = top.length === 0
-                                ? '<div class="qv-empty">No requests queued right now</div>'
-                                : top.map((song, idx) => `
-                                    <div class="qv-row">
-                                        <div class="qv-row-rank">${idx + 1}</div>
-                                        <img src="${escapeHtml(song.artwork || '')}" alt="">
-                                        <div class="qv-row-text">
-                                            <div class="qv-row-title">${escapeHtml(song.title)}</div>
-                                            <div class="qv-row-artist">${escapeHtml(song.artist)}</div>
-                                        </div>
-                                        <div class="qv-row-votes">+${(song.ups || 0) - (song.downs || 0)}</div>
-                                    </div>
-                                `).join('');
-                        }
+                        requests = data.queue || [];
                     }
                     if (npRes.ok) {
                         const np = await npRes.json();
+                        if (disposed) return;
                         const card = el.querySelector('#amb-qv-now-playing');
-                        if (card) {
-                            if (np && np.connected && np.title) {
+                        if (np && np.connected && np.title) {
+                            upcoming = np.upcoming || [];
+                            if (card) {
                                 card.style.display = 'flex';
-                                el.querySelector('#amb-qv-artwork').src = np.artwork || '';
+                                const artEl = el.querySelector('#amb-qv-artwork');
+                                const art = safeImageUrl(np.artwork);
+                                if (artEl && artEl.getAttribute('src') !== art) artEl.setAttribute('src', art);
                                 el.querySelector('#amb-qv-np-title').innerText = np.title;
                                 el.querySelector('#amb-qv-np-artist').innerText = np.artist || '';
                                 el.querySelector('#amb-qv-live-dot').classList.toggle('is-paused', !np.isPlaying);
-                                ambNpState = {
-                                    progressMs: np.progressMs || 0,
-                                    durationMs: np.durationMs || 0,
-                                    isPlaying: !!np.isPlaying,
-                                    fetchedAt: Date.now()
-                                };
-                                renderAmbNpProgress();
-                                if (!ambNpTicker) ambNpTicker = setInterval(renderAmbNpProgress, 250);
-                            } else {
-                                card.style.display = 'none';
-                                ambNpState = null;
-                                if (ambNpTicker) { clearInterval(ambNpTicker); ambNpTicker = null; }
                             }
+                            tracker.update(np);
+                        } else {
+                            upcoming = [];
+                            if (card) card.style.display = 'none';
+                            tracker.clear();
                         }
                     }
+                    renderList();
                 } catch (e) { /* keep showing whatever's already there */ }
             };
             refresh();
             const intervalId = setInterval(refresh, 4000);
             return () => {
+                disposed = true;
                 clearInterval(intervalId);
-                if (ambNpTicker) clearInterval(ambNpTicker);
+                tracker.dispose();
             };
         }
 
@@ -563,59 +697,34 @@
         /* =========================================================
            Fallback queue board
            ========================================================= */
-        let npState = null;
-        let npTicker = null;
+        let boardRequests = [];
+        let boardUpcoming = [];
+        const boardTracker = makeProgressTracker(() => document.getElementById('qv-progress-fill'));
 
-        function renderNpProgress() {
-            if (!npState || !npState.durationMs) return;
-            const elapsed = npState.isPlaying ? (Date.now() - npState.fetchedAt) : 0;
-            const pct = Math.min(100, ((npState.progressMs + elapsed) / npState.durationMs) * 100);
-            const fillEl = document.getElementById('qv-progress-fill');
-            if (fillEl) fillEl.style.width = pct + '%';
+        function renderQueueList() {
+            applyQueueList(document.getElementById('qv-list'), boardRequests, boardUpcoming);
         }
 
         function updateNowPlaying(data) {
             const card = document.getElementById('qv-now-playing');
             if (!data || !data.connected || !data.title) {
                 card.style.display = 'none';
-                npState = null;
-                if (npTicker) { clearInterval(npTicker); npTicker = null; }
+                boardTracker.clear();
+                boardUpcoming = [];
+                renderQueueList();
                 return;
             }
             card.style.display = 'flex';
-            document.getElementById('qv-artwork').src = data.artwork || '';
+            const artEl = document.getElementById('qv-artwork');
+            const art = safeImageUrl(data.artwork);
+            if (artEl.getAttribute('src') !== art) artEl.setAttribute('src', art);
             document.getElementById('qv-np-title').innerText = data.title;
             document.getElementById('qv-np-artist').innerText = data.artist || '';
             document.getElementById('qv-live-dot').classList.toggle('is-paused', !data.isPlaying);
 
-            npState = {
-                progressMs: data.progressMs || 0,
-                durationMs: data.durationMs || 0,
-                isPlaying: !!data.isPlaying,
-                fetchedAt: Date.now()
-            };
-            renderNpProgress();
-            if (!npTicker) npTicker = setInterval(renderNpProgress, 250);
-        }
-
-        function renderQueueList(queue) {
-            const list = document.getElementById('qv-list');
-            const top = (queue || []).slice(0, 8);
-            if (top.length === 0) {
-                list.innerHTML = '<div class="qv-empty">No requests queued right now</div>';
-                return;
-            }
-            list.innerHTML = top.map((song, idx) => `
-                <div class="qv-row">
-                    <div class="qv-row-rank">${idx + 1}</div>
-                    <img src="${escapeHtml(song.artwork || '')}" alt="">
-                    <div class="qv-row-text">
-                        <div class="qv-row-title">${escapeHtml(song.title)}</div>
-                        <div class="qv-row-artist">${escapeHtml(song.artist)}</div>
-                    </div>
-                    <div class="qv-row-votes">+${(song.ups || 0) - (song.downs || 0)}</div>
-                </div>
-            `).join('');
+            boardTracker.update(data);
+            boardUpcoming = data.upcoming || [];
+            renderQueueList();
         }
 
         async function pollQueueBoard() {
@@ -625,7 +734,8 @@
                 const data = await res.json();
                 document.getElementById('qv-event-name').innerText = data.eventName || 'Now Playing';
                 document.getElementById('qv-venue-name').innerText = data.venueName || '';
-                renderQueueList(data.queue);
+                boardRequests = data.queue || [];
+                renderQueueList();
             } catch (e) { /* keep showing last known board */ }
         }
 
