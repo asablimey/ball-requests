@@ -42,6 +42,37 @@ function eventKey(slug) {
     return `event:${slug}`;
 }
 
+// --- Accounts -------------------------------------------------------------
+// A thin layer alongside events: an account just needs a username, an email
+// (for password-reset lookups), and a password hash. It does NOT replace an
+// event's own admin password - it's a third accepted credential (see
+// requireAdminAuth in server.js), and the thing that gates event creation on
+// new-event.html now that anyone-can-create is going away.
+const USERNAME_PATTERN = /^[a-z0-9_-]{3,30}$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidUsername(username) {
+    return typeof username === 'string' && USERNAME_PATTERN.test(username.toLowerCase());
+}
+
+function isValidEmail(email) {
+    return typeof email === 'string' && email.length <= 254 && EMAIL_PATTERN.test(email.trim());
+}
+
+function userKey(username) {
+    return `user:${username.toLowerCase()}`;
+}
+
+function emailIndexKey(email) {
+    return `email-index:${email.trim().toLowerCase()}`;
+}
+
+// One Redis SET per account listing the slugs they've created - lets "My
+// Events" be a single SMEMBERS instead of scanning every event ever made.
+function userEventsKey(username) {
+    return `user-events:${username.toLowerCase()}`;
+}
+
 // Upstash's REST API takes commands as a path-segment array, e.g.
 // GET /GET/mykey  or  POST /SET  with body ["SET","mykey","value"].
 // Using the pipeline-free single-command form here since event payloads can
@@ -104,6 +135,15 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
         adminPasswordHash,
         createdAt: Date.now(),
 
+        // The account that created this event, if any (null for events made
+        // before accounts existed, or in the unlikely case account lookup
+        // fails at creation time). Purely additive to adminPasswordHash -
+        // requireAdminAuth in server.js accepts EITHER this account's
+        // current password OR the event's own password OR the master
+        // password. Never used to restrict who can manage the event, only
+        // to add one more valid way in.
+        ownerUsername: null,
+
         // Optional venue pin, set at creation time from the map picker on
         // new-event.html. All three are null together when the organizer
         // skipped the location step - never partially set.
@@ -152,29 +192,6 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             maxCredits: 3,
             countdownLength: 60,
             displayOnlyMode: false
-        },
-
-        // Admin -> Settings -> Content overrides for the Visuals Display
-        // page. muteVisuals just blacks the screen; muteAll does the same
-        // AND best-effort pauses/resumes the connected Spotify playback
-        // alongside it (see the /api/admin/visuals/* routes in server.js).
-        // showQueue pins the fallback Now Playing + Up Next board on
-        // screen, overriding any active Ambient Visuals block, until
-        // switched back off.
-        visualsConfigs: {
-            muteVisuals: false,
-            muteAll: false,
-            showQueue: false,
-            // Admin -> Settings -> Content toggle for the automatic music
-            // video feature (see resolveMusicVideoForTrack in server.js).
-            // Off by default - it only does anything once YOUTUBE_API_KEY
-            // is set on the server anyway, but defaulting an event to
-            // "off" means turning it on is always a deliberate choice.
-            musicVideosEnabled: false,
-            // Purely cosmetic toggle for whatever video is currently
-            // showing - turns YouTube's caption track on/off client-side.
-            // Independent of musicVideosEnabled above.
-            musicVideoSubtitlesEnabled: false
         },
 
         activeQueue: [],
@@ -244,40 +261,6 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off'
         },
 
-        // --- Music Video (YouTube) auto-playback ---------------------------
-        // Persisted so a repeat play of the same Spotify track skips the
-        // YouTube search/scoring entirely (see resolveMusicVideoForTrack in
-        // server.js). Keyed by Spotify track id -> { videoId: string|null,
-        // score, matched, title, channel, reason (why rejected, when
-        // matched is false), checkedAt }. A genuine "searched and nothing
-        // cleared the threshold" result is cached with videoId:null too, so
-        // that track doesn't burn YouTube API quota again on a repeat play -
-        // only a transient error (network/quota) is left uncached so it's
-        // retried next time the track comes up.
-        musicVideoMatches: {},
-
-        // trackId -> [videoId, ...]. A video that resolveMusicVideoForTrack
-        // matched but which the Visuals Display later reported couldn't
-        // actually stay in sync with the Spotify audio in practice (or
-        // failed at real playback time) via /api/music-video/sync-failed.
-        // Excluded from candidates on every future lookup for that track -
-        // see findBestYouTubeMatch's excludeIds. Persists for the life of
-        // the event, same as musicVideoMatches above, since a bad sync
-        // result for a given upload isn't going to fix itself on a replay.
-        musicVideoSyncFailures: {},
-
-        // Runtime "what should the Visuals Display show right now" readout -
-        // same spirit as cachedNowPlaying above, updated by
-        // resolveMusicVideoForTrack whenever the now-playing track id
-        // changes. trackId tags which Spotify track this decision is FOR,
-        // so a client polling mid-search (result not back yet) can tell
-        // "still deciding" (pending: true) apart from "decided: no match"
-        // (pending: false, matched: false).
-        cachedMusicVideo: {
-            trackId: null, matched: false, pending: false,
-            videoId: null, updatedAt: Date.now()
-        },
-
         // --- Music Scheduler ---------------------------------------------
         // A day/time timetable that drives playlist switches, volume, and
         // requests-open/closed automatically (see tickMusicScheduler in
@@ -304,12 +287,7 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             //      for anything saved before laneType existed) --
             //   playlistId, volume: null|0-100, requestsAllowed: null|boolean,
             //   -- ambient blocks (laneType 'ambient') --
-            //   items: [{ id, type: 'photo'|'video'|'queue'|'clock'|'ad'|'custom',
-            //     mediaId?, durationSec?, adText?, adQrUrl?, text? (custom),
-            //     transition: 'fade'|'cut'|'slide', brightness: 40-150,
-            //     -- photo/video only -- fit: 'cover'|'contain'|'fill',
-            //     position: 'center'|'top'|'bottom'|'left'|'right',
-            //     captionTitle?, captionSubtitle? }] }
+            //   mediaIds: [ambientMedia id, ...], photoDurationSec: number }
             rules: [],
             // IANA zone (e.g. "Pacific/Auckland") that every rule's HH:MM is
             // read in - set from the DJ's browser the first time they save
@@ -445,25 +423,6 @@ function ensureSchedulerDefaults(event) {
     if (!Array.isArray(event.ambientMedia)) {
         event.ambientMedia = [];
     }
-    // Events saved before the Content settings tab existed won't have this
-    // at all - back it in with everything off rather than making the
-    // visuals routes and the public /api/ambient-visuals poll null-check
-    // event.visualsConfigs on every request.
-    if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') {
-        event.visualsConfigs = { muteVisuals: false, muteAll: false, showQueue: false };
-    } else {
-        if (typeof event.visualsConfigs.muteVisuals !== 'boolean') event.visualsConfigs.muteVisuals = false;
-        if (typeof event.visualsConfigs.muteAll !== 'boolean') event.visualsConfigs.muteAll = false;
-        if (typeof event.visualsConfigs.showQueue !== 'boolean') event.visualsConfigs.showQueue = false;
-        if (typeof event.visualsConfigs.musicVideosEnabled !== 'boolean') event.visualsConfigs.musicVideosEnabled = false;
-        if (typeof event.visualsConfigs.musicVideoSubtitlesEnabled !== 'boolean') event.visualsConfigs.musicVideoSubtitlesEnabled = false;
-    }
-    // Events saved before the sync-failure blacklist existed won't have
-    // this at all - back it in as an empty map rather than making the
-    // sync-failed route and resolveMusicVideoForTrack null-check it.
-    if (!event.musicVideoSyncFailures || typeof event.musicVideoSyncFailures !== 'object') {
-        event.musicVideoSyncFailures = {};
-    }
     // Events saved before the fallback/scheduled split existed only have
     // lastSwitchedPlaylist. Seed fallbackPlaylistUri from it once so a gap
     // in the timetable has something to hand back to, instead of silently
@@ -536,7 +495,7 @@ function applyTemplateConfig(event, templateConfig) {
     }
 }
 
-async function createEvent(slug, eventName, adminPassword, venue, templateConfig) {
+async function createEvent(slug, eventName, adminPassword, venue, templateConfig, ownerUsername) {
     if (!isValidSlug(slug)) {
         return { error: 'Event URL can only use lowercase letters, numbers, and hyphens (2-40 characters).' };
     }
@@ -572,11 +531,23 @@ async function createEvent(slug, eventName, adminPassword, venue, templateConfig
         return { error: 'That event URL is already taken.' };
     }
     const event = blankEventState(slug, safeEventName, adminPasswordHash, safeVenue);
+    if (typeof ownerUsername === 'string' && ownerUsername) {
+        event.ownerUsername = ownerUsername.toLowerCase();
+    }
     applyTemplateConfig(event, templateConfig);
     cache.set(slug, event);
     lastAccess.set(slug, Date.now());
     await writeToRedisNow(slug); // write immediately on creation, don't wait for debounce
     await redisIndexAdd(slug);   // register in the slug index for listing/summaries
+    if (event.ownerUsername) {
+        try {
+            await redis(['SADD', userEventsKey(event.ownerUsername), slug]);
+        } catch (err) {
+            // Non-fatal - the event still exists and works fine, it just
+            // won't show up in "My Events" until this is retried/fixed.
+            console.error(`[EVENTS] Failed to link "${slug}" to owner "${event.ownerUsername}":`, err.message);
+        }
+    }
     return { event };
 }
 
@@ -704,11 +675,277 @@ async function getAllEventsForMaster() {
     return summaries;
 }
 
+// ===========================================================================
+// Accounts
+// ===========================================================================
+// Same storage philosophy as events: Redis is the source of truth, an
+// in-memory cache avoids paying a network round-trip on every request that
+// needs to check a password. This matters here specifically because
+// requireAdminAuth in server.js re-checks credentials on EVERY admin API
+// call (there's no admin session token, just a resent header) - once an
+// event has an ownerUsername, that means a Redis read per admin action
+// unless the user record is cached the same way loaded events already are.
+
+const userCache = new Map();       // username (lowercase) -> user object
+const userLastAccess = new Map();  // username -> last touched, for idle eviction
+
+function userEvictIdle() {
+    const now = Date.now();
+    for (const username of userCache.keys()) {
+        const touched = userLastAccess.get(username) || 0;
+        if (now - touched > CACHE_IDLE_EVICT_MS) {
+            userCache.delete(username);
+            userLastAccess.delete(username);
+        }
+    }
+}
+setInterval(userEvictIdle, CACHE_SWEEP_INTERVAL_MS);
+
+// Returns true/false rather than throwing, so every caller below can turn a
+// Redis outage into a clean { error } response instead of an unhandled
+// rejection that would crash the whole process (Express 4 doesn't catch
+// rejected promises in async route handlers - see loadFromRedis/
+// existsRemotely above for the same defensive pattern applied to events).
+async function writeUserNow(username) {
+    const user = userCache.get(username);
+    if (!user) return false;
+    try {
+        await redisSet(userKey(username), JSON.stringify(user));
+        return true;
+    } catch (err) {
+        console.error(`[USERS] Failed to save "${username}" to Redis:`, err.message);
+        return false;
+    }
+}
+
+const DB_ERROR = { error: 'Could not reach the database right now. Try again in a moment.' };
+
+// Creates a new account. Returns { user } (never including passwordHash) or
+// { error }. Username uniqueness and email uniqueness are both enforced -
+// the email index exists purely so forgot-password can look someone up
+// without a full scan.
+async function createUser(username, email, password) {
+    if (!isValidUsername(username)) {
+        return { error: 'Username must be 3-30 characters: lowercase letters, numbers, hyphens, or underscores.' };
+    }
+    if (!isValidEmail(email)) {
+        return { error: 'Enter a valid email address.' };
+    }
+    if (!password || password.length < 8) {
+        return { error: 'Password must be at least 8 characters.' };
+    }
+    const key = username.toLowerCase();
+    let existing, emailOwner;
+    try {
+        existing = await redisGet(userKey(key));
+        emailOwner = await redisGet(emailIndexKey(email));
+    } catch (err) {
+        console.error(`[USERS] Lookup failed while creating "${key}":`, err.message);
+        return DB_ERROR;
+    }
+    if (existing != null) {
+        return { error: 'That username is already taken.' };
+    }
+    if (emailOwner != null) {
+        return { error: 'That email is already registered to an account.' };
+    }
+    const passwordHash = await hashPassword(password);
+    const user = {
+        username: key,
+        email: email.trim(),
+        passwordHash,
+        createdAt: Date.now(),
+        resetToken: null,
+        resetTokenExpiresAt: null
+    };
+    userCache.set(key, user);
+    userLastAccess.set(key, Date.now());
+    const saved = await writeUserNow(key);
+    if (!saved) {
+        userCache.delete(key); // don't leave a phantom "account" only the in-memory cache knows about
+        return DB_ERROR;
+    }
+    try {
+        await redisSet(emailIndexKey(email), key);
+    } catch (err) {
+        // The account itself is already saved and usable at this point -
+        // only the email index (used by forgot-password) failed to write.
+        // Not worth rolling back a real account over; log it and move on.
+        console.error(`[USERS] Account "${key}" saved, but its email index failed:`, err.message);
+    }
+    return { user: { username: user.username, email: user.email, createdAt: user.createdAt } };
+}
+
+async function getUser(username) {
+    if (typeof username !== 'string' || !username) return null;
+    const key = username.toLowerCase();
+    userLastAccess.set(key, Date.now());
+    if (userCache.has(key)) return userCache.get(key);
+    let raw;
+    try {
+        raw = await redisGet(userKey(key));
+    } catch (err) {
+        console.error(`[USERS] Failed to load "${key}" from Redis:`, err.message);
+        return null;
+    }
+    if (raw == null) return null;
+    try {
+        const user = JSON.parse(raw);
+        userCache.set(key, user);
+        return user;
+    } catch (err) {
+        console.error(`[USERS] Failed to parse user "${key}":`, err.message);
+        return null;
+    }
+}
+
+async function getUserByEmail(email) {
+    if (!isValidEmail(email)) return null;
+    try {
+        const username = await redisGet(emailIndexKey(email));
+        if (!username) return null;
+        return await getUser(username);
+    } catch (err) {
+        console.error('[USERS] Email lookup failed:', err.message);
+        return null;
+    }
+}
+
+// Returns the account's public fields + a verified flag - never the hash
+// itself. Used by the login route.
+async function verifyUserCredentials(username, password) {
+    const user = await getUser(username);
+    if (!user) return null;
+    const ok = await verifyPassword(password, user.passwordHash);
+    return ok ? user : null;
+}
+
+// Same salted-scrypt verification the event admin password already uses -
+// this is what lets an event's ownerUsername account password double as a
+// valid admin credential in requireAdminAuth.
+async function verifyUserPassword(username, password) {
+    const user = await getUser(username);
+    if (!user) return false;
+    return verifyPassword(password, user.passwordHash);
+}
+
+async function setUserPassword(username, newPassword) {
+    const key = username.toLowerCase();
+    const user = await getUser(key);
+    if (!user) return { error: 'Account not found.' };
+    const previousHash = user.passwordHash;
+    user.passwordHash = await hashPassword(newPassword);
+    user.resetToken = null;
+    user.resetTokenExpiresAt = null;
+    userCache.set(key, user);
+    const saved = await writeUserNow(key);
+    if (!saved) {
+        user.passwordHash = previousHash; // don't leave the cache claiming a password that was never persisted
+        userCache.set(key, user);
+        return DB_ERROR;
+    }
+    return { success: true };
+}
+
+// Master-panel-only, same shape as resetEventPassword: generates and stores
+// a brand new password, returns it once in plaintext so it can be handed to
+// the account holder out of band.
+async function resetUserPasswordByMaster(username) {
+    const key = username.toLowerCase();
+    const user = await getUser(key);
+    if (!user) return { error: 'Account not found.' };
+    const previousHash = user.passwordHash;
+    const newPassword = crypto.randomBytes(4).toString('hex');
+    user.passwordHash = await hashPassword(newPassword);
+    user.resetToken = null;
+    user.resetTokenExpiresAt = null;
+    userCache.set(key, user);
+    const saved = await writeUserNow(key);
+    if (!saved) {
+        user.passwordHash = previousHash;
+        userCache.set(key, user);
+        return DB_ERROR;
+    }
+    return { newPassword };
+}
+
+// Mints a single-use, time-limited token for the "forgot password" email
+// flow - same pattern as the Spotify login ticket in server.js (plaintext
+// value + expiry stored on the record, cleared on first use whether or not
+// it was valid). 30 minutes is generous for someone to open an email and
+// click through, short enough that a stale link isn't a standing risk.
+async function createPasswordResetToken(username) {
+    const key = username.toLowerCase();
+    const user = await getUser(key);
+    if (!user) return null;
+    const token = crypto.randomBytes(24).toString('hex');
+    user.resetToken = token;
+    user.resetTokenExpiresAt = Date.now() + 30 * 60 * 1000;
+    userCache.set(key, user);
+    const saved = await writeUserNow(key);
+    // If this didn't persist, don't hand out a token whose expiry/validity
+    // Redis doesn't actually agree on - safer to fail the email send than
+    // issue a link that might validate against stale cached state after a
+    // restart evicts it.
+    return saved ? token : null;
+}
+
+async function verifyAndConsumeResetToken(username, token) {
+    const key = username.toLowerCase();
+    const user = await getUser(key);
+    if (!user || !user.resetToken || !token) return false;
+    const valid = user.resetToken === token && Date.now() < (user.resetTokenExpiresAt || 0);
+    // Single-use regardless of outcome - a token that's been tried once
+    // (right or wrong) shouldn't still be sitting there to retry.
+    user.resetToken = null;
+    user.resetTokenExpiresAt = null;
+    userCache.set(key, user);
+    await writeUserNow(key); // best-effort; even if this write fails, the in-memory cache no longer honors the token for the rest of this process's life
+    return valid;
+}
+
+async function getUserEventSlugs(username) {
+    try {
+        const members = await redis(['SMEMBERS', userEventsKey(username.toLowerCase())]);
+        return Array.isArray(members) ? members : [];
+    } catch (err) {
+        console.error(`[USERS] Failed to read events for "${username}":`, err.message);
+        return [];
+    }
+}
+
+// "My Events" listing for new-event.html - same summary shape as the master
+// list (minus anything only the master password holder should see, which
+// is nothing extra here since these are all events the account itself owns).
+async function getUserOwnedEventsSummary(username) {
+    const slugs = await getUserEventSlugs(username);
+    const summaries = [];
+    await Promise.all(slugs.map(async (slug) => {
+        try {
+            const raw = await redisGet(eventKey(slug));
+            if (raw == null) return; // stale index entry pointing at a deleted event
+            const data = JSON.parse(raw);
+            summaries.push({
+                slug: data.slug || slug,
+                eventName: (data.systemConfigs && data.systemConfigs.eventName) || data.slug || slug,
+                venueName: data.venueName || null,
+                createdAt: typeof data.createdAt === 'number' ? data.createdAt : null,
+                requestsAllowed: !!(data.systemConfigs && data.systemConfigs.requestsAllowed)
+            });
+        } catch (err) {
+            console.error(`[USERS] Skipping unreadable event "${slug}" for "${username}":`, err.message);
+        }
+    }));
+    summaries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return summaries;
+}
+
 // Permanently removes an event: cancels any pending debounced write (so it
 // can't resurrect the entry a moment later), deletes it from Redis, removes
 // it from the slug index, and drops it from the in-memory cache. The slug
 // becomes available again immediately afterward.
 async function deleteEvent(slug) {
+    const owner = cache.has(slug) ? cache.get(slug).ownerUsername : null;
     const pending = pendingSaves.get(slug);
     if (pending) {
         clearTimeout(pending);
@@ -719,6 +956,10 @@ async function deleteEvent(slug) {
     try {
         await redisDel(eventKey(slug));
         await redisIndexRemove(slug);
+        if (owner) {
+            await redis(['SREM', userEventsKey(owner), slug]).catch(err =>
+                console.error(`[EVENTS] Failed to unlink "${slug}" from owner "${owner}":`, err.message));
+        }
     } catch (err) {
         console.error(`[EVENTS] Failed to delete "${slug}":`, err.message);
         throw err;
@@ -736,5 +977,19 @@ module.exports = {
     verifyPassword,
     getLoadedEvents,
     getActiveEventsSummary,
-    getAllEventsForMaster
+    getAllEventsForMaster,
+
+    // Accounts
+    isValidUsername,
+    isValidEmail,
+    createUser,
+    getUser,
+    getUserByEmail,
+    verifyUserCredentials,
+    verifyUserPassword,
+    setUserPassword,
+    resetUserPasswordByMaster,
+    createPasswordResetToken,
+    verifyAndConsumeResetToken,
+    getUserOwnedEventsSummary
 };
