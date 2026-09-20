@@ -1263,6 +1263,22 @@
                                 <strong>Subtitles</strong> turns on YouTube's caption track for whatever video is
                                 currently showing, when that video has one available.
                             </p>
+                            <div class="config-dashboard" style="margin-top: 16px;">
+                                <div class="input-group">
+                                    <label>Video Timing Offset (ms)</label>
+                                    <input type="number" id="input-music-video-offset" step="50" min="-5000" max="5000">
+                                </div>
+                                <button class="save-config-btn" onclick="saveMusicVideoOffset()">Update Offset</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                Shifts the WHOLE video stream earlier or later against the song, not just its
+                                starting point - every video plays this far off from the raw Spotify position for
+                                as long as it's on screen. If the picture looks like it's lagging the audio (video
+                                late), raise this number; if the video looks ahead of the audio, lower it
+                                (negative values are fine). Real-world audio output has its own latency depending
+                                on your speakers, so the right value is specific to this venue's setup - it may
+                                take a bit of trial and error the first time.
+                            </p>
                         </div>
                     </div>
 
@@ -1920,6 +1936,19 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function saveMusicVideoOffset() {
+            if (!isAuthorized) return;
+            const offsetVal = document.getElementById('input-music-video-offset').value;
+            const res = await fetch(eventUrl('/api/admin/visuals/music-video-offset'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ offsetMs: offsetVal })
+            });
+            if (res.ok) showToast("Video timing offset updated.", "success");
+            else showToast("Could not update the video timing offset.", "error");
+            updateDashboard();
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2255,6 +2284,10 @@ async function verifyPassword() {
                     musicVideoSubtitlesEnabled = !!data.visuals.musicVideoSubtitlesEnabled;
                     musicVideoSubtitlesBtn.innerText = musicVideoSubtitlesEnabled ? "Subtitles: ON" : "Subtitles: OFF";
                     musicVideoSubtitlesBtn.className = musicVideoSubtitlesEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    if (document.activeElement !== document.getElementById('input-music-video-offset')) {
+                        document.getElementById('input-music-video-offset').value = data.visuals.musicVideoOffsetMs;
+                    }
                 }
 
                 if (!filtersInitialized) {
