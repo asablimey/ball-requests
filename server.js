@@ -615,7 +615,14 @@ function titleLooksDisqualified(title) {
 // intro, skit or outro the audio doesn't - so matching timestamps would put
 // the picture seconds out of step with the music no matter how good the
 // sync loop is. Such videos are rejected outright.
-const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 2000;
+// NOTE: most real official music videos run 5-20s longer than the Spotify
+// track (studio countdown, an intro skit, a longer fade-out) - a 2s
+// tolerance rejected almost all of them, which is why so few tracks were
+// ever getting a video at all. The sync loop (see mvCheck in
+// visual-display.html) actively corrects drift during playback anyway, so
+// this only needs to catch a genuinely WRONG video (a full alternate edit,
+// a compilation, a different song entirely), not fine-grained intro length.
+const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 20000;
 
 // "PT3M45S" / "PT1H2M3S" -> milliseconds (null if unparseable, e.g. live "P0D").
 function parseIsoDurationMs(iso) {
