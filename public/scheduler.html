@@ -365,6 +365,21 @@
         .day-toggle.active { background: var(--spotify-green); color: white; border-color: var(--spotify-green); }
         .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.85rem; }
         .modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 20px; }
+        .field-group input[type="number"] {
+            width: 100%; background: var(--card-bg); border: 1px solid #333; color: white;
+            padding: 9px 10px; border-radius: 6px; font-size: 0.9rem; outline: none;
+        }
+        .field-hint { font-size: 0.75rem; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+
+        /* --- Music Videos block editor (dedicated modal) --- */
+        #music-video-modal-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 500; align-items: center; justify-content: center; padding: 20px;
+        }
+        #music-video-modal-backdrop.show { display: flex; }
+        .mv-count-row { display: flex; gap: 10px; align-items: center; }
+        .mv-count-row input[type="number"] { width: 80px; flex: none; }
+        .mv-count-row span { color: var(--text-dim); font-size: 0.85rem; }
 
         /* --- Ambient Visuals block editor (dedicated modal) --- */
         #ambient-modal-backdrop {
@@ -793,6 +808,7 @@
                         <option value="crowddj">crowdDJ Music</option>
                         <option value="karaoke">Karaoke</option>
                         <option value="ambient">Ambient Visuals</option>
+                        <option value="musicvideo">Music Videos</option>
                     </select>
                     <div id="new-music-fields">
                         <input type="text" id="new-playlist-label" placeholder="Name (e.g. Lunch Vibes)" maxlength="60">
@@ -802,6 +818,9 @@
                     <div id="new-ambient-fields" style="display:none;">
                         <button class="btn btn-ghost btn-small" style="width:100%;" onclick="startNewAmbientBlock()">+ Add Visual</button>
                         <button class="btn btn-ghost btn-small" style="width:100%; margin-top:8px;" onclick="importVisualsAsNewBlock()">Import from file</button>
+                    </div>
+                    <div id="new-musicvideo-fields" style="display:none;">
+                        <button class="btn btn-ghost btn-small" style="width:100%;" onclick="startNewMusicVideoBlock()">+ Add Music Video Block</button>
                     </div>
                 </div>
             </div>
@@ -999,6 +1018,52 @@
         </div>
     </div>
 
+    <div id="music-video-modal-backdrop">
+        <div class="modal">
+            <h3>Music Video Block</h3>
+
+            <div class="field-group">
+                <label>Block Name (optional)</label>
+                <input type="text" id="mv-modal-block-name" maxlength="60" placeholder="e.g. Prime Time Videos...">
+            </div>
+
+            <div class="field-group">
+                <label>Videos In A Row</label>
+                <div class="mv-count-row">
+                    <input type="number" id="mv-modal-videos-count" min="1" max="20" value="2">
+                    <span>song(s) get an actual music video</span>
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Then Ambient Visuals For</label>
+                <div class="mv-count-row">
+                    <input type="number" id="mv-modal-visuals-count" min="0" max="20" value="1">
+                    <span>song(s), then repeat</span>
+                </div>
+                <div class="field-hint">e.g. 2 videos in a row, then 1 song of Ambient Visuals, then back to videos.</div>
+            </div>
+
+            <div class="field-group">
+                <label>Time Range</label>
+                <div class="time-row">
+                    <div><input type="time" id="mv-modal-start"></div>
+                    <div><input type="time" id="mv-modal-end"></div>
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Days</label>
+                <div class="days-grid" id="mv-modal-days"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" style="background:var(--red-action); border-color:var(--red-action);" onclick="deleteModalRule()">Delete</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="applyModal()">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="cv-modal-backdrop">
         <div class="cv-modal">
             <div class="cv-header">
@@ -1117,7 +1182,7 @@
         // undo/copy/paste alone - editing a text field inside one shouldn't
         // rewrite the block list underneath it.
         function anyModalOpen() {
-            return ['modal-backdrop', 'ambient-modal-backdrop', 'cv-modal-backdrop'].some(id => {
+            return ['modal-backdrop', 'ambient-modal-backdrop', 'music-video-modal-backdrop', 'cv-modal-backdrop'].some(id => {
                 const el = document.getElementById(id);
                 return el && el.classList.contains('show');
             });
@@ -1176,32 +1241,34 @@
         const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const FULL_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         // Blocks are colored by lane type, not per-playlist - every crowdDJ
-        // block is green, every karaoke block is blue, so the timetable
-        // reads as "what kind of thing is playing" at a glance rather than
-        // needing to check each block's label.
+        // block is green, every karaoke block is blue, every Music Videos
+        // block is orange, so the timetable reads as "what kind of thing is
+        // playing" at a glance rather than needing to check each block's
+        // label.
         const LANE_TYPES = {
             crowddj: { label: 'crowdDJ Music', color: '#1DB954' },
             karaoke: { label: 'Karaoke', color: '#5B8DEF' },
-            ambient: { label: 'Ambient Visuals', color: '#B15CDE' }
+            ambient: { label: 'Ambient Visuals', color: '#B15CDE' },
+            musicvideo: { label: 'Music Videos', color: '#FF8C00' }
         };
         const TRACK_MINUTES = 1440;
         const LANE_LABEL_WIDTH = 108;
-        // One placeholder lane left, reserved for a future feature that
-        // isn't wired to anything yet - Ambient Visuals used to be here too
-        // but is now a real, data-backed lane like crowdDJ/Karaoke.
-        const PLACEHOLDER_LANES = [
-            { label: '' }
-        ];
+        // No placeholder lanes left - Ambient Visuals and Music Videos both
+        // used to be placeholders here and are now real, data-backed lanes
+        // like crowdDJ/Karaoke.
+        const PLACEHOLDER_LANES = [];
         // Which overlap/collision GROUP a rule belongs to. crowdDJ and
         // Karaoke share one physical output (the venue's speakers) and so
         // are checked as a single "music" group - two music blocks can
         // never overlap regardless of which of those two lanes either is
-        // in. Ambient Visuals is a separate output (a screen), so it's
-        // free to run at the same time as a music block; it only has to
-        // avoid overlapping OTHER ambient blocks. Mirrors
-        // findOverlappingRuleAcrossLanes in server.js.
+        // in. Ambient Visuals and Music Videos share a different output (a
+        // screen), so together they're free to run at the same time as a
+        // music block; a screen block only has to avoid overlapping OTHER
+        // screen blocks (a Music Videos block takes over the screen from
+        // Ambient Visuals, so the two can never be scheduled at once
+        // either). Mirrors findOverlappingRuleAcrossLanes in server.js.
         function ruleLaneGroup(rule) {
-            return rule.laneType === 'ambient' ? 'ambient' : 'music';
+            return (rule.laneType === 'ambient' || rule.laneType === 'musicvideo') ? 'screen' : 'music';
         }
         const HOUR_PX_MIN = 20;
         const HOUR_PX_MAX = 72;
@@ -1310,11 +1377,13 @@
         function playlistColor(playlistId) {
             return LANE_TYPES[playlistType(playlistId)].color;
         }
-        // Which of the three LANE_TYPES keys a rule belongs in - unlike
-        // playlistType above, this works for ambient rules too (they have
-        // no playlistId to look up).
+        // Which of the four LANE_TYPES keys a rule belongs in - unlike
+        // playlistType above, this works for ambient/musicvideo rules too
+        // (they have no playlistId to look up).
         function ruleLaneType(rule) {
-            return rule.laneType === 'ambient' ? 'ambient' : playlistType(rule.playlistId);
+            if (rule.laneType === 'ambient') return 'ambient';
+            if (rule.laneType === 'musicvideo') return 'musicvideo';
+            return playlistType(rule.playlistId);
         }
         function ruleColor(rule) {
             return LANE_TYPES[ruleLaneType(rule)].color;
@@ -1491,10 +1560,25 @@
             openAmbientBlockModal(rule);
         }
 
+        // Parallel to startNewAmbientBlock above, but a Music Videos block
+        // has no library content to fill in - just a schedule and a
+        // videosInARow/visualsAfter pattern - so it goes straight into its
+        // own small modal instead of the rich Ambient Visuals editor.
+        // isNewMusicVideoRule mirrors isNewAmbientRule so Cancel discards a
+        // never-saved block instead of leaving an orphan behind.
+        let isNewMusicVideoRule = false;
+        function startNewMusicVideoBlock() {
+            const rule = { id: genId(), laneType: 'musicvideo', videosInARow: 2, visualsAfter: 1, days: [], start: '', end: '' };
+            rules.push(rule);
+            isNewMusicVideoRule = true;
+            openMusicVideoModal(rule);
+        }
+
         function onNewItemTypeChange() {
             const type = document.getElementById('new-item-type').value;
-            document.getElementById('new-music-fields').style.display = type === 'ambient' ? 'none' : '';
+            document.getElementById('new-music-fields').style.display = (type === 'crowddj' || type === 'karaoke') ? '' : 'none';
             document.getElementById('new-ambient-fields').style.display = type === 'ambient' ? '' : 'none';
+            document.getElementById('new-musicvideo-fields').style.display = type === 'musicvideo' ? '' : 'none';
         }
 
         function renderPlaylists() {
@@ -1657,13 +1741,13 @@
             document.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
         }
 
-        // Builds all 7 day boxes, each with its own hour ruler and 4 lanes:
-        // crowdDJ Music (the only lane actually backed by rules right now)
-        // plus 3 placeholder lanes reserved for features that don't exist
-        // yet. This rebuilds everything - including during a drag/resize -
-        // rather than patching individual block positions; schedules are
-        // small (tens of rules at most) so that's cheap enough to not be
-        // worth the extra complexity of an incremental update path.
+        // Builds all 7 day boxes, each with its own hour ruler and 4 real,
+        // data-backed lanes: crowdDJ Music, Karaoke, Ambient Visuals, and
+        // Music Videos. This rebuilds everything - including during a
+        // drag/resize - rather than patching individual block positions;
+        // schedules are small (tens of rules at most) so that's cheap
+        // enough to not be worth the extra complexity of an incremental
+        // update path.
         function renderDayBoxes() {
             const container = document.getElementById('day-boxes');
             const conflictingIds = findConflictingRuleIds();
@@ -1674,9 +1758,11 @@
                     ? ''
                     : laneType === 'ambient'
                         ? `<div class="empty-hint">Nothing scheduled - drag a file in from the left.</div>`
-                        : `<div class="empty-hint">Nothing scheduled - drag a ${LANE_TYPES[laneType].label} playlist in from the left.</div>`;
+                        : laneType === 'musicvideo'
+                            ? `<div class="empty-hint">Nothing scheduled - use + Add Music Video Block on the left.</div>`
+                            : `<div class="empty-hint">Nothing scheduled - drag a ${LANE_TYPES[laneType].label} playlist in from the left.</div>`;
 
-                const liveLanesHtml = ['crowddj', 'karaoke', 'ambient'].map(laneType => `
+                const liveLanesHtml = ['crowddj', 'karaoke', 'ambient', 'musicvideo'].map(laneType => `
                     <div class="lane-row">
                         <div class="lane-label" style="width:${LANE_LABEL_WIDTH}px;">${escapeHtml(LANE_TYPES[laneType].label)}</div>
                         <div class="day-track" style="width:${trackWidth}px; --hourpx:${hourPx}px;" data-day="${dayIdx}" data-lane="${laneType}"
@@ -1740,6 +1826,11 @@
                 const extra = items.length - 1;
                 return extra > 0 ? `${firstName} +${extra} more` : firstName;
             }
+            if (rule.laneType === 'musicvideo') {
+                const videosInARow = Number.isInteger(rule.videosInARow) ? rule.videosInARow : 2;
+                const visualsAfter = Number.isInteger(rule.visualsAfter) ? rule.visualsAfter : 1;
+                return `Music Videos (${videosInARow}:${visualsAfter})`;
+            }
             const playlist = playlists.find(p => p.id === rule.playlistId);
             return playlist ? playlist.label : 'Unknown';
         }
@@ -1782,6 +1873,14 @@
             const isMediaPayload = payload.startsWith('media:');
             const isPlaylistPayload = payload.startsWith('playlist:');
             if (!isMediaPayload && !isPlaylistPayload) return;
+
+            // Music Videos blocks have no library content to drag in - the
+            // video for each slot comes dynamically from whatever song is
+            // currently playing, not from a fixed file or playlist. Blocks
+            // are only ever created via + Add Music Video Block.
+            if (laneType === 'musicvideo') {
+                return showToast('Music Video blocks are added with the + Add Music Video Block button on the left, not by dragging.', 'error');
+            }
 
             if (laneType === 'ambient') {
                 if (!isMediaPayload) {
@@ -2037,6 +2136,10 @@
                 openAmbientBlockModal(rule);
                 return;
             }
+            if (rule.laneType === 'musicvideo') {
+                openMusicVideoModal(rule);
+                return;
+            }
 
             modalRuleId = ruleId;
             document.getElementById('modal-title').textContent = 'Edit Block';
@@ -2093,6 +2196,25 @@
             renderModalAmbientFileList();
             renderAvmLibraryList();
             document.getElementById('ambient-modal-backdrop').classList.add('show');
+        }
+
+        // Music Videos block editor - much simpler than the Ambient
+        // Visuals one above since there's no file sequence to build, just
+        // a schedule and the videosInARow/visualsAfter repeat pattern.
+        function openMusicVideoModal(rule) {
+            modalRuleId = rule.id;
+            document.getElementById('mv-modal-block-name').value = rule.name || '';
+            document.getElementById('mv-modal-videos-count').value = Number.isInteger(rule.videosInARow) ? rule.videosInARow : 2;
+            document.getElementById('mv-modal-visuals-count').value = Number.isInteger(rule.visualsAfter) ? rule.visualsAfter : 1;
+            document.getElementById('mv-modal-start').value = rule.start;
+            document.getElementById('mv-modal-end').value = rule.end;
+
+            const daysWrap = document.getElementById('mv-modal-days');
+            daysWrap.innerHTML = DAY_NAMES.map((name, idx) => `
+                <button type="button" class="day-toggle${rule.days.includes(idx) ? ' active' : ''}" data-day="${idx}" onclick="this.classList.toggle('active')">${name}</button>
+            `).join('');
+
+            document.getElementById('music-video-modal-backdrop').classList.add('show');
         }
 
         function avmToggleSchedule() {
@@ -3768,13 +3890,19 @@
             document.getElementById('modal-backdrop').classList.remove('show');
             const ambientBackdrop = document.getElementById('ambient-modal-backdrop');
             if (ambientBackdrop) ambientBackdrop.classList.remove('show');
-            // A block created via startNewAmbientBlock() that never got
-            // saved is just an empty, unscheduled rule sitting in memory -
-            // discard it rather than leaving an orphan behind.
+            const mvBackdrop = document.getElementById('music-video-modal-backdrop');
+            if (mvBackdrop) mvBackdrop.classList.remove('show');
+            // A block created via startNewAmbientBlock()/startNewMusicVideoBlock()
+            // that never got saved is just an empty, unscheduled rule sitting in
+            // memory - discard it rather than leaving an orphan behind.
             if (isNewAmbientRule && modalRuleId) {
                 rules = rules.filter(r => r.id !== modalRuleId);
             }
+            if (isNewMusicVideoRule && modalRuleId) {
+                rules = rules.filter(r => r.id !== modalRuleId);
+            }
             isNewAmbientRule = false;
+            isNewMusicVideoRule = false;
             modalRuleId = null;
             modalAmbientItems = [];
             avmSelectedIndex = -1;
@@ -3783,10 +3911,11 @@
             const rule = rules.find(r => r.id === modalRuleId);
             if (!rule) return closeModal();
             const isAmbient = rule.laneType === 'ambient';
-            const nameId = isAmbient ? 'ambient-modal-block-name' : 'modal-block-name';
-            const startId = isAmbient ? 'ambient-modal-start' : 'modal-start';
-            const endId = isAmbient ? 'ambient-modal-end' : 'modal-end';
-            const daysId = isAmbient ? 'ambient-modal-days' : 'modal-days';
+            const isMusicVideo = rule.laneType === 'musicvideo';
+            const nameId = isAmbient ? 'ambient-modal-block-name' : isMusicVideo ? 'mv-modal-block-name' : 'modal-block-name';
+            const startId = isAmbient ? 'ambient-modal-start' : isMusicVideo ? 'mv-modal-start' : 'modal-start';
+            const endId = isAmbient ? 'ambient-modal-end' : isMusicVideo ? 'mv-modal-end' : 'modal-end';
+            const daysId = isAmbient ? 'ambient-modal-days' : isMusicVideo ? 'mv-modal-days' : 'modal-days';
 
             const start = document.getElementById(startId).value;
             const end = document.getElementById(endId).value;
@@ -3801,9 +3930,9 @@
             rule.days = days;
 
             // An empty name falls back to the auto-generated title
-            // (playlist label / first ambient file) rather than storing a
-            // blank string, so blockTitleFor's fallback logic keeps working
-            // for anyone who never bothers naming a block.
+            // (playlist label / first ambient file / videosInARow:visualsAfter)
+            // rather than storing a blank string, so blockTitleFor's fallback
+            // logic keeps working for anyone who never bothers naming a block.
             const nameVal = document.getElementById(nameId).value.trim().slice(0, 60);
             if (nameVal) {
                 rule.name = nameVal;
@@ -3820,6 +3949,18 @@
                 }
                 rule.items = modalAmbientItems.map(it => ({ ...it }));
                 isNewAmbientRule = false; // saved successfully - no longer an orphan candidate
+            } else if (isMusicVideo) {
+                const videosInARow = parseInt(document.getElementById('mv-modal-videos-count').value, 10);
+                const visualsAfter = parseInt(document.getElementById('mv-modal-visuals-count').value, 10);
+                if (!Number.isInteger(videosInARow) || videosInARow < 1) {
+                    return showToast('Videos in a row must be at least 1.', 'error');
+                }
+                if (!Number.isInteger(visualsAfter) || visualsAfter < 0) {
+                    return showToast('Visuals afterward can\'t be negative.', 'error');
+                }
+                rule.videosInARow = videosInARow;
+                rule.visualsAfter = visualsAfter;
+                isNewMusicVideoRule = false; // saved successfully - no longer an orphan candidate
             } else {
                 rule.playlistId = document.getElementById('modal-playlist').value;
                 rule.volume = document.getElementById('modal-volume-enabled').checked ? parseInt(document.getElementById('modal-volume').value, 10) : null;
