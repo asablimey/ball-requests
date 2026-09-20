@@ -757,8 +757,7 @@
              seeking - a sign it just doesn't track the song's timeline
              at all, not normal buffering jitter - this gives up on it,
              reports it back to the server so it's never offered again
-             for this track (see MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS
-             below), and falls back to ambient visuals immediately.
+             for this track (see MV_MAX_BIG_DRIFT_CHECKS below), and falls back to ambient visuals immediately.
            - Never overrides the forced Show Queue setting (Admin ->
              Settings -> Content) - that always wins, same as it does
              over ambient visuals.
@@ -772,19 +771,34 @@
         let musicVideoActive = false;
         let currentVideoTrackId = null;
         let currentVideoId = null;
-        let mvNpState = null; // interpolation baseline for drift correction, same shape as npState above
         let mvDriftInterval = null;
         let mvConsecutiveBigDrifts = 0;
         let mvSubtitlesEnabled = false;
-        const MUSIC_VIDEO_RESYNC_THRESHOLD_MS = 450;
-        // A drift bigger than this isn't normal jitter between polls - it
-        // means the video's own timeline doesn't line up with the song at
-        // all (wrong edit, a long intro/outro the audio doesn't have,
-        // etc). Three of these in a row (~4.5s of the drift check below
-        // never catching up even after each seek) is treated as "this
-        // video can't sync", not "one bad reading".
-        const MUSIC_VIDEO_BIG_DRIFT_MS = 2500;
-        const MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS = 3;
+
+        /* ---- Sync model ----
+           mvClock.base is the (display-clock) moment the song was at 0:00,
+           so song position now = Date.now() - base. It is rebuilt from each
+           poll using only SERVER timestamps for the age of Spotify's reading
+           (so this screen's clock being off can't shift the video), and
+           smoothed so Spotify's own +/- few hundred ms progress jitter is
+           averaged out instead of being chased with constant seeks.
+           mvOffsetMs is the admin's manual calibration (speaker/Bluetooth
+           delay) - the one thing that can't be measured from here. */
+        let mvClock = null;
+        let mvOffsetMs = 0;
+        let mvSeekLatencyMs = 800;   // learned: how long a load/seek takes to actually resume
+        let mvSeekIssuedAt = null;
+        let mvLastCorrectionAt = 0;
+        let mvCurrentRate = 1;
+        const MV_CHECK_INTERVAL_MS = 500;
+        const MV_NUDGE_START_MS = 200;    // start speed-nudging beyond this drift
+        const MV_NUDGE_STOP_MS = 100;     // ...and stop once back inside this
+        const MV_SEEK_THRESHOLD_MS = 1200; // too far to nudge - seek instead
+        const MV_SETTLE_MS = 4000;        // grace after a load/seek before judging it
+        const MV_BIG_DRIFT_MS = 3000;
+        // Two settled checks in a row still this far out = the video can't
+        // sync at all: blacklist it and fall back to ambient visuals.
+        const MV_MAX_BIG_DRIFT_CHECKS = 2;
 
         // Called by the YouTube IFrame API script once it's finished
         // loading - the player is created once, empty, and reused (via
@@ -823,6 +837,11 @@
             const cover = document.getElementById('video-loading-cover');
             if (e.data === YT.PlayerState.PLAYING) {
                 cover.classList.add('is-hidden');
+                if (mvSeekIssuedAt) {
+                    const lat = Date.now() - mvSeekIssuedAt;
+                    mvSeekIssuedAt = null;
+                    if (lat < 5000) mvSeekLatencyMs = Math.round(mvSeekLatencyMs * 0.5 + lat * 0.5);
+                }
             } else {
                 cover.classList.remove('is-hidden');
                 if (e.data === YT.PlayerState.ENDED && musicVideoActive) {
@@ -874,24 +893,84 @@
             }
         }
 
-        // np.progressMs/updatedAt reflect whenever the server last actually
-        // polled Spotify - up to a few seconds stale by the time this data
-        // reaches the client (poll interval + network + however long the
-        // YouTube search/scoring took for a brand new track). Bridges that
-        // gap with wall-clock time elapsed since the server's own capture,
-        // same idea as the interpolation the drift-correction loop below
-        // already does between polls of this endpoint.
-        function correctedMusicVideoState(data) {
-            const sinceServerUpdate = data.isPlaying ? Math.max(0, Date.now() - (data.updatedAt || Date.now())) : 0;
-            return {
-                progressMs: (data.progressMs || 0) + sinceServerUpdate,
-                durationMs: data.durationMs || 0,
-                isPlaying: !!data.isPlaying,
-                fetchedAt: Date.now()
-            };
+        // Folds one /api/music-video reading into mvClock. The age of the
+        // reading is serverNow - updatedAt (both the SERVER's clock); this
+        // screen's own clock is only used to measure time since receipt.
+        function updateMvClock(data, receivedAt) {
+            const serverNow = Number.isFinite(data.serverNow) ? data.serverNow : Date.now();
+            const ageMs = data.isPlaying ? Math.max(0, serverNow - (data.updatedAt || serverNow)) : 0;
+            const progressNow = (data.progressMs || 0) + ageMs;
+            const newBase = receivedAt - progressNow;
+            mvOffsetMs = Number.isFinite(data.offsetMs) ? data.offsetMs : 0;
+            const isPlaying = !!data.isPlaying;
+            if (!mvClock || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > 1500) {
+                mvClock = { base: newBase, isPlaying, pausedPosMs: data.progressMs || 0, trackId: data.trackId };
+            } else {
+                mvClock.base += (newBase - mvClock.base) * 0.25;
+                mvClock.pausedPosMs = data.progressMs || 0;
+            }
         }
 
-        function startMusicVideo(videoId, trackId, mvState) {
+        // Where the video SHOULD be right now, in seconds.
+        function mvTargetSec() {
+            if (!mvClock) return 0;
+            const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
+            return Math.max(0, (posMs + mvOffsetMs) / 1000);
+        }
+
+        function mvSetRate(rate) {
+            if (rate === mvCurrentRate) return;
+            try { ytPlayer.setPlaybackRate(rate); mvCurrentRate = rate; } catch (e) { /* rate not available - seeks still work */ }
+        }
+
+        // Seeks a little PAST the target by however long seeks have been
+        // taking to resume, so the video lands on the right frame instead of
+        // arriving that late.
+        function mvSeekTo(sec) {
+            mvSeekIssuedAt = Date.now();
+            mvLastCorrectionAt = mvSeekIssuedAt;
+            ytPlayer.seekTo(sec + mvSeekLatencyMs / 1000, true);
+        }
+
+        // Runs every MV_CHECK_INTERVAL_MS. Small drift is corrected by briefly
+        // nudging playback speed (invisible on a muted video, no stutter);
+        // only a large drift triggers a seek.
+        function mvCheck() {
+            if (!ytPlayerReady || !mvClock) return;
+            if (mvSeekIssuedAt && Date.now() - mvSeekIssuedAt > 5000) mvSeekIssuedAt = null;
+            let state, cur;
+            try { state = ytPlayer.getPlayerState(); cur = ytPlayer.getCurrentTime(); } catch (e) { return; }
+            if (typeof cur !== 'number') return;
+
+            if (!mvClock.isPlaying) {
+                if (state === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+                mvSetRate(1);
+                return;
+            }
+            if (state === YT.PlayerState.PAUSED) { ytPlayer.playVideo(); return; }
+            if (state !== YT.PlayerState.PLAYING) return; // buffering/loading - nothing meaningful to measure yet
+
+            const driftMs = (cur - mvTargetSec()) * 1000; // positive = video is ahead of the music
+            const absMs = Math.abs(driftMs);
+            const settling = Date.now() - mvLastCorrectionAt < MV_SETTLE_MS;
+
+            if (!settling && absMs > MV_BIG_DRIFT_MS) {
+                mvConsecutiveBigDrifts++;
+                if (mvConsecutiveBigDrifts >= MV_MAX_BIG_DRIFT_CHECKS) { reportVideoFailureAndStop(); return; }
+            } else if (absMs <= MV_BIG_DRIFT_MS) {
+                mvConsecutiveBigDrifts = 0;
+            }
+
+            if (absMs > MV_SEEK_THRESHOLD_MS) {
+                if (!settling) { mvSetRate(1); mvSeekTo(mvTargetSec()); }
+            } else if (absMs > MV_NUDGE_START_MS || (mvCurrentRate !== 1 && absMs > MV_NUDGE_STOP_MS)) {
+                mvSetRate(driftMs < 0 ? 1.25 : 0.75);
+            } else {
+                mvSetRate(1);
+            }
+        }
+
+        function startMusicVideo(videoId, trackId) {
             musicVideoActive = true;
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
@@ -903,36 +982,18 @@
             clearAmbientAdvanceTimer();
             clearSlideCleanup();
 
-            mvNpState = mvState;
-
             if (ytPlayerReady) {
-                ytPlayer.loadVideoById({ videoId, startSeconds: Math.max(0, mvState.progressMs / 1000) });
-                if (!mvState.isPlaying) ytPlayer.pauseVideo();
+                mvCurrentRate = null; // force the rate to be re-applied for the new video
+                mvSeekIssuedAt = Date.now();
+                mvLastCorrectionAt = mvSeekIssuedAt;
+                ytPlayer.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000 });
+                mvSetRate(1);
+                if (mvClock && !mvClock.isPlaying) ytPlayer.pauseVideo();
                 applySubtitlesSetting();
             }
 
             clearMvDriftInterval();
-            mvDriftInterval = setInterval(() => {
-                if (!ytPlayerReady || !mvNpState) return;
-                const elapsed = mvNpState.isPlaying ? (Date.now() - mvNpState.fetchedAt) : 0;
-                const expectedSec = (mvNpState.progressMs + elapsed) / 1000;
-                let ytSec;
-                try { ytSec = ytPlayer.getCurrentTime(); } catch (e) { return; }
-                if (typeof ytSec !== 'number') return;
-                const driftMs = Math.abs(ytSec - expectedSec) * 1000;
-                if (driftMs > MUSIC_VIDEO_RESYNC_THRESHOLD_MS) {
-                    ytPlayer.seekTo(expectedSec, true);
-                }
-                if (driftMs > MUSIC_VIDEO_BIG_DRIFT_MS) {
-                    mvConsecutiveBigDrifts++;
-                    if (mvConsecutiveBigDrifts >= MUSIC_VIDEO_MAX_CONSECUTIVE_BIG_DRIFTS) {
-                        reportVideoFailureAndStop();
-                        return;
-                    }
-                } else {
-                    mvConsecutiveBigDrifts = 0;
-                }
-            }, 1500);
+            mvDriftInterval = setInterval(mvCheck, MV_CHECK_INTERVAL_MS);
         }
 
         function stopMusicVideo() {
@@ -940,7 +1001,7 @@
             musicVideoActive = false;
             currentVideoTrackId = null;
             currentVideoId = null;
-            mvNpState = null;
+            mvClock = null;
             clearMvDriftInterval();
             if (ytPlayerReady) {
                 try { ytPlayer.stopVideo(); } catch (e) { /* ignore */ }
@@ -961,6 +1022,7 @@
                 const res = await fetch(eventUrl('/api/music-video'));
                 if (!res.ok) return;
                 const data = await res.json();
+                const receivedAt = Date.now();
 
                 const subtitlesChanged = !!data.subtitlesEnabled !== mvSubtitlesEnabled;
                 mvSubtitlesEnabled = !!data.subtitlesEnabled;
@@ -972,13 +1034,10 @@
                 }
 
                 if (data.enabled && data.matched && data.videoId) {
-                    if (musicVideoActive && currentVideoTrackId === data.trackId) {
-                        // Same video already playing - just refresh the
-                        // drift-correction baseline with the latest server
-                        // progress reading.
-                        mvNpState = correctedMusicVideoState(data);
-                    } else {
-                        startMusicVideo(data.videoId, data.trackId, correctedMusicVideoState(data));
+                    // Always fold the newest reading into the sync clock first.
+                    updateMvClock(data, receivedAt);
+                    if (!(musicVideoActive && currentVideoTrackId === data.trackId)) {
+                        startMusicVideo(data.videoId, data.trackId);
                     }
                 } else if (musicVideoActive) {
                     // No match (or the track this decision was for has
