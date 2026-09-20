@@ -1010,6 +1010,12 @@
                             retryLoadIfNeeded(slot);
                         },
                         onStateChange: makeYtStateChangeHandler(slot),
+                        // Fires whenever a player module (e.g. captions)
+                        // actually becomes available - see
+                        // applySubtitlesSetting/trySetCaptionsTrack below,
+                        // which is what actually turns captions on; loadModule
+                        // alone doesn't make a track selectable straight away.
+                        onApiChange: () => { trySetCaptionsTrack(slot); },
                         // A video can fail at actual playback time even after
                         // passing the server-side embeddable check (region
                         // locks, an owner opt-out that only surfaces here).
@@ -1134,17 +1140,49 @@
         // caption track available just does nothing when asked. Applying it
         // to a slot that's still preloading (not yet on screen) is harmless
         // and means there's no visible pop when it becomes active.
+        //
+        // Turning captions ON is two steps, not one: loadModule('captions')
+        // only asks YouTube to start loading the module - it does NOT mean
+        // the module is ready the instant this call returns. Calling
+        // setOption right after loadModule (the old code here) ran before
+        // the module had actually loaded almost every time, so it silently
+        // selected nothing and captions never appeared. trySetCaptionsTrack
+        // is what actually does the selecting; it's wired up three ways so
+        // it reliably fires once the module really is ready: the player's
+        // own onApiChange event (the correct signal, per the IFrame API),
+        // plus two short delayed retries as a safety net for the rare case
+        // that event doesn't fire.
         function applySubtitlesSetting(slot) {
             const st = players[slot];
             if (!st.ready) return;
             try {
                 if (mvSubtitlesEnabled) {
                     st.yt.loadModule('captions');
-                    st.yt.setOption('captions', 'track', {});
+                    trySetCaptionsTrack(slot);
+                    setTimeout(() => trySetCaptionsTrack(slot), 400);
+                    setTimeout(() => trySetCaptionsTrack(slot), 1200);
                 } else {
                     st.yt.unloadModule('captions');
                 }
             } catch (e) { /* no caption track on this video, or module not ready yet */ }
+        }
+
+        // Actually selects a caption track, but only once the captions
+        // module has genuinely finished loading (getOptions lists 'track'
+        // as an available option) - calling setOption any earlier is what
+        // silently did nothing before. Safe to call speculatively any
+        // number of times (onApiChange fires for other modules too, and
+        // the delayed retries above may run after the toggle switched back
+        // off) - it's a no-op once mvSubtitlesEnabled is false or the
+        // module isn't ready yet.
+        function trySetCaptionsTrack(slot) {
+            if (!mvSubtitlesEnabled) return;
+            const st = players[slot];
+            if (!st.ready) return;
+            try {
+                const opts = st.yt.getOptions('captions');
+                if (opts && opts.indexOf('track') !== -1) st.yt.setOption('captions', 'track', {});
+            } catch (e) { /* module still not ready, or no captions on this video */ }
         }
 
         function clearMvDriftInterval() {
