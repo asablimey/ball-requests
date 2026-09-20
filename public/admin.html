@@ -1263,6 +1263,22 @@
                                 <strong>Subtitles</strong> turns on YouTube's caption track for whatever video is
                                 currently showing, when that video has one available.
                             </p>
+                            <div class="settings-section-label" style="margin-top: 20px;">Video Sync Calibration</div>
+                            <div class="control-bar">
+                                <button class="toggle-btn neutral-status" onclick="nudgeMusicVideoOffset(-250)">Back 250 ms</button>
+                                <button class="toggle-btn neutral-status" onclick="nudgeMusicVideoOffset(-50)">Back 50 ms</button>
+                                <span id="music-video-offset-readout" style="align-self:center; min-width: 90px; text-align:center; font-weight:700;">0 ms</span>
+                                <button class="toggle-btn neutral-status" onclick="nudgeMusicVideoOffset(50)">Forward 50 ms</button>
+                                <button class="toggle-btn neutral-status" onclick="nudgeMusicVideoOffset(250)">Forward 250 ms</button>
+                                <button class="toggle-btn neutral-status" onclick="setMusicVideoOffset(0)">Reset</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 16px; margin-bottom: 0;">
+                                The system syncs the video to Spotify's playback position, but can't hear how long your
+                                speakers take to make the sound (Bluetooth and AirPlay can add a quarter of a second or
+                                more). Set this once per venue: if the picture is <strong>behind</strong> the music, press
+                                <strong>Forward</strong>; if it's <strong>ahead</strong>, press <strong>Back</strong>. Takes
+                                effect within a few seconds.
+                            </p>
                         </div>
                     </div>
 
@@ -1305,27 +1321,27 @@
             </div>
 
             <details class="stat-box" open>
-                <summary>👍 Top Liked Songs</summary>
+                <summary>Top Liked Songs</summary>
                 <div id="stat-top-liked" class="stat-box-body"></div>
             </details>
 
             <details class="stat-box">
-                <summary>👎 Top Disliked Songs</summary>
+                <summary>Top Disliked Songs</summary>
                 <div id="stat-top-disliked" class="stat-box-body"></div>
             </details>
 
             <details class="stat-box">
-                <summary>🏆 Requesters Leaderboard</summary>
+                <summary>Requesters Leaderboard</summary>
                 <div id="stat-requesters" class="stat-box-body"></div>
             </details>
 
             <details class="stat-box">
-                <summary>📜 All Requests</summary>
+                <summary>All Requests</summary>
                 <div id="stat-all-requests" class="stat-box-body"></div>
             </details>
 
             <details class="stat-box">
-                <summary>🚫 Recent Requests (block a guest)</summary>
+                <summary>Recent Requests (block a guest)</summary>
                 <p class="settings-card-hint" style="margin: 0 0 10px 0;">Blocking stops that guest's device from requesting or voting for the rest of this event. Manage blocked guests under Settings → Access &amp; Guests.</p>
                 <div id="stat-recent-requests" class="stat-box-body"></div>
             </details>
@@ -1399,6 +1415,7 @@
         let visualsShowQueue = false;
         let musicVideosEnabled = false;
         let musicVideoSubtitlesEnabled = false;
+        let musicVideoOffsetMs = 0;
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1920,6 +1937,24 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        async function setMusicVideoOffset(ms) {
+            if (!isAuthorized) return;
+            ms = Math.max(-5000, Math.min(5000, Math.round(ms)));
+            musicVideoOffsetMs = ms;
+            renderMusicVideoOffset();
+            await fetch(eventUrl('/api/admin/visuals/music-video-offset'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ offsetMs: ms })
+            });
+            updateDashboard();
+        }
+        function nudgeMusicVideoOffset(delta) { return setMusicVideoOffset(musicVideoOffsetMs + delta); }
+        function renderMusicVideoOffset() {
+            const el = document.getElementById('music-video-offset-readout');
+            if (el) el.textContent = (musicVideoOffsetMs > 0 ? '+' : '') + musicVideoOffsetMs + ' ms';
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2026,8 +2061,8 @@ async function verifyPassword() {
                                 <span class="vote-display-count">${song.downs || 0}</span>
                             </div>
                         </div>
-                        <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">✔ Played</button>
-                        <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">✖ Drop</button>
+                        <button class="btn btn-played" onclick="triggerAction('${song.id}', 'played')">Played</button>
+                        <button class="btn btn-remove" onclick="triggerAction('${song.id}', 'remove')">Drop</button>
                         <button class="drag-handle" type="button" title="Drag to reorder" aria-label="Drag to reorder" onpointerdown="startQueueDrag(event, this)">
                             <svg viewBox="0 0 24 24" fill="currentColor">
                                 <rect x="4" y="6" width="16" height="2.2" rx="1"></rect>
@@ -2255,6 +2290,9 @@ async function verifyPassword() {
                     musicVideoSubtitlesEnabled = !!data.visuals.musicVideoSubtitlesEnabled;
                     musicVideoSubtitlesBtn.innerText = musicVideoSubtitlesEnabled ? "Subtitles: ON" : "Subtitles: OFF";
                     musicVideoSubtitlesBtn.className = musicVideoSubtitlesEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
+
+                    musicVideoOffsetMs = Number.isFinite(data.visuals.musicVideoOffsetMs) ? data.visuals.musicVideoOffsetMs : 0;
+                    renderMusicVideoOffset();
                 }
 
                 if (!filtersInitialized) {
@@ -2455,12 +2493,12 @@ async function verifyPassword() {
                 const likedEl = document.getElementById('stat-top-liked');
                 likedEl.innerHTML = data.topLiked.length === 0
                     ? '<p class="empty-placeholder">No liked songs yet.</p>'
-                    : data.topLiked.map(e => statSongRow(e, `<div class="stat-count up">👍 ${e.count}</div>`)).join('');
+                    : data.topLiked.map(e => statSongRow(e, `<div class="stat-count up">${e.count} ${e.count === 1 ? 'like' : 'likes'}</div>`)).join('');
 
                 const dislikedEl = document.getElementById('stat-top-disliked');
                 dislikedEl.innerHTML = data.topDisliked.length === 0
                     ? '<p class="empty-placeholder">No disliked songs yet.</p>'
-                    : data.topDisliked.map(e => statSongRow(e, `<div class="stat-count down">👎 ${e.count}</div>`)).join('');
+                    : data.topDisliked.map(e => statSongRow(e, `<div class="stat-count down">${e.count} ${e.count === 1 ? 'dislike' : 'dislikes'}</div>`)).join('');
 
                 const reqEl = document.getElementById('stat-requesters');
                 reqEl.innerHTML = data.topRequesters.length === 0
