@@ -611,6 +611,20 @@ function titleLooksDisqualified(title) {
     return DISQUALIFYING_TITLE_PATTERNS.some(re => re.test(title || ''));
 }
 
+// A video whose length differs from the song's by more than this has an
+// intro, skit or outro the audio doesn't - so matching timestamps would put
+// the picture seconds out of step with the music no matter how good the
+// sync loop is. Such videos are rejected outright.
+const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 2500;
+
+// "PT3M45S" / "PT1H2M3S" -> milliseconds (null if unparseable, e.g. live "P0D").
+function parseIsoDurationMs(iso) {
+    const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(iso || '');
+    if (!m) return null;
+    const ms = ((+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0)) * 1000;
+    return ms > 0 ? Math.round(ms) : null;
+}
+
 // Raw YouTube Data API v3 text search, restricted to embeddable videos.
 // Returns [] on any failure (missing key, quota exhausted, network) rather
 // than throwing - a YouTube outage should just mean "no music video for
@@ -622,13 +636,30 @@ async function youtubeSearchVideos(query, maxResults = 10) {
         const res = await fetch(url);
         if (!res.ok) return [];
         const data = await res.json();
-        return (data.items || [])
+        const videos = (data.items || [])
             .map(item => ({
                 videoId: item.id?.videoId,
                 title: item.snippet?.title || '',
-                channelTitle: item.snippet?.channelTitle || ''
+                channelTitle: item.snippet?.channelTitle || '',
+                durationMs: null
             }))
             .filter(v => v.videoId);
+        // One cheap videos.list call (1 quota unit for all candidates) to get
+        // each video's real length. If it fails, durationMs stays null and the
+        // duration rule is skipped rather than blocking every video.
+        if (videos.length > 0) {
+            try {
+                const dRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videos.map(v => v.videoId).join(',')}&key=${YOUTUBE_API_KEY}`);
+                if (dRes.ok) {
+                    const dData = await dRes.json();
+                    const byId = new Map((dData.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
+                    videos.forEach(v => { v.durationMs = byId.get(v.videoId) ?? null; });
+                }
+            } catch (e) {
+                console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
+            }
+        }
+        return videos;
     } catch (e) {
         console.error('[MUSIC VIDEO] YouTube search failed:', e.message);
         return [];
@@ -640,11 +671,15 @@ async function youtubeSearchVideos(query, maxResults = 10) {
 // that hasn't already failed sync/playback for this exact track - see
 // excludeVideoIds) is the one offered. No candidate passing means no
 // match at all, not a fallback to a looser rule.
-function pickBestMusicVideo(candidates, artistNames, excludeVideoIds) {
+function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs) {
+    const durationMatches = v =>
+        !trackDurationMs || typeof v.durationMs !== 'number' ||
+        Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS;
     return candidates.find(v =>
         !excludeVideoIds.has(v.videoId) &&
         !titleLooksDisqualified(v.title) &&
-        channelMatchesAnyArtist(v.channelTitle, artistNames)
+        channelMatchesAnyArtist(v.channelTitle, artistNames) &&
+        durationMatches(v)
     ) || null;
 }
 
@@ -660,6 +695,7 @@ function ensureVisualsConfigs(event) {
     for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
         if (typeof v[key] !== 'boolean') v[key] = false;
     }
+    if (!Number.isFinite(v.musicVideoOffsetMs)) v.musicVideoOffsetMs = 0;
     return v;
 }
 
@@ -1485,7 +1521,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
         const displayName = escapeHtml(event.systemConfigs.eventName || event.slug);
         res.send(`
             <html><body style="font-family: sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.5;">
-                <h2>Spotify connected ✅</h2>
+                <h2>Spotify connected</h2>
                 <p>Auto-queueing is now active for <strong>${displayName}</strong>, and this connection is saved - it'll still be there after a server restart.</p>
                 <p><a href="/e/${encodeURIComponent(event.slug)}/admin">Back to the admin dashboard</a></p>
             </body></html>
@@ -2710,6 +2746,19 @@ app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute(
 app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
 
+// Manual video sync calibration. Positive = show the video further into the
+// song than Spotify reports (fixes a picture that lags the music); negative
+// = the reverse. Compensates for speaker/Bluetooth/AirPlay delay, which
+// Spotify's progress figure knows nothing about.
+app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
+    const ms = Math.round(Number((req.body || {}).offsetMs));
+    if (!Number.isFinite(ms)) return res.status(400).json({ error: 'offsetMs must be a number.' });
+    const clamped = Math.max(-5000, Math.min(5000, ms));
+    ensureVisualsConfigs(req.event).musicVideoOffsetMs = clamped;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, offsetMs: clamped });
+});
+
 // Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
 // playback, but only if this toggle was the thing that paused it.
 app.post('/e/:slug/api/admin/visuals/toggle-mute-all', async (req, res) => {
@@ -3099,10 +3148,17 @@ async function syncNowPlayingForEvent(event) {
         // one after the other - these are independent reads, and awaiting them
         // sequentially was roughly doubling the round-trip time of every sync
         // tick for no reason.
+        // Progress is read at some moment DURING the player request, not when
+        // the queue call (the slower of the two) finally finishes - so the
+        // capture time recorded below is the midpoint of the player request
+        // itself. Stamping it with the end of Promise.all made every
+        // reading look fresher than it was, i.e. the video ran behind.
+        const requestedAt = Date.now();
+        let playerReceivedAt = requestedAt;
         const [res, queueRes] = await Promise.all([
             fetch('https://api.spotify.com/v1/me/player', {
                 headers: { 'Authorization': `Bearer ${token}` }
-            }),
+            }).then(r => { playerReceivedAt = Date.now(); return r; }),
             fetch('https://api.spotify.com/v1/me/player/queue', {
                 headers: { 'Authorization': `Bearer ${token}` }
             }).catch(err => {
@@ -3139,6 +3195,7 @@ async function syncNowPlayingForEvent(event) {
             progressMs: data.progress_ms || 0,
             durationMs: item?.duration_ms || 0,
             updatedAt: Date.now(),
+            progressCapturedAt: Math.round((requestedAt + playerReceivedAt) / 2),
             upcoming,
             deviceName: data.device?.name || null,
             volumePercent: typeof data.device?.volume_percent === 'number' ? data.device.volume_percent : null,
@@ -3347,7 +3404,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
         const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
-        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds);
+        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs);
         runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null };
     }
 
@@ -3359,7 +3416,12 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         progressMs: np.progressMs,
         durationMs: np.durationMs,
         isPlaying: np.isPlaying,
-        updatedAt: np.updatedAt,
+        // updatedAt = when Spotify's progress was actually read; serverNow = the
+        // server's clock at this instant. The display uses the DIFFERENCE of the
+        // two (both server clock) so its own clock being off can't skew sync.
+        updatedAt: np.progressCapturedAt || np.updatedAt,
+        serverNow: Date.now(),
+        offsetMs: vcfg.musicVideoOffsetMs,
         subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled
     });
 });
