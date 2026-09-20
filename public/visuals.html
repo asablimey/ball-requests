@@ -1105,11 +1105,24 @@
             }
         }
 
+        // How far ahead of the raw song position the video should always
+        // target. Real-world audio output has its own latency (Bluetooth
+        // speakers, the playback device's own buffering) that the video
+        // pipeline doesn't share, so even a "perfectly" synced video will
+        // consistently look a little late against the audio - the fix isn't
+        // tighter drift correction, it's aiming a bit further ahead in the
+        // first place. One knob, applied everywhere the target position is
+        // used (initial seek, continuous correction, and handoff cuts), so
+        // it only ever needs adjusting in this one spot. Positive = video
+        // moves ahead (use this if audio is ahead of the video, i.e. the
+        // video looks late); negative = video moves back.
+        const MV_VIDEO_LEAD_MS = 250;
+
         // Where the video SHOULD be right now, in seconds.
         function mvTargetSec() {
             if (!mvClock) return 0;
             const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
-            return Math.max(0, posMs / 1000);
+            return Math.max(0, (posMs + MV_VIDEO_LEAD_MS) / 1000);
         }
 
         function mvSampleReading() {
