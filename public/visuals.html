@@ -896,6 +896,16 @@
         let mvDriftInterval = null;
         let mvConsecutiveBigDrifts = 0;
         let mvSubtitlesEnabled = false;
+        // RULE: once a video is on screen and playing, it finishes. These
+        // support that: a video is never torn down for drift or a passing
+        // "no match" reading - only for an admin override, a genuinely new
+        // song, or a hard playback error that a couple of reloads can't fix.
+        let mvFlaggedBad = false;        // drifted badly while on screen: kept playing, blacklisted for next time
+        let mvErrorRetries = 0;          // reload attempts after a mid-play player error
+        let mvSoftMissSince = null;      // first "no match" reading for the SAME song (or no song info at all)
+        const MV_SOFT_MISS_GRACE_MS = 20000;
+        const MV_FLAGGED_SETTLE_MS = 15000; // flagged video is re-seeked at most this often (no black flashing)
+        const MV_MAX_ERROR_RETRIES = 2;
 
         // The next song's video, preloading in the background slot while
         // the current one is still up. Cleared the moment it either cuts
@@ -1024,7 +1034,7 @@
                         // the pending (preloading) slot it just means the
                         // handoff to it can't happen - the current video
                         // simply keeps playing.
-                        onError: () => { handleSlotError(slot); }
+                        onError: (e) => { handleSlotError(slot, e && e.data); }
                     }
                 });
             });
@@ -1050,6 +1060,7 @@
             return function (e) {
                 const st = players[slot];
                 if (e.data === YT.PlayerState.PLAYING) {
+                    if (mvSubtitlesEnabled) trySetCaptionsTrack(slot);
                     if (st.seekIssuedAt) {
                         const lat = Date.now() - st.seekIssuedAt;
                         st.seekIssuedAt = null;
@@ -1076,8 +1087,18 @@
             };
         }
 
-        function handleSlotError(slot) {
+        function handleSlotError(slot, code) {
             if (slot === activeSlot) {
+                // Already on screen and an error hits mid-play (code 5 and
+                // friends are often transient): reload the same video at the
+                // right spot rather than dropping it. 100/101/150 mean the
+                // video genuinely can't be played, so those give up at once.
+                const permanent = code === 100 || code === 101 || code === 150;
+                if (mvRevealed && !permanent && mvErrorRetries < MV_MAX_ERROR_RETRIES && currentVideoId) {
+                    mvErrorRetries++;
+                    loadIntoSlot(slot, currentVideoId);
+                    return;
+                }
                 reportVideoFailureAndStop();
             } else if (slot === pendingSlot) {
                 const failedTrackId = pendingTrackId;
@@ -1134,55 +1155,67 @@
         }
 
         // Applies the admin's Subtitles toggle to one slot's player.
-        // Captions are a per-video YouTube module, not something set once at
-        // player creation, so this re-applies on every new video load as
-        // well as whenever the toggle itself changes. A video with no
-        // caption track available just does nothing when asked. Applying it
-        // to a slot that's still preloading (not yet on screen) is harmless
-        // and means there's no visible pop when it becomes active.
+        // Captions are a per-video YouTube module, so this re-runs on every
+        // new video load as well as whenever the toggle itself changes.
         //
-        // Turning captions ON is two steps, not one: loadModule('captions')
-        // only asks YouTube to start loading the module - it does NOT mean
-        // the module is ready the instant this call returns. Calling
-        // setOption right after loadModule (the old code here) ran before
-        // the module had actually loaded almost every time, so it silently
-        // selected nothing and captions never appeared. trySetCaptionsTrack
-        // is what actually does the selecting; it's wired up three ways so
-        // it reliably fires once the module really is ready: the player's
-        // own onApiChange event (the correct signal, per the IFrame API),
-        // plus two short delayed retries as a safety net for the rare case
-        // that event doesn't fire.
+        // How it works (and what was wrong before): the old code selected
+        // a track with setOption('captions', 'track', {}) - but an EMPTY
+        // track object is YouTube's way of turning captions OFF, so even
+        // when the module was ready, the call switched them off/left them
+        // off. Now we ask the module for the video's real track list
+        // (getOption('captions', 'tracklist')), pick one, and select that
+        // exact track. The track list isn't available the instant the
+        // module loads - it fills in once YouTube has fetched the video's
+        // caption info - so the selection is retried (about every 750 ms
+        // for ~15 s) until it sticks, and is also re-tried whenever the
+        // player reports PLAYING or a module change. Each new call bumps
+        // capRun, which cancels any older retry loop for that slot.
+        // A video that genuinely has NO caption track just never gets one.
+        function pickCaptionTrack(list) {
+            if (!Array.isArray(list) || list.length === 0) return null;
+            const en = list.filter(t => /^en/i.test((t && t.languageCode) || ''));
+            const pool = en.length ? en : list;
+            // Prefer a human-made track over an auto-generated ('asr') one.
+            return pool.find(t => t && t.kind !== 'asr') || pool[0];
+        }
+
         function applySubtitlesSetting(slot) {
             const st = players[slot];
             if (!st.ready) return;
+            st.capRun = (st.capRun || 0) + 1;
+            const run = st.capRun;
             try {
                 if (mvSubtitlesEnabled) {
                     st.yt.loadModule('captions');
-                    trySetCaptionsTrack(slot);
-                    setTimeout(() => trySetCaptionsTrack(slot), 400);
-                    setTimeout(() => trySetCaptionsTrack(slot), 1200);
+                    let tries = 0;
+                    const attempt = () => {
+                        if (st.capRun !== run || !mvSubtitlesEnabled) return; // superseded or toggled off
+                        if (trySetCaptionsTrack(slot)) return;                // selected - done
+                        if (++tries < 20) setTimeout(attempt, 750);
+                    };
+                    attempt();
                 } else {
+                    try { st.yt.setOption('captions', 'track', {}); } catch (e) { /* module not loaded - nothing to switch off */ }
                     st.yt.unloadModule('captions');
                 }
-            } catch (e) { /* no caption track on this video, or module not ready yet */ }
+            } catch (e) { /* module not ready yet - the retry/onApiChange paths cover it */ }
         }
 
-        // Actually selects a caption track, but only once the captions
-        // module has genuinely finished loading (getOptions lists 'track'
-        // as an available option) - calling setOption any earlier is what
-        // silently did nothing before. Safe to call speculatively any
-        // number of times (onApiChange fires for other modules too, and
-        // the delayed retries above may run after the toggle switched back
-        // off) - it's a no-op once mvSubtitlesEnabled is false or the
-        // module isn't ready yet.
+        // Selects a caption track if the module has one to offer. Returns
+        // true once a track is selected (or already was), false if it isn't
+        // available yet. Safe to call speculatively any number of times.
         function trySetCaptionsTrack(slot) {
-            if (!mvSubtitlesEnabled) return;
+            if (!mvSubtitlesEnabled) return true;
             const st = players[slot];
-            if (!st.ready) return;
+            if (!st.ready) return false;
             try {
-                const opts = st.yt.getOptions('captions');
-                if (opts && opts.indexOf('track') !== -1) st.yt.setOption('captions', 'track', {});
-            } catch (e) { /* module still not ready, or no captions on this video */ }
+                const track = pickCaptionTrack(st.yt.getOption('captions', 'tracklist'));
+                if (!track) return false;
+                const cur = st.yt.getOption('captions', 'track');
+                if (cur && cur.languageCode && cur.languageCode === track.languageCode) return true;
+                st.yt.setOption('captions', 'track', track);
+                return true;
+            } catch (e) { return false; }
         }
 
         function clearMvDriftInterval() {
@@ -1190,11 +1223,11 @@
             mvConsecutiveBigDrifts = 0;
         }
 
-        function reportSyncFailed(trackId, videoId) {
+        function reportSyncFailed(trackId, videoId, keepCurrent) {
             fetch(eventUrl('/api/music-video/sync-failed'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ trackId, videoId })
+                body: JSON.stringify({ trackId, videoId, keepCurrent: !!keepCurrent })
             }).catch(() => { /* fine either way - ambient/current video is already what's on screen */ });
         }
 
@@ -1351,6 +1384,10 @@
         function mvCheck() {
             const st = players[activeSlot];
             if (!st.ready || !mvClock) return;
+            // A handoff is in flight: mvClock already describes the NEXT song,
+            // so the video still on screen (the previous song's) must not be
+            // "corrected" against it - that used to yank it back to 0:00.
+            if (pendingSlot) return;
             if (st.seekIssuedAt && Date.now() - st.seekIssuedAt > 5000) st.seekIssuedAt = null;
             let state;
             try { state = st.yt.getPlayerState(); } catch (e) { return; }
@@ -1378,11 +1415,20 @@
 
             const driftMs = (cur - mvTargetSec()) * 1000; // positive = video is ahead of the music
             const absMs = Math.abs(driftMs);
-            const settling = Date.now() - mvLastCorrectionAt < MV_SETTLE_MS;
+            const settling = Date.now() - mvLastCorrectionAt < (mvFlaggedBad ? MV_FLAGGED_SETTLE_MS : MV_SETTLE_MS);
 
             if (!settling && absMs > MV_BIG_DRIFT_MS) {
                 mvConsecutiveBigDrifts++;
-                if (mvConsecutiveBigDrifts >= MV_MAX_BIG_DRIFT_CHECKS) { reportVideoFailureAndStop(); return; }
+                if (mvConsecutiveBigDrifts >= MV_MAX_BIG_DRIFT_CHECKS) {
+                    if (!mvRevealed) { reportVideoFailureAndStop(); return; }
+                    // On screen and playing: it FINISHES. Just make sure this
+                    // video isn't offered again for this track next time.
+                    if (!mvFlaggedBad) {
+                        mvFlaggedBad = true;
+                        if (currentVideoTrackId && currentVideoId) reportSyncFailed(currentVideoTrackId, currentVideoId, true);
+                    }
+                    mvConsecutiveBigDrifts = 0;
+                }
             } else if (absMs <= MV_BIG_DRIFT_MS) {
                 mvConsecutiveBigDrifts = 0;
             }
@@ -1456,6 +1502,7 @@
             // picks the new one up automatically from the next tick.
             mvLastCorrectionAt = Date.now();
             mvConsecutiveBigDrifts = 0;
+            mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
             mvLastReading = null;
             mvLastReadingChangedAt = 0;
         }
@@ -1511,6 +1558,7 @@
             // genuinely playing.
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
+            mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
             if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
             loadIntoSlot(activeSlot, videoId);
 
@@ -1551,6 +1599,7 @@
             currentVideoId = null;
             pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
             mvClock = null;
+            mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
             clearMvDriftInterval();
             document.getElementById('mv-logo').classList.remove('is-visible');
             document.getElementById('mv-info-pop').classList.remove('is-visible');
@@ -1594,7 +1643,8 @@
                     mvVideoLeadMs = data.videoOffsetMs;
                 }
 
-                if (visualsForceQueue) {
+                // Show Queue / Mute from the admin are deliberate - they win instantly.
+                if (visualsForceQueue || data.override) {
                     if (musicVideoActive) stopMusicVideo();
                     return;
                 }
@@ -1602,15 +1652,25 @@
                 if (data.enabled && data.matched && data.videoId) {
                     // Always fold the newest reading into the sync clock first.
                     updateMvClock(data, receivedAt);
+                    mvSoftMissSince = null;
                     const inProgressForThisTrack = musicVideoActive &&
                         (currentVideoTrackId === data.trackId || pendingTrackId === data.trackId);
                     if (!inProgressForThisTrack) {
                         startMusicVideo(data.videoId, data.trackId);
                     }
                 } else if (musicVideoActive) {
-                    // No match (or the track this decision was for has
-                    // already moved on) - tear the video down and hand
-                    // back to ambient visuals.
+                    // "No match" is only allowed to end a video that's
+                    // already on screen if the SONG has genuinely changed
+                    // (the server names the new track). A no-match reading
+                    // for the same song - or the server having no song info
+                    // for a moment (schedule edge, Spotify/API blip) - is
+                    // ignored so the video finishes; only if it persists
+                    // well past a blip do we let go.
+                    const songChanged = !!data.trackId && data.trackId !== currentVideoTrackId;
+                    if (mvRevealed && !songChanged) {
+                        if (!mvSoftMissSince) mvSoftMissSince = Date.now();
+                        if (Date.now() - mvSoftMissSince < MV_SOFT_MISS_GRACE_MS) return;
+                    }
                     stopMusicVideo();
                 }
             } catch (e) { /* keep showing whatever's already on screen */ }
