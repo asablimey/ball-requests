@@ -286,7 +286,9 @@
 
     <div id="mute-overlay"></div>
 
-    <script src="https://www.youtube.com/iframe_api"></script>
+    <!-- The YouTube IFrame API is loaded dynamically (with automatic retry
+         if it fails) from inside the script below, not as a static tag -
+         see loadYouTubeApi(). -->
     <script>
         const EVENT_SLUG = location.pathname.split('/')[2] || '';
         function eventUrl(p) { return `/e/${EVENT_SLUG}${p}`; }
@@ -890,11 +892,60 @@
 
         function otherSlot(slot) { return slot === 'a' ? 'b' : 'a'; }
 
+        // The YouTube IFrame API loads over the network like anything else,
+        // and can fail or silently never call back after a network blip -
+        // seen in practice after things like a WiFi reconnect on the
+        // display device. Rather than leave the display stuck on ambient/
+        // queue until someone notices and manually reloads the page, this
+        // loads it dynamically and keeps retrying (with backoff, forever)
+        // until YT.Player actually shows up. Once it does, onReady below
+        // also re-kicks any video load that was already waiting on a slot,
+        // so a request that arrived during an outage isn't lost - it just
+        // resolves late instead of being dropped.
+        let ytApiWatchdog = null;
+        let ytApiLoadAttempts = 0;
+        function loadYouTubeApi() {
+            if (window.YT && window.YT.Player) return; // already loaded (e.g. a retry raced a late success)
+            ytApiLoadAttempts++;
+            const script = document.createElement('script');
+            script.src = 'https://www.youtube.com/iframe_api';
+            script.onerror = () => {
+                script.remove();
+                retryLoadYouTubeApi();
+            };
+            document.head.appendChild(script);
+            // Belt-and-braces: the request can succeed with no error event
+            // and YouTube's own bootstrapping still never call back. Give
+            // up on this attempt and start over if that happens.
+            clearTimeout(ytApiWatchdog);
+            ytApiWatchdog = setTimeout(() => {
+                if (!window.YT || !window.YT.Player) { script.remove(); retryLoadYouTubeApi(); }
+            }, 8000);
+        }
+        function retryLoadYouTubeApi() {
+            const delay = Math.min(2000 * ytApiLoadAttempts, 15000);
+            setTimeout(loadYouTubeApi, delay);
+        }
+        loadYouTubeApi();
+
+        // If a video was already waiting on this slot (either it's the
+        // active slot's video, still loading when the player wasn't ready
+        // yet, or a handoff that was preloading into the pending slot),
+        // pick it back up now instead of waiting for the next poll cycle.
+        function retryLoadIfNeeded(slot) {
+            if (slot === activeSlot && musicVideoActive && !mvRevealed && currentVideoId) {
+                loadIntoSlot(slot, currentVideoId);
+            } else if (slot === pendingSlot && pendingVideoId) {
+                loadIntoSlot(slot, pendingVideoId);
+            }
+        }
+
         // Called by the YouTube IFrame API script once it's finished
         // loading - both players are created once, empty, and reused (via
         // loadVideoById) for every track from then on rather than being
         // torn down and rebuilt each switch.
         window.onYouTubeIframeAPIReady = function () {
+            clearTimeout(ytApiWatchdog);
             ['a', 'b'].forEach(slot => {
                 players[slot].yt = new YT.Player(`yt-player-${slot}`, {
                     width: '100%', height: '100%',
@@ -903,7 +954,11 @@
                         iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1
                     },
                     events: {
-                        onReady: () => { players[slot].ready = true; if (slot === activeSlot) applySubtitlesSetting(slot); },
+                        onReady: () => {
+                            players[slot].ready = true;
+                            if (slot === activeSlot) applySubtitlesSetting(slot);
+                            retryLoadIfNeeded(slot);
+                        },
                         onStateChange: makeYtStateChangeHandler(slot),
                         // A video can fail at actual playback time even after
                         // passing the server-side embeddable check (region
@@ -1309,14 +1364,18 @@
                 loadIntoSlot(slot, videoId);
                 clearTimeout(pendingLoadTimeout);
                 pendingLoadTimeout = setTimeout(() => {
-                    // The incoming video never settled into sync in time -
-                    // drop this handoff attempt (the current video simply
-                    // keeps playing) and blacklist it so it isn't offered
-                    // again for this track.
                     if (pendingSlot === slot && pendingTrackId === trackId) {
                         const failedTrackId = pendingTrackId, failedVideoId = pendingVideoId;
+                        // Only the PLAYER being ready and still not settling
+                        // into sync means the video itself is the problem -
+                        // blacklist it. If the player was never even ready
+                        // (a YouTube API outage - see loadYouTubeApi), that's
+                        // an infrastructure problem, not this video's fault;
+                        // don't poison it. Either way, drop this handoff
+                        // attempt - the current video simply keeps playing.
+                        const playerWasReady = players[slot].ready;
                         pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
-                        reportSyncFailed(failedTrackId, failedVideoId);
+                        if (playerWasReady) reportSyncFailed(failedTrackId, failedVideoId);
                     }
                 }, MV_HANDOFF_TIMEOUT_MS);
                 return;
@@ -1330,11 +1389,22 @@
             if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
             loadIntoSlot(activeSlot, videoId);
 
-            // If it never actually starts playing, stop waiting on it and
-            // blacklist it - ambient visuals have been on screen all along.
+            // If it never actually starts playing, stop waiting on it.
+            // Only blacklist it if the player itself was ready and it STILL
+            // never played - that's the video's fault. If the player never
+            // came up at all (see loadYouTubeApi's retry loop), this is an
+            // infrastructure hiccup, not a bad video - drop back to ambient
+            // without poisoning it, so it's offered again once things
+            // recover (retryLoadIfNeeded also re-kicks it immediately if
+            // the player comes up mid-wait).
             clearTimeout(mvLoadTimeout);
             mvLoadTimeout = setTimeout(() => {
-                if (musicVideoActive && !mvRevealed) reportVideoFailureAndStop();
+                if (!musicVideoActive || mvRevealed) return;
+                if (players[activeSlot].ready) {
+                    reportVideoFailureAndStop();
+                } else {
+                    stopMusicVideo();
+                }
             }, MV_LOAD_TIMEOUT_MS);
 
             clearMvDriftInterval();
