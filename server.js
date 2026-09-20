@@ -708,13 +708,24 @@ function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurat
 // persisted (events.scheduleSave is never called for it), so it's rebuilt
 // fresh on every process restart, same as schedulerRuntime.
 // Admin -> Settings -> Content overrides (Mute Visuals, Mute All, Show Queue,
-// Music Videos, Subtitles). Lazily created so events saved before this
-// feature existed pick up the defaults instead of crashing on undefined.
+// Music Videos, Subtitles, Video Offset). Lazily created so events saved
+// before this feature existed pick up the defaults instead of crashing on
+// undefined.
+const MUSIC_VIDEO_OFFSET_DEFAULT_MS = 600;
+const MUSIC_VIDEO_OFFSET_MIN_MS = -5000;
+const MUSIC_VIDEO_OFFSET_MAX_MS = 5000;
 function ensureVisualsConfigs(event) {
     if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') event.visualsConfigs = {};
     const v = event.visualsConfigs;
     for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
         if (typeof v[key] !== 'boolean') v[key] = false;
+    }
+    // How far ahead (positive) or behind (negative) of the raw Spotify
+    // position the ENTIRE video stream should target - moves where the
+    // whole video is at once, not a one-off nudge. See mvTargetSec() in
+    // visual-display.html, which is the only place this is applied.
+    if (typeof v.musicVideoOffsetMs !== 'number' || !Number.isFinite(v.musicVideoOffsetMs)) {
+        v.musicVideoOffsetMs = MUSIC_VIDEO_OFFSET_DEFAULT_MS;
     }
     return v;
 }
@@ -2769,6 +2780,20 @@ app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute(
 app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
 
+// How far ahead/behind of the raw Spotify position the whole video stream
+// targets - see MUSIC_VIDEO_OFFSET_MIN_MS/MAX_MS. Positive moves the video
+// earlier (use when the video looks late against the audio); negative
+// moves it later.
+app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
+    const { offsetMs } = req.body || {};
+    const parsed = Number(offsetMs);
+    if (!Number.isFinite(parsed)) return res.status(400).json({ error: 'offsetMs must be a number.' });
+    const clamped = Math.max(MUSIC_VIDEO_OFFSET_MIN_MS, Math.min(MUSIC_VIDEO_OFFSET_MAX_MS, Math.round(parsed)));
+    ensureVisualsConfigs(req.event).musicVideoOffsetMs = clamped;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, offsetMs: clamped });
+});
+
 // Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
 // playback, but only if this toggle was the thing that paused it.
 app.post('/e/:slug/api/admin/visuals/toggle-mute-all', async (req, res) => {
@@ -3347,7 +3372,7 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     const vcfg = ensureVisualsConfigs(event);
-    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled };
+    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
 
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
@@ -3431,7 +3456,8 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         // two (both server clock) so its own clock being off can't skew sync.
         updatedAt: np.progressCapturedAt || np.updatedAt,
         serverNow: Date.now(),
-        subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled
+        subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
+        videoOffsetMs: vcfg.musicVideoOffsetMs
     });
 });
 
