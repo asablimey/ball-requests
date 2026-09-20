@@ -234,6 +234,37 @@
         /* Fades out (never pops) so there's no flash when it lifts; it
            comes back instantly, so YouTube's UI never gets a frame in. */
         .video-loading-cover.is-hidden { opacity: 0; transition: opacity 0.3s ease; }
+
+        /* ---------- Music Video overlay: logo + now-playing popup ----------
+           Sit above both slots (z-index above the loading covers) so they
+           survive song-to-song handoffs untouched - only their own
+           visibility classes change, never their DOM position. The logo
+           stays up, gently dimmed, for as long as any video is genuinely
+           on screen; the song-info popup only shows itself in the first
+           and last MV_INFO_POPUP_WINDOW_SEC of each individual video (see
+           mvUpdateOverlay), and is otherwise invisible. */
+        .mv-logo {
+            position: absolute; right: 32px; bottom: 28px; z-index: 8;
+            height: 34px; width: auto; opacity: 0; pointer-events: none;
+            transition: opacity 0.6s ease;
+        }
+        .mv-logo.is-visible { opacity: 0.55; }
+
+        .mv-info-pop {
+            position: absolute; left: 40px; bottom: 26px; z-index: 8;
+            max-width: 60%; pointer-events: none; opacity: 0;
+            transition: opacity 0.6s ease; text-shadow: 0 2px 12px rgba(0,0,0,0.85);
+        }
+        .mv-info-pop.is-visible { opacity: 1; }
+        .mv-info-title {
+            font-family: 'Khula', sans-serif; font-weight: 700; color: #fff;
+            font-size: clamp(1.3rem, 2.6vh, 1.9rem); line-height: 1.15;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .mv-info-artist {
+            color: #d8d8d8; font-size: clamp(0.85rem, 1.6vh, 1.05rem); margin-top: 4px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
     </style>
 </head>
 <body>
@@ -282,6 +313,11 @@
             <div class="video-click-blocker"></div>
             <div class="video-loading-cover" id="video-loading-cover-b"></div>
         </div>
+        <div class="mv-info-pop" id="mv-info-pop">
+            <div class="mv-info-title" id="mv-info-title"></div>
+            <div class="mv-info-artist" id="mv-info-artist"></div>
+        </div>
+        <img class="mv-logo" id="mv-logo" src="/assets/crowddj-logo-white.svg" alt="">
     </div>
 
     <div id="mute-overlay"></div>
@@ -753,6 +789,13 @@
             applyQueueList(document.getElementById('qv-list'), boardRequests, boardUpcoming);
         }
 
+        // Latest known title/artist for whatever's currently playing - the
+        // Music Video overlay's song-info popup (mvUpdateOverlay) reads
+        // these directly rather than polling its own copy, since a video is
+        // only ever shown for the track that's actually playing.
+        let npLiveTitle = '';
+        let npLiveArtist = '';
+
         function updateNowPlaying(data) {
             const card = document.getElementById('qv-now-playing');
             if (!data || !data.connected || !data.title) {
@@ -760,6 +803,8 @@
                 boardTracker.clear();
                 boardUpcoming = [];
                 renderQueueList();
+                npLiveTitle = '';
+                npLiveArtist = '';
                 return;
             }
             card.style.display = 'flex';
@@ -768,6 +813,8 @@
             if (artEl.getAttribute('src') !== art) artEl.setAttribute('src', art);
             document.getElementById('qv-np-title').innerText = data.title;
             document.getElementById('qv-np-artist').innerText = data.artist || '';
+            npLiveTitle = data.title;
+            npLiveArtist = data.artist || '';
             document.getElementById('qv-live-dot').classList.toggle('is-paused', !data.isPlaying);
 
             boardTracker.update(data);
@@ -886,6 +933,9 @@
         const MV_SEEK_THRESHOLD_MS = 900; // does the actual work now, this is just a safety net for real drift
         const MV_SETTLE_MS = 4000;        // grace after a load/seek before judging it
         const MV_BIG_DRIFT_MS = 3000;
+        // How long the song-info popup shows itself at the start and end of
+        // each individual video (not the song) - see mvUpdateOverlay.
+        const MV_INFO_POPUP_WINDOW_SEC = 15;
         // Two settled checks in a row still this far out = the video can't
         // sync at all: blacklist it and fall back to ambient visuals.
         const MV_MAX_BIG_DRIFT_CHECKS = 2;
@@ -1200,7 +1250,44 @@
         function mvTick() {
             mvSampleReading();
             pendingCheck();
+            mvUpdateOverlay();
             if (++mvSampleCount % MV_CHECK_EVERY_N_SAMPLES === 0) mvCheck();
+        }
+
+        // Drives the logo + song-info popup over whatever video is on
+        // screen. Always reads the CURRENTLY ACTIVE slot's own player, so a
+        // song-to-song handoff (completeHandoff swaps activeSlot with no
+        // transition) naturally carries the popup's start/end window over
+        // to the new video with no special-casing needed here - the "last
+        // 15s" of the outgoing video and the "first 15s" of the incoming
+        // one are just whichever slot happens to be active at the moment
+        // this runs. The logo itself only tracks mvRevealed, so it's up
+        // for the whole time any video is genuinely on screen.
+        function mvUpdateOverlay() {
+            const logo = document.getElementById('mv-logo');
+            const pop = document.getElementById('mv-info-pop');
+            if (!mvRevealed) {
+                logo.classList.remove('is-visible');
+                pop.classList.remove('is-visible');
+                return;
+            }
+            logo.classList.add('is-visible');
+
+            const st = players[activeSlot];
+            let cur = null, dur = 0;
+            if (st.ready) {
+                try { cur = st.yt.getCurrentTime(); } catch (e) { /* not ready yet */ }
+                try { dur = st.yt.getDuration(); } catch (e) { /* not ready yet */ }
+            }
+            const nearStart = cur !== null && cur <= MV_INFO_POPUP_WINDOW_SEC;
+            const nearEnd = cur !== null && dur > 0 && (dur - cur) <= MV_INFO_POPUP_WINDOW_SEC;
+            if (nearStart || nearEnd) {
+                document.getElementById('mv-info-title').innerText = npLiveTitle;
+                document.getElementById('mv-info-artist').innerText = npLiveArtist;
+                pop.classList.add('is-visible');
+            } else {
+                pop.classList.remove('is-visible');
+            }
         }
 
         function mvSetRate(slot, rate) {
@@ -1427,6 +1514,8 @@
             pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
             mvClock = null;
             clearMvDriftInterval();
+            document.getElementById('mv-logo').classList.remove('is-visible');
+            document.getElementById('mv-info-pop').classList.remove('is-visible');
             ['a', 'b'].forEach(slot => {
                 const st = players[slot];
                 if (st.ready) {
