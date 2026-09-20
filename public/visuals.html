@@ -781,16 +781,22 @@
            poll using only SERVER timestamps for the age of Spotify's reading
            (so this screen's clock being off can't shift the video), and
            smoothed so Spotify's own +/- few hundred ms progress jitter is
-           averaged out instead of being chased with constant seeks.
-           mvOffsetMs is the admin's manual calibration (speaker/Bluetooth
-           delay) - the one thing that can't be measured from here. */
+           averaged out instead of being chased with constant seeks. */
         let mvClock = null;
-        let mvOffsetMs = 0;
         let mvSeekLatencyMs = 800;   // learned: how long a load/seek takes to actually resume
         let mvSeekIssuedAt = null;
         let mvLastCorrectionAt = 0;
         let mvCurrentRate = 1;
-        const MV_CHECK_INTERVAL_MS = 500;
+        // The YouTube player's time reading may update in coarse steps rather
+        // than continuously, which would make the video look further behind
+        // than it is. So it's sampled often, and the moment the reading last
+        // CHANGED is used to extrapolate to "now" (no effect if it already
+        // updates smoothly).
+        let mvLastReading = null;
+        let mvLastReadingChangedAt = 0;
+        let mvSampleCount = 0;
+        const MV_SAMPLE_INTERVAL_MS = 50;
+        const MV_CHECK_EVERY_N_SAMPLES = 10; // decisions every ~500 ms
         const MV_NUDGE_START_MS = 200;    // start speed-nudging beyond this drift
         const MV_NUDGE_STOP_MS = 100;     // ...and stop once back inside this
         const MV_SEEK_THRESHOLD_MS = 1200; // too far to nudge - seek instead
@@ -901,7 +907,6 @@
             const ageMs = data.isPlaying ? Math.max(0, serverNow - (data.updatedAt || serverNow)) : 0;
             const progressNow = (data.progressMs || 0) + ageMs;
             const newBase = receivedAt - progressNow;
-            mvOffsetMs = Number.isFinite(data.offsetMs) ? data.offsetMs : 0;
             const isPlaying = !!data.isPlaying;
             if (!mvClock || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > 1500) {
                 mvClock = { base: newBase, isPlaying, pausedPosMs: data.progressMs || 0, trackId: data.trackId };
@@ -915,7 +920,24 @@
         function mvTargetSec() {
             if (!mvClock) return 0;
             const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
-            return Math.max(0, (posMs + mvOffsetMs) / 1000);
+            return Math.max(0, posMs / 1000);
+        }
+
+        function mvSampleReading() {
+            let cur;
+            try { cur = ytPlayer.getCurrentTime(); } catch (e) { return; }
+            if (typeof cur !== 'number') return;
+            if (cur !== mvLastReading) { mvLastReading = cur; mvLastReadingChangedAt = Date.now(); }
+        }
+        // Best estimate of where the video actually is right now.
+        function mvVideoPositionSec() {
+            if (mvLastReading === null) return null;
+            const sinceChange = Math.min(Date.now() - mvLastReadingChangedAt, 600);
+            return mvLastReading + (sinceChange / 1000) * (mvCurrentRate || 1);
+        }
+        function mvTick() {
+            mvSampleReading();
+            if (++mvSampleCount % MV_CHECK_EVERY_N_SAMPLES === 0) mvCheck();
         }
 
         function mvSetRate(rate) {
@@ -932,15 +954,16 @@
             ytPlayer.seekTo(sec + mvSeekLatencyMs / 1000, true);
         }
 
-        // Runs every MV_CHECK_INTERVAL_MS. Small drift is corrected by briefly
+        // Runs about every 500 ms. Small drift is corrected by briefly
         // nudging playback speed (invisible on a muted video, no stutter);
         // only a large drift triggers a seek.
         function mvCheck() {
             if (!ytPlayerReady || !mvClock) return;
             if (mvSeekIssuedAt && Date.now() - mvSeekIssuedAt > 5000) mvSeekIssuedAt = null;
-            let state, cur;
-            try { state = ytPlayer.getPlayerState(); cur = ytPlayer.getCurrentTime(); } catch (e) { return; }
-            if (typeof cur !== 'number') return;
+            let state;
+            try { state = ytPlayer.getPlayerState(); } catch (e) { return; }
+            const cur = mvVideoPositionSec();
+            if (cur === null) return;
 
             if (!mvClock.isPlaying) {
                 if (state === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
@@ -993,7 +1016,9 @@
             }
 
             clearMvDriftInterval();
-            mvDriftInterval = setInterval(mvCheck, MV_CHECK_INTERVAL_MS);
+            mvLastReading = null;
+            mvSampleCount = 0;
+            mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
         }
 
         function stopMusicVideo() {
