@@ -1741,6 +1741,24 @@
             document.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
         }
 
+        // What day (0=Sun..6=Sat) it currently is in the event's own
+        // timezone - the same zone every rule's day/time field is read in
+        // (see the Timezone dropdown's tooltip) - falling back to the
+        // browser's own local timezone only for an event that's never had
+        // one saved yet. Used to put "today" first in the day list below
+        // rather than always starting that list on Sunday regardless of
+        // what day it actually is.
+        function currentDayIndexInEventTz() {
+            try {
+                const tz = eventTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date());
+                const idx = DAY_NAMES.indexOf(weekday);
+                return idx === -1 ? new Date().getDay() : idx;
+            } catch (e) {
+                return new Date().getDay();
+            }
+        }
+
         // Builds all 7 day boxes, each with its own hour ruler and 4 real,
         // data-backed lanes: crowdDJ Music, Karaoke, Ambient Visuals, and
         // Music Videos. This rebuilds everything - including during a
@@ -1752,8 +1770,14 @@
             const container = document.getElementById('day-boxes');
             const conflictingIds = findConflictingRuleIds();
             const trackWidth = hourPx * 24;
+            // Today first, then tomorrow, ... , yesterday last - the
+            // underlying dayIdx values are untouched (still 0=Sun..6=Sat,
+            // exactly what rule.days stores), only the order they're
+            // rendered in changes.
+            const todayIdx = currentDayIndexInEventTz();
+            const dayOrder = DAY_NAMES.map((_, i) => (todayIdx + i) % 7);
 
-            container.innerHTML = DAY_NAMES.map((dayName, dayIdx) => {
+            container.innerHTML = dayOrder.map(dayIdx => {
                 const laneEmptyHint = laneType => rules.some(r => r.days.includes(dayIdx) && ruleLaneType(r) === laneType)
                     ? ''
                     : laneType === 'ambient'
