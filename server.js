@@ -615,7 +615,7 @@ function titleLooksDisqualified(title) {
 // intro, skit or outro the audio doesn't - so matching timestamps would put
 // the picture seconds out of step with the music no matter how good the
 // sync loop is. Such videos are rejected outright.
-const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 2500;
+const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 2000;
 
 // "PT3M45S" / "PT1H2M3S" -> milliseconds (null if unparseable, e.g. live "P0D").
 function parseIsoDurationMs(iso) {
@@ -645,8 +645,9 @@ async function youtubeSearchVideos(query, maxResults = 10) {
             }))
             .filter(v => v.videoId);
         // One cheap videos.list call (1 quota unit for all candidates) to get
-        // each video's real length. If it fails, durationMs stays null and the
-        // duration rule is skipped rather than blocking every video.
+        // each video's real length. If it fails, durationMs stays null and
+        // pickBestMusicVideo then refuses every candidate: a video whose
+        // length can't be checked can't be trusted to be in sync.
         if (videos.length > 0) {
             try {
                 const dRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videos.map(v => v.videoId).join(',')}&key=${YOUTUBE_API_KEY}`);
@@ -672,15 +673,21 @@ async function youtubeSearchVideos(query, maxResults = 10) {
 // excludeVideoIds) is the one offered. No candidate passing means no
 // match at all, not a fallback to a looser rule.
 function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs) {
-    const durationMatches = v =>
-        !trackDurationMs || typeof v.durationMs !== 'number' ||
-        Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS;
-    return candidates.find(v =>
-        !excludeVideoIds.has(v.videoId) &&
-        !titleLooksDisqualified(v.title) &&
-        channelMatchesAnyArtist(v.channelTitle, artistNames) &&
-        durationMatches(v)
-    ) || null;
+    if (!trackDurationMs) return null;
+    const eligible = [];
+    candidates.forEach((v, index) => {
+        if (excludeVideoIds.has(v.videoId)) return;
+        if (titleLooksDisqualified(v.title)) return;
+        if (!channelMatchesAnyArtist(v.channelTitle, artistNames)) return;
+        if (typeof v.durationMs !== 'number') return; // length unknown -> can't verify sync
+        const diff = Math.abs(v.durationMs - trackDurationMs);
+        if (diff > MUSIC_VIDEO_MAX_DURATION_DIFF_MS) return;
+        // Closest length wins (bucketed to 0.5s so YouTube's whole-second
+        // rounding doesn't outrank search relevance); ties keep search order.
+        eligible.push({ v, bucket: Math.round(diff / 500), index });
+    });
+    eligible.sort((a, b) => (a.bucket - b.bucket) || (a.index - b.index));
+    return eligible.length ? eligible[0].v : null;
 }
 
 // Per-event runtime state for the feature above - none of this is
@@ -695,7 +702,6 @@ function ensureVisualsConfigs(event) {
     for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
         if (typeof v[key] !== 'boolean') v[key] = false;
     }
-    if (!Number.isFinite(v.musicVideoOffsetMs)) v.musicVideoOffsetMs = 0;
     return v;
 }
 
@@ -2746,19 +2752,6 @@ app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute(
 app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
 
-// Manual video sync calibration. Positive = show the video further into the
-// song than Spotify reports (fixes a picture that lags the music); negative
-// = the reverse. Compensates for speaker/Bluetooth/AirPlay delay, which
-// Spotify's progress figure knows nothing about.
-app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
-    const ms = Math.round(Number((req.body || {}).offsetMs));
-    if (!Number.isFinite(ms)) return res.status(400).json({ error: 'offsetMs must be a number.' });
-    const clamped = Math.max(-5000, Math.min(5000, ms));
-    ensureVisualsConfigs(req.event).musicVideoOffsetMs = clamped;
-    events.scheduleSave(req.event.slug);
-    res.json({ success: true, offsetMs: clamped });
-});
-
 // Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
 // playback, but only if this toggle was the thing that paused it.
 app.post('/e/:slug/api/admin/visuals/toggle-mute-all', async (req, res) => {
@@ -3421,7 +3414,6 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         // two (both server clock) so its own clock being off can't skew sync.
         updatedAt: np.progressCapturedAt || np.updatedAt,
         serverNow: Date.now(),
-        offsetMs: vcfg.musicVideoOffsetMs,
         subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled
     });
 });
