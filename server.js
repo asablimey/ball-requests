@@ -630,11 +630,18 @@ function parseIsoDurationMs(iso) {
 // than throwing - a YouTube outage should just mean "no music video for
 // this track", never a broken poll for the display.
 async function youtubeSearchVideos(query, maxResults = 10) {
-    if (!YOUTUBE_API_KEY) return [];
+    if (!YOUTUBE_API_KEY) {
+        console.error('[MUSIC VIDEO] YOUTUBE_API_KEY is not set - skipping search.');
+        return [];
+    }
     try {
         const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${maxResults}&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
         const res = await fetch(url);
-        if (!res.ok) return [];
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            console.error(`[MUSIC VIDEO] YouTube search returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
+            return [];
+        }
         const data = await res.json();
         const videos = (data.items || [])
             .map(item => ({
@@ -706,23 +713,16 @@ function ensureVisualsConfigs(event) {
 }
 
 function ensureMusicVideoRuntime(event) {
-    if (!event.musicVideoRuntime) {
+    // Guard against a Set that got flattened to {} by JSON.stringify on a
+    // Redis save (Sets don't survive round-tripping through JSON) - treat
+    // that the same as "doesn't exist yet" instead of trusting it blindly.
+    if (!event.musicVideoRuntime || !(event.musicVideoRuntime.blacklist instanceof Set)) {
         event.musicVideoRuntime = {
             cache: { trackId: null, searchedTrackId: null, matched: false, videoId: null },
             blacklist: new Set(), // "trackId|videoId" pairs that already failed sync/playback once
             cycleCount: 0,
             lastActiveRuleId: undefined
         };
-    }
-    // musicVideoRuntime survives a JSON.stringify/parse round trip (event
-    // persistence, server restart), but a Set does not - it comes back as
-    // "{}". Repair it here instead of only on first creation, or every
-    // route that reads runtime.blacklist crashes after any restart.
-    if (!(event.musicVideoRuntime.blacklist instanceof Set)) {
-        const stale = event.musicVideoRuntime.blacklist;
-        event.musicVideoRuntime.blacklist = new Set(
-            Array.isArray(stale) ? stale : []
-        );
     }
     return event.musicVideoRuntime;
 }
