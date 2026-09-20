@@ -577,10 +577,12 @@ function getActiveMusicVideoRule(event, now = new Date()) {
 // --- Music Videos matching (YouTube) --------------------------------------
 // Deliberately strict, per explicit rule: a video is only ever offered if
 // (1) it comes from a channel that IS one of the track's own artists -
-// never a fan channel, compilation, reaction video, etc. - and (2) it
-// isn't a lyric video or an audio-only upload. There's no "good enough"
-// tier below that; anything that fails either check is treated exactly
-// like no match at all, and the display falls back to Ambient Visuals.
+// never a fan channel, compilation, reaction video, etc. - (2) its title
+// actually names this song, not just any video of theirs with a similar
+// runtime, and (3) it isn't a lyric video or an audio-only upload. There's
+// no "good enough" tier below that; anything that fails any of them is
+// treated exactly like no match at all, and the display falls back to
+// Ambient Visuals.
 
 // Strips everything but letters/digits down to lowercase so "Ed Sheeran",
 // "EdSheeranVEVO", and "ed-sheeran official" all normalize to something
@@ -681,18 +683,43 @@ async function youtubeSearchVideos(query, maxResults = 10) {
     }
 }
 
+// Strips a bracketed qualifier - "(feat. X)", "(Radio Edit)", "[Explicit]" -
+// and a trailing "- feat./ft./featuring ..." tag, leaving just the song's
+// own name to match against. Candidate video titles almost always keep this
+// core intact even when they spell out featured artists differently
+// (feat./ft./featuring), add their own "(Official Music Video)" suffix, or
+// drop a "(Radio Edit)" the track has - the surrounding decoration differs
+// far more often than the actual song title does.
+function coreSongTitle(title) {
+    return (title || '')
+        .replace(/[\(\[][^\)\]]*[\)\]]/g, '')
+        .replace(/\s*-\s*(feat\.?|ft\.?|featuring)\s.*$/i, '')
+        .trim();
+}
+
 // Runs every strictness rule in one place, in order, against the search
 // results for one track - the first candidate to pass all of them (and
 // that hasn't already failed sync/playback for this exact track - see
 // excludeVideoIds) is the one offered. No candidate passing means no
 // match at all, not a fallback to a looser rule.
-function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs) {
+function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle) {
     if (!trackDurationMs) return null;
+    // Without this, a candidate only had to come from the right channel,
+    // not lyric/audio, and land within the duration window to be offered -
+    // nothing ever actually confirmed it was a video FOR THIS SONG. An
+    // artist with several tracks of similar length could have a totally
+    // different one of their own videos picked and pass every check. This
+    // is deliberately a substring match on the core title (not exact
+    // equality) so "Official Video" suffixes, punctuation, and spelled-out
+    // features don't sink an otherwise-correct match.
+    const trackCore = normalizeForMatch(coreSongTitle(trackTitle));
+    if (!trackCore) return null;
     const eligible = [];
     candidates.forEach((v, index) => {
         if (excludeVideoIds.has(v.videoId)) return;
         if (titleLooksDisqualified(v.title)) return;
         if (!channelMatchesAnyArtist(v.channelTitle, artistNames)) return;
+        if (!normalizeForMatch(v.title).includes(trackCore)) return;
         if (typeof v.durationMs !== 'number') return; // length unknown -> can't verify sync
         const diff = Math.abs(v.durationMs - trackDurationMs);
         if (diff > MUSIC_VIDEO_MAX_DURATION_DIFF_MS) return;
@@ -3490,7 +3517,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
         const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
-        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs);
+        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title);
         runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null };
     }
 
