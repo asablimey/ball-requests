@@ -191,31 +191,49 @@
            itself is letterboxed inside the taller player, so it lands
            exactly on the frame with nothing cropped. If any strip of
            YouTube UI ever peeks through, increase --yt-pad. */
-        #video-frame {
+        /* Two independent player slots stacked on top of each other, each
+           with its own YouTube player, click-blocker and loading-cover.
+           Only one is ever "is-active" (on screen) at a time. Song-to-song
+           video changes preload the NEXT video into the other, currently
+           invisible, slot while the current one keeps playing, then flip
+           which slot is active with NO transition (see swapActiveSlot in
+           the script) - a true hard cut, never a fade through black or a
+           dip back to ambient visuals. The very first video of a "video
+           session" (coming from ambient) just loads into the already-
+           active slot and reveals it the normal crossfade way below. */
+        .video-slot {
+            position: absolute; inset: 0; opacity: 0; pointer-events: none;
+        }
+        .video-slot.is-active { opacity: 1; z-index: 1; }
+        .video-frame {
             --yt-pad: 14%;
             position: absolute; left: 50%; top: 50%;
             width: min(100vw, 177.7778vh); height: min(56.25vw, 100vh);
             transform: translate(-50%, -50%); overflow: hidden; background: #000;
         }
-        #yt-player, #yt-player iframe {
+        .video-frame .yt-player-el, .video-frame .yt-player-el iframe {
             position: absolute; left: 0; top: calc(-1 * var(--yt-pad));
             width: 100% !important; height: calc(100% + 2 * var(--yt-pad)) !important; border: 0;
         }
-        #video-click-blocker {
+        .video-click-blocker {
             position: absolute; inset: 0; z-index: 5;
         }
-        /* Covers the iframe any time it's not confirmed actively PLAYING -
-           loading, buffering, cued, paused, ended. YouTube's own UI for all
-           of those (the big play button before autoplay kicks in, the
-           paused/"suggested videos" screen, the end-of-video screen) shows
-           underneath this and is never seen. Opaque black so it reads as a
-           normal hard cut, same as any other slide change on this screen. */
-        #video-loading-cover {
+        /* Covers a slot's iframe any time IT'S the active slot and its video
+           isn't confirmed actively PLAYING - loading, buffering, cued,
+           paused, ended. YouTube's own UI for all of those (the big play
+           button before autoplay kicks in, the paused/"suggested videos"
+           screen, the end-of-video screen) shows underneath this and is
+           never seen. Opaque black so it reads as a normal hard cut, same
+           as any other slide change on this screen. The standby slot's
+           cover is irrelevant while it's off screen (opacity 0 already
+           hides everything in it), and is put back the instant it stops
+           being active so it's ready next time it's reused. */
+        .video-loading-cover {
             position: absolute; inset: 0; z-index: 6; background: #000; opacity: 1;
         }
         /* Fades out (never pops) so there's no flash when it lifts; it
            comes back instantly, so YouTube's UI never gets a frame in. */
-        #video-loading-cover.is-hidden { opacity: 0; transition: opacity 0.3s ease; }
+        .video-loading-cover.is-hidden { opacity: 0; transition: opacity 0.3s ease; }
     </style>
 </head>
 <body>
@@ -254,9 +272,16 @@
          same time as the forced Show Queue override (Admin -> Settings ->
          Content), which always wins - see pollMusicVideo. -->
     <div id="video-view">
-        <div id="video-frame"><div id="yt-player"></div></div>
-        <div id="video-click-blocker"></div>
-        <div id="video-loading-cover"></div>
+        <div class="video-slot is-active" id="video-slot-a">
+            <div class="video-frame"><div class="yt-player-el" id="yt-player-a"></div></div>
+            <div class="video-click-blocker"></div>
+            <div class="video-loading-cover" id="video-loading-cover-a"></div>
+        </div>
+        <div class="video-slot" id="video-slot-b">
+            <div class="video-frame"><div class="yt-player-el" id="yt-player-b"></div></div>
+            <div class="video-click-blocker"></div>
+            <div class="video-loading-cover" id="video-loading-cover-b"></div>
+        </div>
     </div>
 
     <div id="mute-overlay"></div>
@@ -787,19 +812,52 @@
              feature never blanks the screen on its own - it only ever
              substitutes for the ambient layer.
            ========================================================= */
-        let ytPlayer = null;
-        let ytPlayerReady = false;
+        /* ---- Two-slot player model ----
+           Two YouTube players ("a" and "b") sit stacked on top of each
+           other; only one is ever the "active" (on-screen) slot at a time.
+           When one song's video hands off to the next song's video, the
+           incoming video is preloaded into the OTHER, still-invisible slot
+           while the current one keeps playing normally, and only once the
+           incoming one is confirmed genuinely playing AND in sync does the
+           screen swap which slot is active - with no CSS transition, i.e.
+           a hard cut, so two music videos in a row are never separated by
+           black or by a glimpse of ambient visuals. The very first video of
+           a "video session" (coming from ambient, nothing on screen yet)
+           has nothing to cut from, so it just loads into the already-active
+           slot and reveals it the original crossfade way. */
+        function makePlayerState() {
+            return {
+                yt: null, ready: false,
+                lastReading: null, lastReadingChangedAt: 0,
+                currentRate: 1,
+                seekIssuedAt: null,
+                loadTimeout: null
+            };
+        }
+        const players = { a: makePlayerState(), b: makePlayerState() };
+        let activeSlot = 'a';
         let musicVideoActive = false;   // a video has been chosen for the current song and is loading/playing
         let mvRevealed = false;         // ...and is actually on screen (ambient visuals stand down only then)
         let mvRevealTimer = null;
         let mvLoadTimeout = null;
         const MV_REVEAL_DELAY_MS = 700;   // must have been genuinely PLAYING this long before it's shown
         const MV_LOAD_TIMEOUT_MS = 15000; // never started in this long -> give up on it
-        let currentVideoTrackId = null;
+        let currentVideoTrackId = null;   // trackId/videoId of the video currently ON SCREEN (or loading into it)
         let currentVideoId = null;
         let mvDriftInterval = null;
         let mvConsecutiveBigDrifts = 0;
         let mvSubtitlesEnabled = false;
+
+        // The next song's video, preloading in the background slot while
+        // the current one is still up. Cleared the moment it either cuts
+        // over (completeHandoff) or gives up (handoff timeout / error).
+        let pendingSlot = null;
+        let pendingVideoId = null;
+        let pendingTrackId = null;
+        let pendingReadySince = null;   // when it first looked ready to cut to - must hold for MV_HANDOFF_CONFIRM_MS
+        let pendingLoadTimeout = null;
+        const MV_HANDOFF_CONFIRM_MS = 400;  // must be confirmed PLAYING + in sync this long before cutting to it
+        const MV_HANDOFF_TIMEOUT_MS = 15000; // never settles into sync this long -> drop it, keep current video up
 
         /* ---- Sync model ----
            mvClock.base is the (display-clock) moment the song was at 0:00,
@@ -809,15 +867,13 @@
            smoothed so Spotify's own +/- few hundred ms progress jitter is
            averaged out instead of being chased with constant seeks. */
         let mvClock = null;
-        let mvSeekLatencyMs = 800;   // learned: how long a load/seek takes to actually resume
-        let mvSeekIssuedAt = null;
+        let mvSeekLatencyMs = 800;   // learned: how long a load/seek takes to actually resume - shared by both slots
         let mvLastCorrectionAt = 0;
-        let mvCurrentRate = 1;
         // The YouTube player's time reading may update in coarse steps rather
         // than continuously, which would make the video look further behind
         // than it is. So it's sampled often, and the moment the reading last
         // CHANGED is used to extrapolate to "now" (no effect if it already
-        // updates smoothly).
+        // updates smoothly). Tracks whichever slot is currently active.
         let mvLastReading = null;
         let mvLastReadingChangedAt = 0;
         let mvSampleCount = 0;
@@ -832,76 +888,110 @@
         // sync at all: blacklist it and fall back to ambient visuals.
         const MV_MAX_BIG_DRIFT_CHECKS = 2;
 
+        function otherSlot(slot) { return slot === 'a' ? 'b' : 'a'; }
+
         // Called by the YouTube IFrame API script once it's finished
-        // loading - the player is created once, empty, and reused (via
+        // loading - both players are created once, empty, and reused (via
         // loadVideoById) for every track from then on rather than being
         // torn down and rebuilt each switch.
         window.onYouTubeIframeAPIReady = function () {
-            ytPlayer = new YT.Player('yt-player', {
-                width: '100%', height: '100%',
-                playerVars: {
-                    autoplay: 1, mute: 1, controls: 0, disablekb: 1, fs: 0,
-                    iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1
-                },
-                events: {
-                    onReady: () => { ytPlayerReady = true; applySubtitlesSetting(); },
-                    onStateChange: onYtPlayerStateChange,
-                    // A video can fail at actual playback time even after
-                    // passing the server-side embeddable check (region
-                    // locks, an owner opt-out that only surfaces here) -
-                    // treat that the same as a sync failure: blacklist it
-                    // so it's never offered again, and fall back to
-                    // ambient immediately rather than sit on a frozen or
-                    // black video view.
-                    onError: () => { reportVideoFailureAndStop(); }
-                }
+            ['a', 'b'].forEach(slot => {
+                players[slot].yt = new YT.Player(`yt-player-${slot}`, {
+                    width: '100%', height: '100%',
+                    playerVars: {
+                        autoplay: 1, mute: 1, controls: 0, disablekb: 1, fs: 0,
+                        iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1
+                    },
+                    events: {
+                        onReady: () => { players[slot].ready = true; if (slot === activeSlot) applySubtitlesSetting(slot); },
+                        onStateChange: makeYtStateChangeHandler(slot),
+                        // A video can fail at actual playback time even after
+                        // passing the server-side embeddable check (region
+                        // locks, an owner opt-out that only surfaces here).
+                        // On the active slot that's the same as a sync
+                        // failure: blacklist it and fall back to ambient. On
+                        // the pending (preloading) slot it just means the
+                        // handoff to it can't happen - the current video
+                        // simply keeps playing.
+                        onError: () => { handleSlotError(slot); }
+                    }
+                });
             });
         };
 
         // Nothing of YouTube's own interface is ever allowed on screen:
-        //  - A new video loads while INVISIBLE (ambient visuals keep
-        //    running). It is only revealed - a fade-in - once it has
-        //    genuinely been PLAYING for MV_REVEAL_DELAY_MS, so YouTube's
-        //    spinner, poster/play button and title bar have all come and
-        //    gone before anyone can see it.
+        //  - A new video loads while INVISIBLE, whether that's because it's
+        //    preloading in the non-active slot (song-to-song handoff) or
+        //    because ambient visuals are still what's showing (the very
+        //    first video of a session). The active slot's cover only lifts
+        //    once its video has genuinely been PLAYING for MV_REVEAL_DELAY_MS,
+        //    so YouTube's spinner, poster/play button and title bar have all
+        //    come and gone before anyone can see it.
         //  - Once on screen, any state other than PLAYING (buffering after
         //    a seek, paused, ended and its "suggested videos" screen) puts
         //    the black cover straight back over it.
-        //  - The player is also oversized and clipped (see #video-frame) so
+        //  - Each player is also oversized and clipped (see .video-frame) so
         //    its top/bottom bars can never sit inside the visible picture.
         // A video that ends is held on the cover rather than replayed from
         // the start; mvCheck restarts it only if the song is genuinely
         // still going or was skipped back.
-        function onYtPlayerStateChange(e) {
-            const cover = document.getElementById('video-loading-cover');
-            if (e.data === YT.PlayerState.PLAYING) {
-                if (mvSeekIssuedAt) {
-                    const lat = Date.now() - mvSeekIssuedAt;
-                    mvSeekIssuedAt = null;
-                    if (lat < 5000) mvSeekLatencyMs = Math.round(mvSeekLatencyMs * 0.5 + lat * 0.5);
+        function makeYtStateChangeHandler(slot) {
+            return function (e) {
+                const st = players[slot];
+                if (e.data === YT.PlayerState.PLAYING) {
+                    if (st.seekIssuedAt) {
+                        const lat = Date.now() - st.seekIssuedAt;
+                        st.seekIssuedAt = null;
+                        if (lat < 5000) mvSeekLatencyMs = Math.round(mvSeekLatencyMs * 0.5 + lat * 0.5);
+                    }
+                    if (slot === activeSlot) {
+                        const cover = document.getElementById(`video-loading-cover-${slot}`);
+                        if (mvRevealed) {
+                            cover.classList.add('is-hidden');
+                        } else if (musicVideoActive && !mvRevealTimer) {
+                            mvRevealTimer = setTimeout(() => { mvRevealTimer = null; revealMusicVideo(); }, MV_REVEAL_DELAY_MS);
+                        }
+                    }
+                    // If this is the pending slot, pendingCheck() (run every
+                    // tick alongside the active slot's own drift correction)
+                    // takes it from here - there's no cover to manage since
+                    // it's still off screen.
+                } else {
+                    if (slot === activeSlot) {
+                        if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
+                        if (mvRevealed) document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden');
+                    }
                 }
-                if (mvRevealed) {
-                    cover.classList.add('is-hidden');
-                } else if (musicVideoActive && !mvRevealTimer) {
-                    mvRevealTimer = setTimeout(() => { mvRevealTimer = null; revealMusicVideo(); }, MV_REVEAL_DELAY_MS);
-                }
-            } else {
-                if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
-                if (mvRevealed) cover.classList.remove('is-hidden');
+            };
+        }
+
+        function handleSlotError(slot) {
+            if (slot === activeSlot) {
+                reportVideoFailureAndStop();
+            } else if (slot === pendingSlot) {
+                const failedTrackId = pendingTrackId;
+                const failedVideoId = pendingVideoId;
+                clearTimeout(pendingLoadTimeout); pendingLoadTimeout = null;
+                pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
+                if (failedTrackId && failedVideoId) reportSyncFailed(failedTrackId, failedVideoId);
             }
         }
 
         // Brings a fully-loaded, confirmed-playing video onto the screen with
         // a crossfade over whatever ambient content is showing, then (once
-        // the fade is done) retires the ambient layer underneath.
+        // the fade is done) retires the ambient layer underneath. Only ever
+        // used for the FIRST video of a session (nothing to cut from yet) -
+        // song-to-song handoffs go through completeHandoff() instead, which
+        // is an instant cut with no crossfade.
         function revealMusicVideo() {
-            if (!musicVideoActive || mvRevealed || !ytPlayerReady) return;
+            const st = players[activeSlot];
+            if (!musicVideoActive || mvRevealed || !st.ready) return;
             let state;
-            try { state = ytPlayer.getPlayerState(); } catch (e) { return; }
+            try { state = st.yt.getPlayerState(); } catch (e) { return; }
             if (state !== YT.PlayerState.PLAYING) return;
             clearTimeout(mvLoadTimeout);
             mvRevealed = true;
-            document.getElementById('video-loading-cover').classList.add('is-hidden');
+            document.getElementById(`video-loading-cover-${activeSlot}`).classList.add('is-hidden');
             document.getElementById('video-view').classList.add('is-visible');
             setTimeout(() => {
                 if (!mvRevealed) return;
@@ -909,6 +999,17 @@
                 clearAmbientAdvanceTimer();
                 clearSlideCleanup();
             }, 450);
+
+            // Start sampling this newly-active slot from scratch and kick
+            // off the continuous drift-correction loop, which keeps running
+            // for as long as a video is on screen through any number of
+            // song-to-song handoffs (it always reads whichever slot is
+            // currently active).
+            mvLastReading = null;
+            mvLastReadingChangedAt = 0;
+            mvSampleCount = 0;
+            clearMvDriftInterval();
+            mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
         }
 
         // Forgets whatever the ambient layer was doing and renders it afresh.
@@ -921,19 +1022,22 @@
             pollAmbientVisuals();
         }
 
-        // Applies the admin's Subtitles toggle to whatever's currently
-        // loaded. Captions are a per-video YouTube module, not something
-        // set once at player creation, so this re-applies on every new
-        // video as well as whenever the toggle itself changes. A video
-        // with no caption track available just does nothing when asked.
-        function applySubtitlesSetting() {
-            if (!ytPlayerReady) return;
+        // Applies the admin's Subtitles toggle to one slot's player.
+        // Captions are a per-video YouTube module, not something set once at
+        // player creation, so this re-applies on every new video load as
+        // well as whenever the toggle itself changes. A video with no
+        // caption track available just does nothing when asked. Applying it
+        // to a slot that's still preloading (not yet on screen) is harmless
+        // and means there's no visible pop when it becomes active.
+        function applySubtitlesSetting(slot) {
+            const st = players[slot];
+            if (!st.ready) return;
             try {
                 if (mvSubtitlesEnabled) {
-                    ytPlayer.loadModule('captions');
-                    ytPlayer.setOption('captions', 'track', {});
+                    st.yt.loadModule('captions');
+                    st.yt.setOption('captions', 'track', {});
                 } else {
-                    ytPlayer.unloadModule('captions');
+                    st.yt.unloadModule('captions');
                 }
             } catch (e) { /* no caption track on this video, or module not ready yet */ }
         }
@@ -943,24 +1047,26 @@
             mvConsecutiveBigDrifts = 0;
         }
 
-        // Tells the server this specific video didn't work out for this
-        // track (either it never actually stayed in sync, or it errored
-        // at real playback time) so it's blacklisted and not offered
-        // again on a repeat play, then tears the overlay down. Best-
-        // effort - if the report itself fails, the fallback to ambient
-        // still happens; it just might offer the same bad video again
-        // next time this track comes up.
+        function reportSyncFailed(trackId, videoId) {
+            fetch(eventUrl('/api/music-video/sync-failed'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trackId, videoId })
+            }).catch(() => { /* fine either way - ambient/current video is already what's on screen */ });
+        }
+
+        // Tells the server the ACTIVE video didn't work out for this track
+        // (either it never actually stayed in sync, or it errored at real
+        // playback time) so it's blacklisted and not offered again on a
+        // repeat play, then tears the whole overlay down. Best-effort - if
+        // the report itself fails, the fallback to ambient still happens; it
+        // just might offer the same bad video again next time this track
+        // comes up.
         function reportVideoFailureAndStop() {
             const trackId = currentVideoTrackId;
             const videoId = currentVideoId;
             stopMusicVideo();
-            if (trackId && videoId) {
-                fetch(eventUrl('/api/music-video/sync-failed'), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ trackId, videoId })
-                }).catch(() => { /* fine either way - ambient is already back on screen */ });
-            }
+            if (trackId && videoId) reportSyncFailed(trackId, videoId);
         }
 
         // Folds one /api/music-video reading into mvClock. The age of the
@@ -988,8 +1094,10 @@
         }
 
         function mvSampleReading() {
+            const st = players[activeSlot];
+            if (!st.ready) return;
             let cur;
-            try { cur = ytPlayer.getCurrentTime(); } catch (e) { return; }
+            try { cur = st.yt.getCurrentTime(); } catch (e) { return; }
             if (typeof cur !== 'number') return;
             if (cur !== mvLastReading) { mvLastReading = cur; mvLastReadingChangedAt = Date.now(); }
         }
@@ -997,54 +1105,60 @@
         function mvVideoPositionSec() {
             if (mvLastReading === null) return null;
             const sinceChange = Math.min(Date.now() - mvLastReadingChangedAt, 600);
-            return mvLastReading + (sinceChange / 1000) * (mvCurrentRate || 1);
+            return mvLastReading + (sinceChange / 1000) * (players[activeSlot].currentRate || 1);
         }
         function mvTick() {
             mvSampleReading();
+            pendingCheck();
             if (++mvSampleCount % MV_CHECK_EVERY_N_SAMPLES === 0) mvCheck();
         }
 
-        function mvSetRate(rate) {
-            if (rate === mvCurrentRate) return;
-            try { ytPlayer.setPlaybackRate(rate); mvCurrentRate = rate; } catch (e) { /* rate not available - seeks still work */ }
+        function mvSetRate(slot, rate) {
+            const st = players[slot];
+            if (rate === st.currentRate) return;
+            try { st.yt.setPlaybackRate(rate); st.currentRate = rate; } catch (e) { /* rate not available - seeks still work */ }
         }
 
         // Seeks a little PAST the target by however long seeks have been
         // taking to resume, so the video lands on the right frame instead of
         // arriving that late.
-        function mvSeekTo(sec) {
-            mvSeekIssuedAt = Date.now();
-            mvLastCorrectionAt = mvSeekIssuedAt;
-            ytPlayer.seekTo(sec + mvSeekLatencyMs / 1000, true);
+        function mvSeekTo(slot, sec) {
+            const st = players[slot];
+            st.seekIssuedAt = Date.now();
+            if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
+            st.yt.seekTo(sec + mvSeekLatencyMs / 1000, true);
         }
 
-        // Runs about every 500 ms. Small drift is corrected by briefly
-        // nudging playback speed (invisible on a muted video, no stutter);
-        // only a large drift triggers a seek.
+        // Runs about every 500 ms against whichever slot is ACTIVE right
+        // now. Small drift is corrected by briefly nudging playback speed
+        // (invisible on a muted video, no stutter); only a large drift
+        // triggers a seek.
         function mvCheck() {
-            if (!ytPlayerReady || !mvClock) return;
-            if (mvSeekIssuedAt && Date.now() - mvSeekIssuedAt > 5000) mvSeekIssuedAt = null;
+            const st = players[activeSlot];
+            if (!st.ready || !mvClock) return;
+            if (st.seekIssuedAt && Date.now() - st.seekIssuedAt > 5000) st.seekIssuedAt = null;
             let state;
-            try { state = ytPlayer.getPlayerState(); } catch (e) { return; }
+            try { state = st.yt.getPlayerState(); } catch (e) { return; }
             const cur = mvVideoPositionSec();
             if (cur === null) return;
 
             if (!mvClock.isPlaying) {
-                if (state === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
-                mvSetRate(1);
+                if (state === YT.PlayerState.PLAYING) st.yt.pauseVideo();
+                mvSetRate(activeSlot, 1);
                 return;
             }
             if (state === YT.PlayerState.ENDED) {
-                // Held on the cover (see onYtPlayerStateChange). Only restart it
-                // if the song is genuinely still going - e.g. it was scrubbed
-                // back - never replay it from the start at the end of a song.
+                // Held on the cover (see makeYtStateChangeHandler). Only
+                // restart it if the song is genuinely still going - e.g. it
+                // was scrubbed back - never replay it from the start at the
+                // end of a song.
                 let dur = 0;
-                try { dur = ytPlayer.getDuration(); } catch (e) { /* ignore */ }
+                try { dur = st.yt.getDuration(); } catch (e) { /* ignore */ }
                 const target = mvTargetSec();
-                if (dur > 0 && target < dur - 1) { mvSeekTo(target); ytPlayer.playVideo(); }
+                if (dur > 0 && target < dur - 1) { mvSeekTo(activeSlot, target); st.yt.playVideo(); }
                 return;
             }
-            if (state === YT.PlayerState.PAUSED) { ytPlayer.playVideo(); return; }
+            if (state === YT.PlayerState.PAUSED) { st.yt.playVideo(); return; }
             if (state !== YT.PlayerState.PLAYING) return; // buffering/loading - nothing meaningful to measure yet
 
             const driftMs = (cur - mvTargetSec()) * 1000; // positive = video is ahead of the music
@@ -1059,47 +1173,138 @@
             }
 
             if (absMs > MV_SEEK_THRESHOLD_MS) {
-                if (!settling) { mvSetRate(1); mvSeekTo(mvTargetSec()); }
-            } else if (absMs > MV_NUDGE_START_MS || (mvCurrentRate !== 1 && absMs > MV_NUDGE_STOP_MS)) {
-                mvSetRate(driftMs < 0 ? 1.25 : 0.75);
+                if (!settling) { mvSetRate(activeSlot, 1); mvSeekTo(activeSlot, mvTargetSec()); }
+            } else if (absMs > MV_NUDGE_START_MS || (st.currentRate !== 1 && absMs > MV_NUDGE_STOP_MS)) {
+                mvSetRate(activeSlot, driftMs < 0 ? 1.25 : 0.75);
             } else {
-                mvSetRate(1);
+                mvSetRate(activeSlot, 1);
             }
         }
 
+        // Watches whatever's preloading in the non-active slot (see
+        // startMusicVideo). Runs on the same ~50ms tick as the active
+        // slot's own sampling, but only does anything while a handoff is
+        // actually in flight. Only cuts over once the incoming video has
+        // been genuinely PLAYING and within normal sync tolerance for
+        // MV_HANDOFF_CONFIRM_MS in a row - never on a single lucky reading -
+        // so the cut itself never has to be immediately re-corrected.
+        function pendingCheck() {
+            if (!pendingSlot) return;
+            const st = players[pendingSlot];
+            if (!st.ready || !mvClock) { pendingReadySince = null; return; }
+            let state, cur;
+            try {
+                state = st.yt.getPlayerState();
+                cur = st.yt.getCurrentTime();
+            } catch (e) { pendingReadySince = null; return; }
+            if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') { pendingReadySince = null; return; }
+
+            const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
+            if (driftMs > MV_SEEK_THRESHOLD_MS) {
+                pendingReadySince = null;
+                // Nudge it back into position and wait for the next check -
+                // no more than once a second so this doesn't fight itself.
+                if (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000) {
+                    mvSeekTo(pendingSlot, mvTargetSec());
+                }
+                return;
+            }
+            if (!pendingReadySince) { pendingReadySince = Date.now(); return; }
+            if (Date.now() - pendingReadySince >= MV_HANDOFF_CONFIRM_MS) completeHandoff();
+        }
+
+        // The actual hard cut: makes the pending slot active and the
+        // previously-active slot the new standby, with no CSS transition on
+        // either - an instant swap, never a fade through black or ambient.
+        function completeHandoff() {
+            const oldSlot = activeSlot;
+            const newSlot = pendingSlot;
+            clearTimeout(pendingLoadTimeout); pendingLoadTimeout = null;
+
+            activeSlot = newSlot;
+            currentVideoTrackId = pendingTrackId;
+            currentVideoId = pendingVideoId;
+            pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
+
+            document.getElementById(`video-slot-${oldSlot}`).classList.remove('is-active');
+            document.getElementById(`video-slot-${newSlot}`).classList.add('is-active');
+            document.getElementById(`video-loading-cover-${newSlot}`).classList.add('is-hidden');
+            document.getElementById(`video-loading-cover-${oldSlot}`).classList.remove('is-hidden');
+
+            if (players[oldSlot].ready) {
+                try { players[oldSlot].yt.stopVideo(); } catch (e) { /* ignore */ }
+            }
+
+            // Give the freshly-activated slot the usual settle grace period
+            // and start sampling it from scratch - mvCheck/mvTick already
+            // read whichever slot activeSlot points to, so drift correction
+            // picks the new one up automatically from the next tick.
+            mvLastCorrectionAt = Date.now();
+            mvConsecutiveBigDrifts = 0;
+            mvLastReading = null;
+            mvLastReadingChangedAt = 0;
+        }
+
+        function loadIntoSlot(slot, videoId) {
+            const st = players[slot];
+            clearTimeout(st.loadTimeout);
+            if (!st.ready) return;
+            st.currentRate = null; // force the rate to be re-applied for the new video
+            st.seekIssuedAt = Date.now();
+            if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
+            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000 });
+            mvSetRate(slot, 1);
+            if (mvClock && !mvClock.isPlaying) st.yt.pauseVideo();
+            applySubtitlesSetting(slot);
+        }
+
         function startMusicVideo(videoId, trackId) {
-            const hadVideoOnScreen = mvRevealed;
             musicVideoActive = true;
+
+            if (mvRevealed) {
+                // A video is already up on screen for the previous song -
+                // preload the new one into the OTHER slot behind it and cut
+                // to it the instant it's confirmed playing in sync (see
+                // pendingCheck/completeHandoff above). The video that's
+                // currently showing just keeps playing until then, so
+                // there's never a black gap or a dip back to ambient
+                // visuals between two music videos.
+                const slot = otherSlot(activeSlot);
+                pendingSlot = slot; pendingVideoId = videoId; pendingTrackId = trackId; pendingReadySince = null;
+                loadIntoSlot(slot, videoId);
+                clearTimeout(pendingLoadTimeout);
+                pendingLoadTimeout = setTimeout(() => {
+                    // The incoming video never settled into sync in time -
+                    // drop this handoff attempt (the current video simply
+                    // keeps playing) and blacklist it so it isn't offered
+                    // again for this track.
+                    if (pendingSlot === slot && pendingTrackId === trackId) {
+                        const failedTrackId = pendingTrackId, failedVideoId = pendingVideoId;
+                        pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
+                        reportSyncFailed(failedTrackId, failedVideoId);
+                    }
+                }, MV_HANDOFF_TIMEOUT_MS);
+                return;
+            }
+
+            // Nothing on screen yet (coming from ambient) - load into the
+            // already-active slot and reveal it the original way once it's
+            // genuinely playing.
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
             if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
-            clearTimeout(mvLoadTimeout);
-            if (hadVideoOnScreen) {
-                // The previous song's video is up. Hand the screen back to
-                // ambient visuals (fading the video out) while the next one
-                // loads in the background, rather than sitting on black.
-                mvRevealed = false;
-                resetAmbientAndRepoll();
-            }
-
-            if (ytPlayerReady) {
-                mvCurrentRate = null; // force the rate to be re-applied for the new video
-                mvSeekIssuedAt = Date.now();
-                mvLastCorrectionAt = mvSeekIssuedAt;
-                ytPlayer.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000 });
-                mvSetRate(1);
-                if (mvClock && !mvClock.isPlaying) ytPlayer.pauseVideo();
-                applySubtitlesSetting();
-            }
+            loadIntoSlot(activeSlot, videoId);
 
             // If it never actually starts playing, stop waiting on it and
             // blacklist it - ambient visuals have been on screen all along.
+            clearTimeout(mvLoadTimeout);
             mvLoadTimeout = setTimeout(() => {
                 if (musicVideoActive && !mvRevealed) reportVideoFailureAndStop();
             }, MV_LOAD_TIMEOUT_MS);
 
             clearMvDriftInterval();
             mvLastReading = null;
+            mvLastReadingChangedAt = 0;
             mvSampleCount = 0;
             mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
         }
@@ -1111,14 +1316,19 @@
             mvRevealed = false;
             if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
             clearTimeout(mvLoadTimeout);
+            clearTimeout(pendingLoadTimeout); pendingLoadTimeout = null;
             currentVideoTrackId = null;
             currentVideoId = null;
+            pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
             mvClock = null;
             clearMvDriftInterval();
-            if (ytPlayerReady) {
-                try { ytPlayer.stopVideo(); } catch (e) { /* ignore */ }
-            }
-            document.getElementById('video-loading-cover').classList.remove('is-hidden');
+            ['a', 'b'].forEach(slot => {
+                const st = players[slot];
+                if (st.ready) {
+                    try { st.yt.stopVideo(); } catch (e) { /* ignore */ }
+                }
+                document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden');
+            });
             if (wasRevealed) {
                 // Force a fresh render rather than assuming whatever ambient
                 // state was current before the video started is still valid.
@@ -1138,7 +1348,10 @@
 
                 const subtitlesChanged = !!data.subtitlesEnabled !== mvSubtitlesEnabled;
                 mvSubtitlesEnabled = !!data.subtitlesEnabled;
-                if (subtitlesChanged && musicVideoActive) applySubtitlesSetting();
+                if (subtitlesChanged && musicVideoActive) {
+                    applySubtitlesSetting(activeSlot);
+                    if (pendingSlot) applySubtitlesSetting(pendingSlot);
+                }
 
                 if (visualsForceQueue) {
                     if (musicVideoActive) stopMusicVideo();
@@ -1148,7 +1361,9 @@
                 if (data.enabled && data.matched && data.videoId) {
                     // Always fold the newest reading into the sync clock first.
                     updateMvClock(data, receivedAt);
-                    if (!(musicVideoActive && currentVideoTrackId === data.trackId)) {
+                    const inProgressForThisTrack = musicVideoActive &&
+                        (currentVideoTrackId === data.trackId || pendingTrackId === data.trackId);
+                    if (!inProgressForThisTrack) {
                         startMusicVideo(data.videoId, data.trackId);
                     }
                 } else if (musicVideoActive) {
