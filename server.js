@@ -651,6 +651,18 @@ function pickBestMusicVideo(candidates, artistNames, excludeVideoIds) {
 // Per-event runtime state for the feature above - none of this is
 // persisted (events.scheduleSave is never called for it), so it's rebuilt
 // fresh on every process restart, same as schedulerRuntime.
+// Admin -> Settings -> Content overrides (Mute Visuals, Mute All, Show Queue,
+// Music Videos, Subtitles). Lazily created so events saved before this
+// feature existed pick up the defaults instead of crashing on undefined.
+function ensureVisualsConfigs(event) {
+    if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') event.visualsConfigs = {};
+    const v = event.visualsConfigs;
+    for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
+        if (typeof v[key] !== 'boolean') v[key] = false;
+    }
+    return v;
+}
+
 function ensureMusicVideoRuntime(event) {
     if (!event.musicVideoRuntime) {
         event.musicVideoRuntime = {
@@ -2137,6 +2149,7 @@ app.get('/e/:slug/api/admin/data', (req, res) => {
         lastSwitchedPlaylist: event.systemConfigs.lastSwitchedPlaylist || '',
         fallbackPlaylistUri: event.systemConfigs.fallbackPlaylistUri || '',
         kiosk: event.kioskConfigs,
+        visuals: ensureVisualsConfigs(event),
         queue: buildSortedQueueForAdmin(event),
         history: event.playedHistory,
         blockedVoters: Object.entries(event.blockedVoters || {}).map(([voterId, info]) => ({
@@ -2682,6 +2695,50 @@ app.post('/e/:slug/api/admin/kiosk/toggle-display-only', (req, res) => {
     res.json({ success: true });
 });
 
+// ---- Admin -> Settings -> Content toggles ----
+function makeVisualsToggleRoute(key) {
+    return (req, res) => {
+        const { enabled } = req.body || {};
+        if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false.' });
+        ensureVisualsConfigs(req.event)[key] = enabled;
+        events.scheduleSave(req.event.slug);
+        res.json({ success: true });
+    };
+}
+app.post('/e/:slug/api/admin/visuals/toggle-mute', makeVisualsToggleRoute('muteVisuals'));
+app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute('showQueue'));
+app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
+app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
+
+// Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
+// playback, but only if this toggle was the thing that paused it.
+app.post('/e/:slug/api/admin/visuals/toggle-mute-all', async (req, res) => {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false.' });
+    const v = ensureVisualsConfigs(req.event);
+    const wasOn = v.muteAll;
+    v.muteAll = enabled;
+    let playbackOk = null;
+    try {
+        if (enabled && !wasOn) {
+            const result = await spotifyPlayerCommand(req.event, 'PUT', '/pause');
+            playbackOk = !!(result && result.success);
+            v.pausedByMuteAll = playbackOk;
+        } else if (!enabled && wasOn) {
+            if (v.pausedByMuteAll) {
+                const result = await spotifyPlayerCommand(req.event, 'PUT', '/play');
+                playbackOk = !!(result && result.success);
+            }
+            v.pausedByMuteAll = false;
+        }
+    } catch (err) {
+        console.error('[VISUALS] Mute All playback command failed:', err.message);
+        playbackOk = false;
+    }
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, playbackOk });
+});
+
 app.post('/e/:slug/api/admin/kiosk/config', (req, res) => {
     const { maxCredits, countdownLength } = req.body;
     const kc = req.event.kioskConfigs;
@@ -3184,23 +3241,29 @@ app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
 // rather than blank the screen on a brief gap.
 app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
     const event = req.event;
+    const vcfg = ensureVisualsConfigs(event);
+    // Screen overrides from Admin -> Settings -> Content ride along on every
+    // response so the display can apply them even when nothing is scheduled.
+    const overrides = { muted: !!(vcfg.muteVisuals || vcfg.muteAll), showQueue: !!vcfg.showQueue };
     if (!event.musicScheduler?.enabled) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...overrides });
     }
     const rule = getActiveAmbientRule(event);
     if (!rule) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...overrides });
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
     const media = rule.mediaIds.map(id => byId.get(id)).filter(Boolean);
     if (media.length === 0) {
-        return res.json({ active: false });
+        return res.json({ active: false, ...overrides });
     }
     res.json({
         active: true,
         ruleId: rule.id,
         photoDurationSec: rule.photoDurationSec || 8,
-        media
+        media,
+        items: media,
+        ...overrides
     });
 });
 
@@ -3216,16 +3279,29 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 // Visuals, same as if no Music Videos block were active at all.
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
-    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: false };
+    const vcfg = ensureVisualsConfigs(event);
+    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled };
 
-    if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
-    const rule = getActiveMusicVideoRule(event);
-    if (!rule) {
-        // No Music Videos block covers this moment - reset so the NEXT
-        // block this event runs into always starts on a video slot, not
-        // however far a previous block's pattern happened to have gotten.
-        if (event.musicVideoRuntime) event.musicVideoRuntime.lastActiveRuleId = undefined;
-        return res.json(emptyResponse);
+    // Mute / Show Queue from Admin -> Settings -> Content win over videos:
+    // returning nothing makes the display drop the video, after which its
+    // ambient poll applies the black-out or the queue board.
+    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json(emptyResponse);
+
+    // Admin -> Settings -> Content -> Music Videos forces a video attempt for
+    // every song, ignoring the scheduler. With it off, only an active Music
+    // Videos block in the scheduler enables videos (and sets the pattern).
+    const forceVideos = !!vcfg.musicVideosEnabled;
+    let rule = null;
+    if (!forceVideos) {
+        if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
+        rule = getActiveMusicVideoRule(event);
+        if (!rule) {
+            // No Music Videos block covers this moment - reset so the NEXT
+            // block this event runs into always starts on a video slot, not
+            // however far a previous block's pattern happened to have gotten.
+            if (event.musicVideoRuntime) event.musicVideoRuntime.lastActiveRuleId = undefined;
+            return res.json(emptyResponse);
+        }
     }
 
     const np = event.cachedNowPlaying;
@@ -3238,13 +3314,15 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // A different block became active since the last poll (or this is the
     // very first poll of a fresh one) - always start it on its first
     // video slot.
-    if (runtime.lastActiveRuleId !== rule.id) {
+    if (forceVideos) {
+        runtime.lastActiveRuleId = undefined;
+    } else if (runtime.lastActiveRuleId !== rule.id) {
         runtime.lastActiveRuleId = rule.id;
         runtime.cycleCount = 0;
     }
 
-    const videosInARow = Number.isInteger(rule.videosInARow) && rule.videosInARow >= 1 ? rule.videosInARow : 2;
-    const visualsAfter = Number.isInteger(rule.visualsAfter) && rule.visualsAfter >= 0 ? rule.visualsAfter : 1;
+    const videosInARow = rule && Number.isInteger(rule.videosInARow) && rule.videosInARow >= 1 ? rule.videosInARow : 2;
+    const visualsAfter = rule && Number.isInteger(rule.visualsAfter) && rule.visualsAfter >= 0 ? rule.visualsAfter : 1;
     const cycleLength = videosInARow + visualsAfter;
 
     const isNewTrack = runtime.cache.trackId !== np.trackId;
@@ -3255,7 +3333,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null };
     }
 
-    if ((runtime.cycleCount % cycleLength) >= videosInARow) {
+    if (!forceVideos && (runtime.cycleCount % cycleLength) >= videosInARow) {
         // This song lands on a "visuals" slot in the pattern - hand back
         // to Ambient Visuals without spending a YouTube search on it.
         return res.json({ ...emptyResponse, enabled: true, matched: false });
@@ -3282,7 +3360,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         durationMs: np.durationMs,
         isPlaying: np.isPlaying,
         updatedAt: np.updatedAt,
-        subtitlesEnabled: false
+        subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled
     });
 });
 
