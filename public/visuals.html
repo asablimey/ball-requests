@@ -878,10 +878,10 @@
         let mvLastReadingChangedAt = 0;
         let mvSampleCount = 0;
         const MV_SAMPLE_INTERVAL_MS = 50;
-        const MV_CHECK_EVERY_N_SAMPLES = 6;  // decisions every ~300 ms - was ~500ms
-        const MV_NUDGE_START_MS = 100;    // start speed-nudging beyond this drift - was 200ms
-        const MV_NUDGE_STOP_MS = 40;      // ...and stop once back inside this - was 100ms
-        const MV_SEEK_THRESHOLD_MS = 600; // too far to nudge - seek instead - was 1200ms
+        const MV_CHECK_EVERY_N_SAMPLES = 16; // decisions every ~800 ms - infrequent on purpose, see below
+        const MV_NUDGE_START_MS = 300;    // start speed-nudging beyond this drift - widened so small/normal
+        const MV_NUDGE_STOP_MS = 150;     // jitter never triggers a visible nudge; the fixed lead below
+        const MV_SEEK_THRESHOLD_MS = 900; // does the actual work now, this is just a safety net for real drift
         const MV_SETTLE_MS = 4000;        // grace after a load/seek before judging it
         const MV_BIG_DRIFT_MS = 3000;
         // Two settled checks in a row still this far out = the video can't
@@ -1111,18 +1111,21 @@
         // pipeline doesn't share, so even a "perfectly" synced video will
         // consistently look a little late against the audio - the fix isn't
         // tighter drift correction, it's aiming a bit further ahead in the
-        // first place. One knob, applied everywhere the target position is
-        // used (initial seek, continuous correction, and handoff cuts), so
-        // it only ever needs adjusting in this one spot. Positive = video
-        // moves ahead (use this if audio is ahead of the video, i.e. the
-        // video looks late); negative = video moves back.
-        const MV_VIDEO_LEAD_MS = 250;
+        // first place. Applied everywhere the target position is used
+        // (initial seek, continuous correction, and handoff cuts). Set from
+        // Admin -> Settings -> Content -> Music Videos on each poll (see
+        // pollMusicVideo below) rather than fixed in code, since the right
+        // amount depends on this venue's own playback setup. Positive =
+        // video moves ahead (use if audio is ahead of the video, i.e. the
+        // video looks late); negative = video moves back. 600ms until the
+        // admin sets one explicitly, matching what testing landed on here.
+        let mvVideoLeadMs = 600;
 
         // Where the video SHOULD be right now, in seconds.
         function mvTargetSec() {
             if (!mvClock) return 0;
             const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
-            return Math.max(0, (posMs + MV_VIDEO_LEAD_MS) / 1000);
+            return Math.max(0, (posMs + mvVideoLeadMs) / 1000);
         }
 
         function mvSampleReading() {
@@ -1383,6 +1386,15 @@
                 if (subtitlesChanged && musicVideoActive) {
                     applySubtitlesSetting(activeSlot);
                     if (pendingSlot) applySubtitlesSetting(pendingSlot);
+                }
+
+                // Admin -> Settings -> Content -> Music Videos - how far
+                // ahead/behind of the raw song position the whole video
+                // stream should target. Applied on the very next drift
+                // check automatically (mvTargetSec reads this live); no
+                // need to re-seek immediately just because it changed.
+                if (typeof data.videoOffsetMs === 'number' && Number.isFinite(data.videoOffsetMs)) {
+                    mvVideoLeadMs = data.videoOffsetMs;
                 }
 
                 if (visualsForceQueue) {
