@@ -3423,36 +3423,46 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     const vcfg = ensureVisualsConfigs(event);
-    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
+    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
 
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
     // ambient poll applies the black-out or the queue board.
-    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json(emptyResponse);
+    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json({ ...emptyResponse, override: true });
 
     // Admin -> Settings -> Content -> Music Videos forces a video attempt for
     // every song, ignoring the scheduler. With it off, only an active Music
     // Videos block in the scheduler enables videos (and sets the pattern).
     const forceVideos = !!vcfg.musicVideosEnabled;
+    const np = event.cachedNowPlaying;
+    const runtime = ensureMusicVideoRuntime(event);
+
+    // RULE: if a video is already playing, it must finish. Once a video has
+    // been offered for the song that is playing right now, nothing about the
+    // schedule (the Music Videos block ending, the scheduler being switched
+    // off, the pattern landing on a "visuals" slot) is allowed to take it
+    // away mid-song. Those checks only decide about the NEXT song. Only the
+    // explicit admin Mute / Show Queue overrides above still win instantly.
+    const committed = !!(np && np.trackId && runtime.cache.trackId === np.trackId &&
+                         runtime.cache.matched && runtime.cache.videoId);
+
     let rule = null;
-    if (!forceVideos) {
+    if (!forceVideos && !committed) {
         if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
         rule = getActiveMusicVideoRule(event);
         if (!rule) {
             // No Music Videos block covers this moment - reset so the NEXT
             // block this event runs into always starts on a video slot, not
             // however far a previous block's pattern happened to have gotten.
-            if (event.musicVideoRuntime) event.musicVideoRuntime.lastActiveRuleId = undefined;
+            runtime.lastActiveRuleId = undefined;
             return res.json(emptyResponse);
         }
     }
 
-    const np = event.cachedNowPlaying;
     if (!np || !np.trackId || !np.title || !np.artist) {
         return res.json({ ...emptyResponse, enabled: true });
     }
 
-    const runtime = ensureMusicVideoRuntime(event);
 
     // Spotify isn't currently reporting this song as playing - either it's
     // genuinely paused, or the connection itself dropped for a moment (see
@@ -3489,7 +3499,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // video slot.
     if (forceVideos) {
         runtime.lastActiveRuleId = undefined;
-    } else if (runtime.lastActiveRuleId !== rule.id) {
+    } else if (rule && runtime.lastActiveRuleId !== rule.id) {
         runtime.lastActiveRuleId = rule.id;
         runtime.cycleCount = 0;
     }
@@ -3506,7 +3516,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null };
     }
 
-    if (!forceVideos && (runtime.cycleCount % cycleLength) >= videosInARow) {
+    if (!forceVideos && !committed && (runtime.cycleCount % cycleLength) >= videosInARow) {
         // This song lands on a "visuals" slot in the pattern - hand back
         // to Ambient Visuals without spending a YouTube search on it.
         return res.json({ ...emptyResponse, enabled: true, matched: false });
@@ -3551,7 +3561,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
 // this track comes up.
 app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) => {
     const event = req.event;
-    const { trackId, videoId } = req.body || {};
+    const { trackId, videoId, keepCurrent } = req.body || {};
     if (typeof trackId !== 'string' || !trackId || typeof videoId !== 'string' || !videoId) {
         return res.status(400).json({ error: 'trackId and videoId are required.' });
     }
@@ -3559,7 +3569,9 @@ app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) =
     runtime.blacklist.add(`${trackId}|${videoId}`);
     // Force the next poll to search again instead of re-offering the
     // video that was just reported as not working.
-    if (runtime.cache.trackId === trackId) {
+    // keepCurrent: the video is already on screen and playing - it finishes.
+    // Blacklisting it is enough; the next play of this track skips it.
+    if (!keepCurrent && runtime.cache.trackId === trackId) {
         runtime.cache = { trackId, searchedTrackId: null, matched: false, videoId: null };
     }
     res.json({ success: true });
