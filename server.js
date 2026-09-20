@@ -714,6 +714,16 @@ function ensureMusicVideoRuntime(event) {
             lastActiveRuleId: undefined
         };
     }
+    // musicVideoRuntime survives a JSON.stringify/parse round trip (event
+    // persistence, server restart), but a Set does not - it comes back as
+    // "{}". Repair it here instead of only on first creation, or every
+    // route that reads runtime.blacklist crashes after any restart.
+    if (!(event.musicVideoRuntime.blacklist instanceof Set)) {
+        const stale = event.musicVideoRuntime.blacklist;
+        event.musicVideoRuntime.blacklist = new Set(
+            Array.isArray(stale) ? stale : []
+        );
+    }
     return event.musicVideoRuntime;
 }
 
