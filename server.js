@@ -3171,7 +3171,28 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
 async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
     if (!token) {
-        event.cachedNowPlaying = { connected: false, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
+        // Spotify itself is unreachable/disconnected (token refresh failed,
+        // Spotify's own API is down, etc.) - this is the same kind of
+        // transient gap as the "leave the last known cache in place" case
+        // below for a non-ok player response, just one step earlier in the
+        // pipeline. Wiping trackId/title/artist here (as this used to do)
+        // made a brief outage indistinguishable from the song genuinely
+        // changing to "nothing" - which tore down the Music Video overlay
+        // and, once Spotify reconnected, restarted it from scratch instead
+        // of just holding the existing video paused through the gap (see
+        // the isPlaying:false handling in the /api/music-video route).
+        // Keep the last known track identity and position; only the
+        // connectivity flags actually change.
+        const prev = event.cachedNowPlaying || {};
+        event.cachedNowPlaying = {
+            ...prev,
+            connected: false, isPlaying: false,
+            trackId: prev.trackId || null, title: prev.title || null, artist: prev.artist || null,
+            artwork: prev.artwork || null, progressMs: prev.progressMs || 0, durationMs: prev.durationMs || 0,
+            updatedAt: Date.now(), upcoming: prev.upcoming || [],
+            deviceName: prev.deviceName || null, volumePercent: prev.volumePercent ?? null,
+            shuffleState: prev.shuffleState || false, repeatState: prev.repeatState || 'off'
+        };
         return;
     }
     try {
@@ -3397,11 +3418,41 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     }
 
     const np = event.cachedNowPlaying;
-    if (!np || !np.isPlaying || !np.trackId || !np.title || !np.artist) {
+    if (!np || !np.trackId || !np.title || !np.artist) {
         return res.json({ ...emptyResponse, enabled: true });
     }
 
     const runtime = ensureMusicVideoRuntime(event);
+
+    // Spotify isn't currently reporting this song as playing - either it's
+    // genuinely paused, or the connection itself dropped for a moment (see
+    // syncNowPlayingForEvent, which now preserves the last known track
+    // through that kind of gap instead of wiping it). If this exact track
+    // already has a matched video from a moment ago, keep reporting it -
+    // just with isPlaying:false - so the display holds the video paused in
+    // place (its existing pause handling) rather than tearing the whole
+    // overlay down and having to restart it from ambient the instant
+    // playback resumes. A track with no prior match, or no track at all,
+    // still falls back to the plain empty response - there's nothing to
+    // hold onto.
+    if (!np.isPlaying) {
+        if (runtime.cache.trackId === np.trackId && runtime.cache.matched) {
+            return res.json({
+                enabled: true,
+                matched: true,
+                videoId: runtime.cache.videoId,
+                trackId: np.trackId,
+                progressMs: np.progressMs,
+                durationMs: np.durationMs,
+                isPlaying: false,
+                updatedAt: np.progressCapturedAt || np.updatedAt,
+                serverNow: Date.now(),
+                subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
+                videoOffsetMs: vcfg.musicVideoOffsetMs
+            });
+        }
+        return res.json({ ...emptyResponse, enabled: true });
+    }
 
     // A different block became active since the last poll (or this is the
     // very first poll of a fresh one) - always start it on its first
