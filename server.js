@@ -118,6 +118,10 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+// Optional - the Music Videos lane (see getActiveMusicVideoRule) simply
+// never matches anything without this set, same as any other Spotify/
+// Brevo feature here degrading gracefully when its key is absent.
+const YOUTUBE_API_KEY = (process.env.YOUTUBE_API_KEY || '').trim();
 
 // --- Account sessions -------------------------------------------------
 // Deliberately in-memory only, never written to Redis. That's not a
@@ -568,6 +572,95 @@ function getActiveAmbientRule(event, now = new Date()) {
 function getActiveMusicVideoRule(event, now = new Date()) {
     const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType === 'musicvideo');
     return findActiveRuleAmong(rules, event, now);
+}
+
+// --- Music Videos matching (YouTube) --------------------------------------
+// Deliberately strict, per explicit rule: a video is only ever offered if
+// (1) it comes from a channel that IS one of the track's own artists -
+// never a fan channel, compilation, reaction video, etc. - and (2) it
+// isn't a lyric video or an audio-only upload. There's no "good enough"
+// tier below that; anything that fails either check is treated exactly
+// like no match at all, and the display falls back to Ambient Visuals.
+
+// Strips everything but letters/digits down to lowercase so "Ed Sheeran",
+// "EdSheeranVEVO", and "ed-sheeran official" all normalize to something
+// that can be reliably substring-matched against each other regardless of
+// spacing, punctuation, or a VEVO/Official suffix glued onto the name.
+function normalizeForMatch(str) {
+    return (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Checked against every credited artist (not just the first), since a
+// channel belonging to any one of them - e.g. a featured artist uploading
+// the same official video - is legitimate too.
+function channelMatchesAnyArtist(channelTitle, artistNames) {
+    const normalizedChannel = normalizeForMatch(channelTitle);
+    if (!normalizedChannel) return false;
+    return artistNames.some(name => {
+        const normalizedName = normalizeForMatch(name);
+        return normalizedName.length > 0 && normalizedChannel.includes(normalizedName);
+    });
+}
+
+// \baudio\b (a word boundary, not a plain substring) so this never
+// wrongly rejects a title that happens to contain "audio" as part of an
+// unrelated word - it's still meant to catch "Official Audio", "(Audio)",
+// "Audio Only", etc.
+const DISQUALIFYING_TITLE_PATTERNS = [/lyric/i, /\baudio\b/i];
+function titleLooksDisqualified(title) {
+    return DISQUALIFYING_TITLE_PATTERNS.some(re => re.test(title || ''));
+}
+
+// Raw YouTube Data API v3 text search, restricted to embeddable videos.
+// Returns [] on any failure (missing key, quota exhausted, network) rather
+// than throwing - a YouTube outage should just mean "no music video for
+// this track", never a broken poll for the display.
+async function youtubeSearchVideos(query, maxResults = 10) {
+    if (!YOUTUBE_API_KEY) return [];
+    try {
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${maxResults}&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
+        const res = await fetch(url);
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.items || [])
+            .map(item => ({
+                videoId: item.id?.videoId,
+                title: item.snippet?.title || '',
+                channelTitle: item.snippet?.channelTitle || ''
+            }))
+            .filter(v => v.videoId);
+    } catch (e) {
+        console.error('[MUSIC VIDEO] YouTube search failed:', e.message);
+        return [];
+    }
+}
+
+// Runs every strictness rule in one place, in order, against the search
+// results for one track - the first candidate to pass all of them (and
+// that hasn't already failed sync/playback for this exact track - see
+// excludeVideoIds) is the one offered. No candidate passing means no
+// match at all, not a fallback to a looser rule.
+function pickBestMusicVideo(candidates, artistNames, excludeVideoIds) {
+    return candidates.find(v =>
+        !excludeVideoIds.has(v.videoId) &&
+        !titleLooksDisqualified(v.title) &&
+        channelMatchesAnyArtist(v.channelTitle, artistNames)
+    ) || null;
+}
+
+// Per-event runtime state for the feature above - none of this is
+// persisted (events.scheduleSave is never called for it), so it's rebuilt
+// fresh on every process restart, same as schedulerRuntime.
+function ensureMusicVideoRuntime(event) {
+    if (!event.musicVideoRuntime) {
+        event.musicVideoRuntime = {
+            cache: { trackId: null, searchedTrackId: null, matched: false, videoId: null },
+            blacklist: new Set(), // "trackId|videoId" pairs that already failed sync/playback once
+            cycleCount: 0,
+            lastActiveRuleId: undefined
+        };
+    }
+    return event.musicVideoRuntime;
 }
 
 // Whether the block active right now on the Music Scheduler is a Karaoke
@@ -3109,6 +3202,111 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
         photoDurationSec: rule.photoDurationSec || 8,
         media
     });
+});
+
+// Public (no admin auth), polled every few seconds by the display - see
+// pollMusicVideo in visual-display.html. Two independent things have to
+// line up for a video to actually play: (1) a Music Videos block has to
+// be active right now (the scheduler side - see the Music Videos lane),
+// AND (2) this particular song has to land on a "video" slot in that
+// block's videosInARow/visualsAfter repeating pattern rather than a
+// "visuals" slot. Even then, a video is only ever returned if YouTube
+// search plus every strictness rule in pickBestMusicVideo turns up a
+// confident match - anything less falls straight back to Ambient
+// Visuals, same as if no Music Videos block were active at all.
+app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
+    const event = req.event;
+    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: false };
+
+    if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
+    const rule = getActiveMusicVideoRule(event);
+    if (!rule) {
+        // No Music Videos block covers this moment - reset so the NEXT
+        // block this event runs into always starts on a video slot, not
+        // however far a previous block's pattern happened to have gotten.
+        if (event.musicVideoRuntime) event.musicVideoRuntime.lastActiveRuleId = undefined;
+        return res.json(emptyResponse);
+    }
+
+    const np = event.cachedNowPlaying;
+    if (!np || !np.isPlaying || !np.trackId || !np.title || !np.artist) {
+        return res.json({ ...emptyResponse, enabled: true });
+    }
+
+    const runtime = ensureMusicVideoRuntime(event);
+
+    // A different block became active since the last poll (or this is the
+    // very first poll of a fresh one) - always start it on its first
+    // video slot.
+    if (runtime.lastActiveRuleId !== rule.id) {
+        runtime.lastActiveRuleId = rule.id;
+        runtime.cycleCount = 0;
+    }
+
+    const videosInARow = Number.isInteger(rule.videosInARow) && rule.videosInARow >= 1 ? rule.videosInARow : 2;
+    const visualsAfter = Number.isInteger(rule.visualsAfter) && rule.visualsAfter >= 0 ? rule.visualsAfter : 1;
+    const cycleLength = videosInARow + visualsAfter;
+
+    const isNewTrack = runtime.cache.trackId !== np.trackId;
+    if (isNewTrack) {
+        // Only an actual track change advances the pattern position -
+        // repeated polls mid-song must never move it forward.
+        if (runtime.cache.trackId !== null) runtime.cycleCount++;
+        runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null };
+    }
+
+    if ((runtime.cycleCount % cycleLength) >= videosInARow) {
+        // This song lands on a "visuals" slot in the pattern - hand back
+        // to Ambient Visuals without spending a YouTube search on it.
+        return res.json({ ...emptyResponse, enabled: true, matched: false });
+    }
+
+    // Search fresh only once per track (cached across the rest of that
+    // song's polls) rather than re-querying YouTube every 3 seconds.
+    if (runtime.cache.searchedTrackId !== np.trackId) {
+        const artistNames = np.artist.split(',').map(s => s.trim()).filter(Boolean);
+        const excludeVideoIds = new Set(
+            [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
+        );
+        const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
+        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds);
+        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null };
+    }
+
+    res.json({
+        enabled: true,
+        matched: runtime.cache.matched,
+        videoId: runtime.cache.videoId,
+        trackId: np.trackId,
+        progressMs: np.progressMs,
+        durationMs: np.durationMs,
+        isPlaying: np.isPlaying,
+        updatedAt: np.updatedAt,
+        subtitlesEnabled: false
+    });
+});
+
+// The display reports here when a video it was offered turned out not to
+// actually work in practice - couldn't hold sync with the song, or errored
+// at real playback time (region lock, an owner opt-out that only surfaces
+// at play time, etc). Blacklisted per trackId+videoId pair so the next
+// search for this SAME song excludes it and tries the next-best candidate,
+// rather than silently offering the identical broken video again next time
+// this track comes up.
+app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) => {
+    const event = req.event;
+    const { trackId, videoId } = req.body || {};
+    if (typeof trackId !== 'string' || !trackId || typeof videoId !== 'string' || !videoId) {
+        return res.status(400).json({ error: 'trackId and videoId are required.' });
+    }
+    const runtime = ensureMusicVideoRuntime(event);
+    runtime.blacklist.add(`${trackId}|${videoId}`);
+    // Force the next poll to search again instead of re-offering the
+    // video that was just reported as not working.
+    if (runtime.cache.trackId === trackId) {
+        runtime.cache = { trackId, searchedTrackId: null, matched: false, videoId: null };
+    }
+    res.json({ success: true });
 });
 
 // ============================================================
