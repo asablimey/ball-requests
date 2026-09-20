@@ -254,7 +254,19 @@
            drags for horizontal panning here while still letting a
            vertical touch-scroll gesture fall through to the page/list. */
         .timetable-scroll { overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x; }
-        .timetable { min-width: 900px; }
+        .timetable { min-width: 900px; position: relative; }
+        /* Red "now" needle - only drawn in today's day box. Sits under the
+           sticky lane labels (z-index 2+) so it slides beneath them when the
+           box is scrolled, and ignores the mouse so it never blocks a drag. */
+        .now-needle {
+            position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+            background: #e91429; z-index: 1; pointer-events: none;
+            box-shadow: 0 0 6px rgba(233, 20, 41, 0.6);
+        }
+        .now-needle::before {
+            content: ''; position: absolute; top: 0; left: 50%; width: 10px; height: 10px;
+            margin-left: -5px; background: #e91429; border-radius: 50%;
+        }
         .hour-ruler { display: flex; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
         .hour-label { flex-shrink: 0; font-size: 0.75rem; color: var(--text-dim); }
         /* Sticky + matching background so this spacer stays docked over
@@ -1736,10 +1748,40 @@
         // block, and resetting everyone's scroll position mid-drag would
         // fight the drag instead of just repositioning a block.
         function scrollTimetablesToNow() {
-            const targetHour = Math.max(0, new Date().getHours() - 1);
+            const targetHour = Math.max(0, Math.floor(nowMinutesInEventTz() / 60) - 1);
             const offsetPx = targetHour * hourPx;
             document.querySelectorAll('.timetable-scroll').forEach(el => { el.scrollLeft = offsetPx; });
         }
+
+        // Minutes since midnight right now (fractional, so the needle glides)
+        // in the event's own timezone - same zone every block's time is read
+        // in - falling back to the browser's zone if none is saved yet.
+        function nowMinutesInEventTz() {
+            try {
+                const tz = eventTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const parts = new Intl.DateTimeFormat('en-GB', {
+                    timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+                }).formatToParts(new Date());
+                const get = type => parseInt(parts.find(p => p.type === type).value, 10);
+                return get('hour') * 60 + get('minute') + get('second') / 60;
+            } catch (e) {
+                const d = new Date();
+                return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+            }
+        }
+        function nowNeedleLeftPx() {
+            return LANE_LABEL_WIDTH + (nowMinutesInEventTz() / TRACK_MINUTES) * hourPx * 24;
+        }
+        // Nudges the needle along, and re-renders if midnight has rolled the
+        // "today first" ordering over since the boxes were last built.
+        let needleRenderedDayIdx = null;
+        function updateNowNeedle() {
+            if (!document.querySelector('.day-box')) return;
+            if (currentDayIndexInEventTz() !== needleRenderedDayIdx) { renderDayBoxes(); return; }
+            const left = nowNeedleLeftPx() + 'px';
+            document.querySelectorAll('.now-needle').forEach(n => { n.style.left = left; });
+        }
+        setInterval(updateNowNeedle, 15000);
 
         // What day (0=Sun..6=Sat) it currently is in the event's own
         // timezone - the same zone every rule's day/time field is read in
@@ -1775,6 +1817,7 @@
             // exactly what rule.days stores), only the order they're
             // rendered in changes.
             const todayIdx = currentDayIndexInEventTz();
+            needleRenderedDayIdx = todayIdx;
             const dayOrder = DAY_NAMES.map((_, i) => (todayIdx + i) % 7);
 
             container.innerHTML = dayOrder.map(dayIdx => {
@@ -1811,6 +1854,7 @@
                                 <div class="hour-ruler">${buildRulerHtml()}</div>
                                 ${liveLanesHtml}
                                 ${placeholderLanesHtml}
+                                ${dayIdx === todayIdx ? `<div class="now-needle" style="left:${nowNeedleLeftPx()}px;"></div>` : ''}
                             </div>
                         </div>
                     </div>
