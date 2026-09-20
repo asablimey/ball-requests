@@ -215,6 +215,7 @@
             background: #111; display: flex; align-items: center; justify-content: center; font-size: 0.7rem;
         }
         .media-type-icon { font-size: 0.9rem; }
+        .thumb-tag { font-size: 0.5rem; font-weight: 700; letter-spacing: 0.3px; color: var(--text-dim); }
         .media-chip .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .upload-btn-row { margin-top: 4px; }
         .upload-btn-row input[type="file"] { display: none; }
@@ -908,14 +909,13 @@
         <div class="avm">
             <div class="avm-header">
                 <div class="avm-header-left">
-                    <div class="avm-icon">&#128250;</div>
                     <div>
                         <h3 id="avm-title">Ambient Visuals</h3>
                         <div class="avm-subtitle">What loops on your venue screens while this block is running</div>
                     </div>
                 </div>
                 <div class="avm-header-actions">
-                    <button type="button" class="avm-btn-preview" onclick="avmPreviewCurrent()">&#9654; Preview</button>
+                    <button type="button" class="avm-btn-preview" onclick="avmPreviewCurrent()">Preview</button>
                     <div class="avm-menu-wrap">
                         <button type="button" class="avm-btn-preview" onclick="avmToggleShareMenu(event)">Share</button>
                         <div class="avm-menu" id="avm-share-menu">
@@ -933,8 +933,8 @@
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Media</div>
-                        <button type="button" class="avm-side-item" onclick="avmPickFiles('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
-                        <button type="button" class="avm-side-item" onclick="avmPickFiles('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
+                        <button type="button" class="avm-side-item" onclick="avmPickFiles('photo')">Photo</button>
+                        <button type="button" class="avm-side-item" onclick="avmPickFiles('video')">Video</button>
                     </div>
 
                     <div class="avm-side-section">
@@ -944,18 +944,18 @@
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Live</div>
-                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('queue')"><span class="avm-side-icon">&#128250;</span> Live Queue</button>
-                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('clock')"><span class="avm-side-icon">&#128337;</span> Clock &amp; Date</button>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('queue')">Live Queue</button>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('clock')">Clock &amp; Date</button>
                     </div>
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Custom</div>
-                        <button type="button" class="avm-side-item" onclick="openCustomVisualEditor(null)"><span class="avm-side-icon">&#10024;</span> Custom Visual</button>
+                        <button type="button" class="avm-side-item" onclick="openCustomVisualEditor(null)">Custom Visual</button>
                     </div>
 
                     <div class="avm-side-section">
                         <div class="avm-side-label">Other</div>
-                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('ad')"><span class="avm-side-icon">&#128227;</span> Advertisement</button>
+                        <button type="button" class="avm-side-item" onclick="addWidgetToModalBlock('ad')">Advertisement</button>
                     </div>
                 </div>
 
@@ -995,7 +995,6 @@
 
             <div class="avm-footer">
                 <div class="avm-schedule-toggle" onclick="avmToggleSchedule()">
-                    <span class="avm-schedule-icon">&#128197;</span>
                     <div class="avm-schedule-text">
                         <div class="t1">Schedule</div>
                         <div class="t2" id="avm-schedule-summary">Set when this visual block runs</div>
@@ -1089,20 +1088,20 @@
                 <div class="cv-sidebar">
                     <div class="avm-side-section">
                         <div class="avm-side-label">Background</div>
-                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundColor()"><span class="avm-side-icon">&#127912;</span> Color</button>
-                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundGradient()"><span class="avm-side-icon">&#127752;</span> Gradient</button>
-                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('photo')"><span class="avm-side-icon">&#128247;</span> Photo</button>
-                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('video')"><span class="avm-side-icon">&#127909;</span> Video</button>
+                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundColor()">Color</button>
+                        <button type="button" class="avm-side-item" onclick="cvSetBackgroundGradient()">Gradient</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('photo')">Photo</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickBackgroundFile('video')">Video</button>
                     </div>
                     <div class="avm-side-section">
                         <div class="avm-side-label">Overlays</div>
-                        <button type="button" class="avm-side-item" onclick="cvAddLayer('text')"><span class="avm-side-icon">&#128221;</span> Text</button>
-                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('photo')"><span class="avm-side-icon">&#128444;</span> Image/Logo</button>
-                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('video')"><span class="avm-side-icon">&#127916;</span> Video</button>
-                        <button type="button" class="avm-side-item" onclick="cvAddLayer('clock')"><span class="avm-side-icon">&#128337;</span> Clock &amp; Date</button>
-                        <button type="button" class="avm-side-item" onclick="cvAddLayer('queue')"><span class="avm-side-icon">&#128250;</span> Live Queue</button>
-                        <button type="button" class="avm-side-item" onclick="cvAddLayer('countdown')"><span class="avm-side-icon">&#9203;</span> Countdown Timer</button>
-                        <button type="button" class="avm-side-item" onclick="cvAddLayer('shape')"><span class="avm-side-icon">&#9636;</span> Shape / Divider</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('text')">Text</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('photo')">Image/Logo</button>
+                        <button type="button" class="avm-side-item" onclick="cvPickOverlayFile('video')">Video</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('clock')">Clock &amp; Date</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('queue')">Live Queue</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('countdown')">Countdown Timer</button>
+                        <button type="button" class="avm-side-item" onclick="cvAddLayer('shape')">Shape / Divider</button>
                     </div>
                     <input type="file" id="cv-file-input" accept="image/*" style="display:none;" onchange="onCvFileChosen(event)">
                 </div>
@@ -1609,7 +1608,7 @@
                 <div class="media-chip" draggable="true" data-media-id="${escapeHtml(m.id)}"
                      ondragstart="onMediaChipDragStart(event, '${escapeHtml(m.id)}')">
                     ${m.type === 'video'
-                        ? `<span class="media-thumb media-type-icon">&#127909;</span>`
+                        ? `<span class="media-thumb media-type-icon"><span class="thumb-tag">VID</span></span>`
                         : `<img class="media-thumb" src="${escapeHtml(m.url)}" alt="">`}
                     <span class="chip-label">${escapeHtml(m.filename)}</span>
                     <span class="chip-type">${m.type === 'video' ? 'Video' : 'Photo'}</span>
@@ -2313,13 +2312,13 @@
         function itemDisplayMeta(item) {
             if (item.type === 'photo' || item.type === 'video') {
                 const m = ambientMedia.find(x => x.id === item.mediaId);
-                return { icon: item.type === 'video' ? '&#127909;' : '&#128247;', label: m ? m.filename : 'Missing file' };
+                return { icon: item.type === 'video' ? 'VID' : 'IMG', label: m ? m.filename : 'Missing file' };
             }
-            if (item.type === 'queue') return { icon: '&#128250;', label: 'Live Queue' };
-            if (item.type === 'clock') return { icon: '&#128337;', label: 'Clock & Date' };
-            if (item.type === 'ad') return { icon: '&#128227;', label: 'Advertisement' };
-            if (item.type === 'customVisual') return { icon: '&#10024;', label: item.customLabel || 'Custom Visual' };
-            return { icon: '&#10067;', label: 'Unknown' };
+            if (item.type === 'queue') return { icon: 'Q', label: 'Live Queue' };
+            if (item.type === 'clock') return { icon: 'CLK', label: 'Clock & Date' };
+            if (item.type === 'ad') return { icon: 'AD', label: 'Advertisement' };
+            if (item.type === 'customVisual') return { icon: 'CV', label: item.customLabel || 'Custom Visual' };
+            return { icon: '?', label: 'Unknown' };
         }
         function itemCategoryLabel(item) {
             if (item.type === 'photo') return 'Photo';
@@ -2337,7 +2336,7 @@
                 return `<img class="${cls}" src="${escapeHtml(media.url)}" alt="">`;
             }
             const meta = itemDisplayMeta(item);
-            return `<span class="${cls}">${meta.icon}</span>`;
+            return `<span class="${cls}"><span class="thumb-tag">${escapeHtml(meta.icon)}</span></span>`;
         }
 
         // Re-renders every piece of the Ambient Visuals editor that depends
@@ -2448,7 +2447,7 @@
             avmClearPreviewCleanup();
 
             if (modalAmbientItems.length === 0 || avmSelectedIndex < 0) {
-                stage.innerHTML = `<span class="avm-preview-placeholder">&#128250;</span>`;
+                stage.innerHTML = '';
                 thumbEl.innerHTML = '';
                 nameEl.textContent = '\u2014';
                 subEl.textContent = 'Nothing to preview yet';
@@ -2467,22 +2466,22 @@
                 thumbEl.innerHTML = `<img src="${escapeHtml(media.url)}" alt="" style="width:100%; height:100%; object-fit:cover;">`;
             } else if (item.type === 'video' && media) {
                 stage.innerHTML = `<video src="${escapeHtml(media.url)}" muted loop autoplay playsinline></video><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Video</div></div>`;
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#127909;</span>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">VID</span>`;
             } else if (item.type === 'customVisual') {
                 stage.innerHTML = `<div class="avm-cv-stage-inner">${cvRenderComposite(item)}</div><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">Custom Visual</div></div>`;
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#10024;</span>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">CV</span>`;
             } else if (item.type === 'clock') {
                 avmPreviewCleanup = avmRenderClockPreview(stage);
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128337;</span>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">CLK</span>`;
             } else if (item.type === 'queue') {
                 avmPreviewCleanup = avmRenderQueuePreview(stage);
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128250;</span>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">Q</span>`;
             } else if (item.type === 'ad') {
                 avmRenderAdPreview(stage, item);
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">&#128227;</span>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">AD</span>`;
             } else {
-                stage.innerHTML = `<span class="avm-preview-placeholder">${m.icon}</span><div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
-                thumbEl.innerHTML = `<span style="font-size:1.1rem;">${m.icon}</span>`;
+                stage.innerHTML = `<div class="avm-preview-caption"><div class="name">${escapeHtml(m.label)}</div><div class="type">${itemCategoryLabel(item)}</div></div>`;
+                thumbEl.innerHTML = `<span class="thumb-tag">${escapeHtml(m.icon)}</span>`;
             }
 
             nameEl.textContent = m.label;
@@ -2600,7 +2599,7 @@
             list.innerHTML = ambientMedia.map(m => `
                 <button type="button" class="avm-side-item" onclick="addExistingMediaToModalBlock('${escapeHtml(m.id)}')" title="${escapeHtml(m.filename)}">
                     ${m.type === 'video'
-                        ? `<span class="avm-side-thumb avm-side-icon" style="display:flex;align-items:center;justify-content:center;">&#127909;</span>`
+                        ? `<span class="avm-side-thumb" style="display:flex;align-items:center;justify-content:center;"><span class="thumb-tag">VID</span></span>`
                         : `<img class="avm-side-thumb" src="${escapeHtml(m.url)}" alt="">`}
                     <span class="avm-library-label">${escapeHtml(m.filename)}</span>
                 </button>
@@ -3195,7 +3194,7 @@
             if (layer.type === 'queue') {
                 const title = escapeHtml(layer.title || 'Up Next');
                 const count = layer.maxItems || 3;
-                return `<div class="cv-layer-widget" style="flex-direction:column; align-items:flex-start; text-align:left; font-size:${layer.fontSize || 16}px; color:${escapeHtml(layer.color || '#ffffff')};"><div class="cv-queue-title">&#128250; ${title}</div><div class="cv-queue-hint">Live queue - next ${count} song${count === 1 ? '' : 's'}${layer.showArtwork === false ? '' : ' with artwork'}</div></div>`;
+                return `<div class="cv-layer-widget" style="flex-direction:column; align-items:flex-start; text-align:left; font-size:${layer.fontSize || 16}px; color:${escapeHtml(layer.color || '#ffffff')};"><div class="cv-queue-title">${title}</div><div class="cv-queue-hint">Live queue - next ${count} song${count === 1 ? '' : 's'}${layer.showArtwork === false ? '' : ' with artwork'}</div></div>`;
             }
             if (layer.type === 'countdown') {
                 let display = '--:--:--';
