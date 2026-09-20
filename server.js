@@ -539,11 +539,12 @@ function findActiveRuleAmong(candidateRules, event, now) {
 
 // Music-lane rules only (crowdDJ/Karaoke) - this is what actually drives
 // playlist switching, volume, and requests-open/closed, so an Ambient
-// Visuals block (laneType 'ambient') must never be returned here even
-// though it lives in the same `rules` array. Rules saved before laneType
-// existed are music rules by definition (Ambient Visuals didn't exist yet).
+// Visuals block (laneType 'ambient') or a Music Videos block (laneType
+// 'musicvideo') must never be returned here even though they live in the
+// same `rules` array. Rules saved before laneType existed are music rules
+// by definition (Ambient Visuals/Music Videos didn't exist yet).
 function getActiveScheduleRule(event, now = new Date()) {
-    const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType !== 'ambient');
+    const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType !== 'ambient' && r.laneType !== 'musicvideo');
     return findActiveRuleAmong(rules, event, now);
 }
 
@@ -554,6 +555,18 @@ function getActiveScheduleRule(event, now = new Date()) {
 // aren't mutually exclusive the way two music blocks are.
 function getActiveAmbientRule(event, now = new Date()) {
     const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType === 'ambient');
+    return findActiveRuleAmong(rules, event, now);
+}
+
+// Music-Videos-lane rules only - parallel to getActiveAmbientRule above.
+// Whatever eventually decides "should we even try to show a music video
+// right now" should gate on this first, then apply its own per-track
+// matching/confidence rules on top - this only answers the scheduling
+// half of that question. Shares the screen with Ambient Visuals (see
+// findOverlappingRuleAcrossLanes), so it can be "on" at the same time as
+// a music rule but never at the same time as an ambient rule.
+function getActiveMusicVideoRule(event, now = new Date()) {
+    const rules = (event.musicScheduler?.rules || []).filter(r => r.laneType === 'musicvideo');
     return findActiveRuleAmong(rules, event, now);
 }
 
@@ -754,13 +767,15 @@ function findOverlappingRulePair(rules) {
 // they're checked as a single "music" group - two music blocks can never
 // overlap regardless of which of those two lanes either one is in (mirrors
 // the existing "share the lane's blocks as solid" behavior). Ambient Visuals
-// is a separate output entirely (a screen, not the speakers), so it gets its
-// own independent overlap check - an ambient block is free to run
-// concurrently with a music block, just not with another ambient block.
+// and Music Videos share a different output entirely (a screen, not the
+// speakers), so together they get their own independent overlap check - a
+// screen block is free to run concurrently with a music block, just not
+// with another screen block (a Music Videos block takes over the screen
+// from Ambient Visuals, so the two can never be scheduled at once either).
 function findOverlappingRuleAcrossLanes(rules) {
-    const musicRules = rules.filter(r => r.laneType !== 'ambient');
-    const ambientRules = rules.filter(r => r.laneType === 'ambient');
-    return findOverlappingRulePair(musicRules) || findOverlappingRulePair(ambientRules);
+    const musicRules = rules.filter(r => r.laneType !== 'ambient' && r.laneType !== 'musicvideo');
+    const screenRules = rules.filter(r => r.laneType === 'ambient' || r.laneType === 'musicvideo');
+    return findOverlappingRulePair(musicRules) || findOverlappingRulePair(screenRules);
 }
 
 // Manual queue position, independent of vote count - see the admin reorder
@@ -2314,6 +2329,21 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
             const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
                 ? r.photoDurationSec : 8;
             return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec, ...(name ? { name } : {}) };
+        }
+
+        if (r.laneType === 'musicvideo') {
+            // videosInARow/visualsAfter describe the repeating pattern the
+            // display should cycle through while this block is active:
+            // show a real music video for this many songs in a row, then
+            // fall back to Ambient Visuals for that many songs, then
+            // repeat. Clamped to sane bounds rather than left unbounded -
+            // this only controls a display loop, not anything safety
+            // critical, so the bounds are generous.
+            const videosInARow = Number.isInteger(r.videosInARow) && r.videosInARow >= 1 && r.videosInARow <= 20
+                ? r.videosInARow : 2;
+            const visualsAfter = Number.isInteger(r.visualsAfter) && r.visualsAfter >= 0 && r.visualsAfter <= 20
+                ? r.visualsAfter : 1;
+            return { id, laneType: 'musicvideo', days, start: r.start, end: r.end, videosInARow, visualsAfter, ...(name ? { name } : {}) };
         }
 
         if (!playlistIds.has(r.playlistId)) return null;
