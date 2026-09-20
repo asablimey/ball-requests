@@ -878,10 +878,10 @@
         let mvLastReadingChangedAt = 0;
         let mvSampleCount = 0;
         const MV_SAMPLE_INTERVAL_MS = 50;
-        const MV_CHECK_EVERY_N_SAMPLES = 10; // decisions every ~500 ms
-        const MV_NUDGE_START_MS = 200;    // start speed-nudging beyond this drift
-        const MV_NUDGE_STOP_MS = 100;     // ...and stop once back inside this
-        const MV_SEEK_THRESHOLD_MS = 1200; // too far to nudge - seek instead
+        const MV_CHECK_EVERY_N_SAMPLES = 6;  // decisions every ~300 ms - was ~500ms
+        const MV_NUDGE_START_MS = 100;    // start speed-nudging beyond this drift - was 200ms
+        const MV_NUDGE_STOP_MS = 40;      // ...and stop once back inside this - was 100ms
+        const MV_SEEK_THRESHOLD_MS = 600; // too far to nudge - seek instead - was 1200ms
         const MV_SETTLE_MS = 4000;        // grace after a load/seek before judging it
         const MV_BIG_DRIFT_MS = 3000;
         // Two settled checks in a row still this far out = the video can't
@@ -1072,16 +1072,35 @@
         // Folds one /api/music-video reading into mvClock. The age of the
         // reading is serverNow - updatedAt (both the SERVER's clock); this
         // screen's own clock is only used to measure time since receipt.
+        //
+        // Only the FIRST reading for a track (or a genuine play/pause
+        // transition, or a real seek/skip) replaces the anchor outright.
+        // Once a song has a good anchor, mvTargetSec() runs forward purely
+        // from Date.now() - it is NOT nudged a little on every subsequent
+        // poll. Spotify's own progress reporting isn't a live audio clock;
+        // it's a periodic estimate with its own few-hundred-ms jitter, and
+        // blending a fraction of that into the anchor every ~3s was
+        // reintroducing small drift for the ENTIRE song, not just at video
+        // start - which is what made lip-sync feel persistently off rather
+        // than just occasionally off. A real seek/skip still snaps the
+        // anchor immediately via the threshold check below.
+        const MV_CLOCK_RESYNC_THRESHOLD_MS = 1500;
         function updateMvClock(data, receivedAt) {
             const serverNow = Number.isFinite(data.serverNow) ? data.serverNow : Date.now();
             const ageMs = data.isPlaying ? Math.max(0, serverNow - (data.updatedAt || serverNow)) : 0;
             const progressNow = (data.progressMs || 0) + ageMs;
             const newBase = receivedAt - progressNow;
             const isPlaying = !!data.isPlaying;
-            if (!mvClock || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > 1500) {
+            if (!mvClock || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > MV_CLOCK_RESYNC_THRESHOLD_MS) {
+                // New song, a play/pause transition, or a big enough jump to
+                // be a real seek rather than reporting noise - this reading
+                // becomes the new anchor outright.
                 mvClock = { base: newBase, isPlaying, pausedPosMs: data.progressMs || 0, trackId: data.trackId };
             } else {
-                mvClock.base += (newBase - mvClock.base) * 0.25;
+                // Same song, still within normal reporting jitter - keep
+                // running on the existing anchor. Just track pausedPosMs so
+                // a pause captured between polls still reflects the right
+                // spot.
                 mvClock.pausedPosMs = data.progressMs || 0;
             }
         }
