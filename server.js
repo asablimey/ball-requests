@@ -683,17 +683,20 @@ async function youtubeSearchVideos(query, maxResults = 10) {
     }
 }
 
-// Strips a bracketed qualifier - "(feat. X)", "(Radio Edit)", "[Explicit]" -
-// and a trailing "- feat./ft./featuring ..." tag, leaving just the song's
-// own name to match against. Candidate video titles almost always keep this
-// core intact even when they spell out featured artists differently
-// (feat./ft./featuring), add their own "(Official Music Video)" suffix, or
-// drop a "(Radio Edit)" the track has - the surrounding decoration differs
-// far more often than the actual song title does.
+// Strips everything from the first bracketed qualifier - "(feat. X)",
+// "(Radio Edit)", "[Explicit]" - or the first " - " separator onward,
+// whichever comes first, leaving just the song's own name to match
+// against. Spotify decorates track titles with all sorts of suffixes
+// after one of those two separators - "- Sped Up Version", "- Remix",
+// "- Radio Edit", "- Live", "- feat. X", "(with X)" - that essentially
+// never appear on the actual official video's title, so keeping them in
+// the string being matched was rejecting plenty of genuinely correct
+// videos, not just wrong ones. A bare hyphen with no surrounding spaces
+// (as in "Anti-Hero") isn't a separator here and is left alone.
 function coreSongTitle(title) {
     return (title || '')
-        .replace(/[\(\[][^\)\]]*[\)\]]/g, '')
-        .replace(/\s*-\s*(feat\.?|ft\.?|featuring)\s.*$/i, '')
+        .split(/[\(\[]/)[0]
+        .split(/\s-\s/)[0]
         .trim();
 }
 
