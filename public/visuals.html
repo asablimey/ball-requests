@@ -1581,10 +1581,26 @@
         // Ambient view is checked most often since it drives an active
         // slideshow; the fallback board's data is cheap and only visible
         // when ambient visuals aren't running.
-        pollAmbientVisuals();
+        //
+        // On a fresh page load - including a mid-song reload of this
+        // display while a video was already playing - pollAmbientVisuals()
+        // would otherwise render immediately and flash up ambient/queue
+        // for the second or two it takes pollMusicVideo() to find the
+        // match again and the video to reload, confirm playing, and
+        // reveal itself. So the very first ambient render waits for that
+        // first music-video check to come back, and skips itself entirely
+        // if a match was found - musicVideoActive is true as soon as
+        // startMusicVideo() runs, well before the video is actually
+        // revealed, and pollAmbientVisuals's own mvRevealed guard would
+        // otherwise let it sneak onto screen during that gap. If the video
+        // then fails to load or reveal in time, stopMusicVideo() calls
+        // pollAmbientVisuals() itself right away - no need to wait on
+        // this. Every poll after this first one behaves exactly as before.
         pollQueueBoard();
         pollNowPlaying();
-        pollMusicVideo();
+        pollMusicVideo().then(() => {
+            if (!musicVideoActive) pollAmbientVisuals();
+        });
         setInterval(pollAmbientVisuals, 8000);
         setInterval(pollQueueBoard, 8000);
         setInterval(pollNowPlaying, 4000);
