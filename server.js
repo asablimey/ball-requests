@@ -2463,12 +2463,145 @@ app.get('/e/:slug/api/admin/scheduler', (req, res) => {
         pendingSwitchLabel: event.schedulerRuntime.pendingSwitchLabel,
         // The Ambient Visuals media library - not runtime state like the
         // fields above, but the scheduler page needs it up front to render
-        // the palette and resolve each ambient block's mediaIds to actual
+        // the palette and resolve each ambient block's items to actual
         // files, so it rides along with this same GET rather than a
         // separate round-trip.
         ambientMedia: event.ambientMedia
     });
 });
+
+// ---------- Ambient item validation ----------
+// Mirrors the whitelist scheduler.html applies when importing a visuals
+// file (see VISUALS_FIELDS/importSanitizeItem there), but trusted
+// server-side: an ambient rule's "items" ride along on every Save Schedule
+// and get rendered straight onto a venue screen, so they're re-checked
+// here rather than trusted from the client. Anything that doesn't hold up
+// is dropped, same as everywhere else in this handler.
+const AMBIENT_ITEM_TYPES = ['photo', 'video', 'queue', 'clock', 'ad', 'customVisual'];
+const AMBIENT_LAYER_TYPES = ['text', 'photo', 'video', 'clock', 'queue', 'countdown', 'shape'];
+const AMBIENT_HEX = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
+const AMBIENT_FIELDS = {
+    numbers: {
+        x: [0, 100], y: [0, 100], width: [1, 100], height: [1, 100], opacity: [0, 100],
+        rotation: [-360, 360], fontSize: [4, 400], bgOpacity: [0, 100], maxItems: [1, 10],
+        borderRadius: [0, 100], borderWidth: [0, 50], thickness: [1, 100], tintOpacity: [0, 100],
+        angle: [0, 360], dimOpacity: [0, 100]
+    },
+    bools: ['flipH', 'flipV', 'lockAspect', 'bold', 'italic', 'outline', 'bgEnabled', 'showDate',
+            'showSeconds', 'showArtwork', 'tintEnabled', 'dimEnabled'],
+    colors: ['color', 'outlineColor', 'bgColor', 'borderColor', 'tintColor', 'color1', 'color2', 'dimColor'],
+    enums: {
+        align: ['left', 'center', 'right'],
+        fit: ['cover', 'contain'],
+        format: ['12h', '24h'],
+        shapeType: ['rectangle', 'circle', 'line'],
+        fontFamily: ['inherit', 'Poppins', 'Bebas Neue', 'Playfair Display', 'Space Mono']
+    },
+    strings: { text: 500, title: 60, label: 60 }
+};
+
+function pickAmbientFields(src) {
+    const out = {};
+    for (const [k, [lo, hi]] of Object.entries(AMBIENT_FIELDS.numbers)) {
+        if (typeof src[k] === 'number' && Number.isFinite(src[k])) out[k] = Math.max(lo, Math.min(hi, src[k]));
+    }
+    for (const k of AMBIENT_FIELDS.bools) if (typeof src[k] === 'boolean') out[k] = src[k];
+    for (const k of AMBIENT_FIELDS.colors) if (typeof src[k] === 'string' && AMBIENT_HEX.test(src[k])) out[k] = src[k];
+    for (const [k, allowed] of Object.entries(AMBIENT_FIELDS.enums)) {
+        if (allowed.includes(src[k])) out[k] = src[k];
+    }
+    for (const [k, max] of Object.entries(AMBIENT_FIELDS.strings)) {
+        if (typeof src[k] === 'string') out[k] = src[k].slice(0, max);
+    }
+    if (typeof src.targetDateTime === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(src.targetDateTime)) {
+        out.targetDateTime = src.targetDateTime;
+    }
+    return out;
+}
+
+function sanitizeAmbientBackground(raw, ambientMediaIds) {
+    const black = { type: 'color', color: '#000000', fit: 'cover' };
+    if (!raw || typeof raw !== 'object') return black;
+    const f = pickAmbientFields(raw);
+    if (raw.type === 'gradient') {
+        return { type: 'gradient', color1: f.color1 || '#1DB954', color2: f.color2 || '#121212', angle: f.angle != null ? f.angle : 135 };
+    }
+    if ((raw.type === 'photo' || raw.type === 'video') && typeof raw.mediaId === 'string' && ambientMediaIds.has(raw.mediaId)) {
+        const bg = { type: raw.type, mediaId: raw.mediaId, fit: f.fit || 'cover' };
+        if (f.dimEnabled) {
+            bg.dimEnabled = true;
+            bg.dimColor = f.dimColor || '#000000';
+            bg.dimOpacity = f.dimOpacity != null ? f.dimOpacity : 40;
+        }
+        return bg;
+    }
+    return { type: 'color', color: f.color || '#000000', fit: 'cover' };
+}
+
+function sanitizeAmbientLayer(raw, ambientMediaIds) {
+    if (!raw || typeof raw !== 'object' || !AMBIENT_LAYER_TYPES.includes(raw.type)) return null;
+    const layer = { id: crypto.randomUUID(), type: raw.type, ...pickAmbientFields(raw) };
+    for (const [k, d] of [['x', 30], ['y', 40], ['width', 30], ['height', 20], ['opacity', 100], ['rotation', 0]]) {
+        if (typeof layer[k] !== 'number') layer[k] = d;
+    }
+    layer.x = Math.max(0, Math.min(100 - layer.width, layer.x));
+    layer.y = Math.max(0, Math.min(100 - layer.height, layer.y));
+    if (raw.type === 'photo' || raw.type === 'video') {
+        if (typeof raw.mediaId !== 'string' || !ambientMediaIds.has(raw.mediaId)) return null;
+        layer.mediaId = raw.mediaId;
+    }
+    return layer;
+}
+
+// Validates one item in an ambient block's sequence - the same shape
+// scheduler.html keeps in modalAmbientItems. Returns null for anything
+// that doesn't hold up (unknown type, deleted/missing media, an empty
+// ad or customVisual), same as a dropped rule elsewhere in this file.
+function sanitizeAmbientItem(raw, ambientMediaIds) {
+    if (!raw || typeof raw !== 'object' || !AMBIENT_ITEM_TYPES.includes(raw.type)) return null;
+    const fallbackDur = (raw.type === 'photo' || raw.type === 'video' || raw.type === 'ad') ? 8 : 10;
+    const durationSec = Number.isInteger(raw.durationSec) && raw.durationSec >= 1 && raw.durationSec <= 120 ? raw.durationSec : fallbackDur;
+    const item = { id: typeof raw.id === 'string' && raw.id ? raw.id : crypto.randomUUID(), type: raw.type, durationSec };
+
+    if (raw.type === 'photo' || raw.type === 'video') {
+        if (typeof raw.mediaId !== 'string' || !ambientMediaIds.has(raw.mediaId)) return null;
+        item.mediaId = raw.mediaId;
+    } else if (raw.type === 'ad') {
+        item.adText = typeof raw.adText === 'string' ? raw.adText.trim().slice(0, 200) : '';
+        const qr = typeof raw.adQrUrl === 'string' ? raw.adQrUrl.trim().slice(0, 500) : '';
+        item.adQrUrl = /^https?:\/\//i.test(qr) ? qr : '';
+        if (!item.adText && !item.adQrUrl) return null;
+    } else if (raw.type === 'customVisual') {
+        item.customLabel = typeof raw.customLabel === 'string' ? raw.customLabel.trim().slice(0, 60) : '';
+        item.background = sanitizeAmbientBackground(raw.background, ambientMediaIds);
+        item.layers = (Array.isArray(raw.layers) ? raw.layers : [])
+            .slice(0, 40)
+            .map(l => sanitizeAmbientLayer(l, ambientMediaIds))
+            .filter(Boolean);
+    }
+    return item;
+}
+
+// Drops (or cleans up) references to a removed media library file from an
+// ambient block's items - used by the ambient-media DELETE route below.
+function stripMediaFromAmbientItems(items, mediaId) {
+    return (Array.isArray(items) ? items : [])
+        .map(it => {
+            if (!it || typeof it !== 'object') return null;
+            if ((it.type === 'photo' || it.type === 'video') && it.mediaId === mediaId) return null;
+            if (it.type === 'customVisual') {
+                const bg = it.background;
+                const background = (bg && (bg.type === 'photo' || bg.type === 'video') && bg.mediaId === mediaId)
+                    ? { type: 'color', color: '#000000', fit: 'cover' }
+                    : bg;
+                const layers = (Array.isArray(it.layers) ? it.layers : [])
+                    .filter(l => !((l.type === 'photo' || l.type === 'video') && l.mediaId === mediaId));
+                return { ...it, background, layers };
+            }
+            return it;
+        })
+        .filter(Boolean);
+}
 
 // Full replace of playlists+rules+enabled, validated here rather than
 // trusted from the client - this is the one place a bad time string or a
@@ -2523,18 +2656,15 @@ app.post('/e/:slug/api/admin/scheduler', (req, res) => {
         const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 60) : null;
 
         if (r.laneType === 'ambient') {
-            // Dedupe while preserving the admin's chosen order (that order
-            // is exactly the shuffle-source ordering the display side will
-            // read), and drop any id that doesn't point at a real,
-            // still-existing library entry - e.g. a file removed from the
-            // library after this block was built.
-            const mediaIds = Array.isArray(r.mediaIds)
-                ? [...new Set(r.mediaIds.filter(mid => typeof mid === 'string' && ambientMediaIds.has(mid)))]
+            // Preserves the admin's chosen order (that order is exactly the
+            // sequence the display side plays back), dropping any item that
+            // doesn't hold up - e.g. it points at a file removed from the
+            // library after this block was built. See sanitizeAmbientItem.
+            const items = Array.isArray(r.items)
+                ? r.items.slice(0, 60).map(it => sanitizeAmbientItem(it, ambientMediaIds)).filter(Boolean)
                 : [];
-            if (mediaIds.length === 0) return null; // a block with nothing to show isn't a valid block
-            const photoDurationSec = Number.isInteger(r.photoDurationSec) && r.photoDurationSec >= 1 && r.photoDurationSec <= 120
-                ? r.photoDurationSec : 8;
-            return { id, laneType: 'ambient', days, start: r.start, end: r.end, mediaIds, photoDurationSec, ...(name ? { name } : {}) };
+            if (items.length === 0) return null; // a block with nothing to show isn't a valid block
+            return { id, laneType: 'ambient', days, start: r.start, end: r.end, items, ...(name ? { name } : {}) };
         }
 
         if (r.laneType === 'musicvideo') {
@@ -2643,8 +2773,8 @@ app.post('/e/:slug/api/admin/ambient-media', (req, res) => {
 });
 
 // Removes a file from the library and strips it out of every block that
-// referenced it, rather than leaving a dangling id sitting in mediaIds -
-// the next schedule save would drop it anyway (see the mediaIds filter in
+// referenced it, rather than leaving a dangling id sitting in a block's items -
+// the next schedule save would drop it anyway (see sanitizeAmbientItem in
 // POST /api/admin/scheduler), but doing it here too means a block doesn't
 // silently lose a file only the next time someone happens to hit Save.
 // The asset itself is left alone in Cloudinary (deleting it there requires
@@ -2661,16 +2791,16 @@ app.delete('/e/:slug/api/admin/ambient-media/:mediaId', (req, res) => {
     }
     const rules = event.musicScheduler?.rules || [];
     for (const rule of rules) {
-        if (rule.laneType === 'ambient' && Array.isArray(rule.mediaIds)) {
-            rule.mediaIds = rule.mediaIds.filter(id => id !== mediaId);
+        if (rule.laneType === 'ambient') {
+            rule.items = stripMediaFromAmbientItems(rule.items, mediaId);
         }
     }
-    // A block that's had every one of its files removed this way is no
-    // longer valid (see the "mediaIds.length === 0 -> drop the rule" check
+    // A block that's had every one of its items removed this way is no
+    // longer valid (see the "items.length === 0 -> drop the rule" check
     // in POST /api/admin/scheduler) - drop it here too instead of leaving
     // an empty, unreachable block sitting in the timetable until the next
     // save happens to clean it up.
-    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || r.mediaIds.length > 0);
+    event.musicScheduler.rules = rules.filter(r => r.laneType !== 'ambient' || (r.items && r.items.length > 0));
     events.scheduleSave(event.slug);
     res.json({ success: true, ambientMedia: event.ambientMedia, rules: event.musicScheduler.rules });
 });
@@ -3376,10 +3506,10 @@ app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
 
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
 // lane (kiosk, a standalone signage screen, etc.) polls this for "what
-// should be on screen right now". Resolves the active block's mediaIds
-// into full {id, url, filename, type} records here so the display side
-// never has to also fetch/hold the whole library just to look up a few
-// ids. Returns active:false whenever the scheduler is off or no ambient
+// should be on screen right now". Resolves each item in the active block's
+// sequence (photo/video mediaIds become real urls) here so the display
+// side never has to also fetch/hold the whole library just to look up a
+// few ids. Returns active:false whenever the scheduler is off or no ambient
 // block covers this moment - callers should hold whatever was last showing
 // rather than blank the screen on a brief gap.
 app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
@@ -3396,16 +3526,29 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
         return res.json({ active: false, ...overrides });
     }
     const byId = new Map((event.ambientMedia || []).map(m => [m.id, m]));
-    const media = rule.mediaIds.map(id => byId.get(id)).filter(Boolean);
-    if (media.length === 0) {
+    // Resolves each stored item to what the display actually consumes (a
+    // real url instead of a mediaId it can't look up itself). Note:
+    // 'customVisual' items (layered compositions from the Custom Visual
+    // editor) aren't rendered by the current Visuals Display build yet, so
+    // they're skipped here rather than sent as something it can't draw.
+    const items = (rule.items || []).map(it => {
+        if (it.type === 'photo' || it.type === 'video') {
+            const media = byId.get(it.mediaId);
+            if (!media) return null;
+            return { type: it.type, url: media.url, durationSec: it.durationSec };
+        }
+        if (it.type === 'queue' || it.type === 'clock' || it.type === 'ad') {
+            return { ...it };
+        }
+        return null;
+    }).filter(Boolean);
+    if (items.length === 0) {
         return res.json({ active: false, ...overrides });
     }
     res.json({
         active: true,
         ruleId: rule.id,
-        photoDurationSec: rule.photoDurationSec || 8,
-        media,
-        items: media,
+        items,
         ...overrides
     });
 });
