@@ -1297,11 +1297,23 @@
         // admin sets one explicitly, matching what testing landed on here.
         let mvVideoLeadMs = 600;
 
+        // How much dead air/bumper sits at the front of the CURRENT video
+        // before the song itself actually starts - detected server-side
+        // (see detectVideoIntroOffsetMs in server.js) from the video's own
+        // audio, cached per track, and refreshed here on every
+        // pollMusicVideo response. 0 until that detection resolves (a few
+        // seconds into a new video) or if the video has no such offset.
+        // Same direction as mvVideoLeadMs (video moves ahead), but this one
+        // is per-video rather than a single venue-wide constant, since a
+        // cold-open intro is a property of the specific video, not the
+        // room's speakers.
+        let mvIntroOffsetMs = 0;
+
         // Where the video SHOULD be right now, in seconds.
         function mvTargetSec() {
             if (!mvClock) return 0;
             const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
-            return Math.max(0, (posMs + mvVideoLeadMs) / 1000);
+            return Math.max(0, (posMs + mvVideoLeadMs + mvIntroOffsetMs) / 1000);
         }
 
         function mvSampleReading() {
@@ -1642,6 +1654,11 @@
                 if (typeof data.videoOffsetMs === 'number' && Number.isFinite(data.videoOffsetMs)) {
                     mvVideoLeadMs = data.videoOffsetMs;
                 }
+                // Per-video cold-open offset - see mvIntroOffsetMs above.
+                // Starts at 0 and picks up the real number a few seconds
+                // into a new video once server-side detection resolves.
+                mvIntroOffsetMs = (typeof data.introOffsetMs === 'number' && Number.isFinite(data.introOffsetMs))
+                    ? data.introOffsetMs : 0;
 
                 // Show Queue / Mute from the admin are deliberate - they win instantly.
                 if (visualsForceQueue || data.override) {
