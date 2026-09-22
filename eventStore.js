@@ -390,6 +390,69 @@ async function flushAllSaves() {
     await Promise.all(slugs.map(slug => writeToRedisNow(slug)));
 }
 
+// --- Music-video verification cache (global, not per-event) ---------------
+// Persists verifiedMusicVideoCache (see server.js's findAudioVerifiedMusicVideo
+// / triggerMusicVideoVerification) across restarts and deploys, so audio-
+// verification work already done for a track - a real ffmpeg download and
+// cross-correlation, not a cheap lookup - isn't thrown away every time the
+// process restarts. Stored as a single JSON blob (an object keyed by
+// trackId, same shape as the in-memory Map it mirrors) rather than one
+// Redis key per track: this dataset is small and flat compared to the
+// per-event blobs above, so it doesn't need its own index/eviction
+// machinery, just one key.
+const MUSIC_VIDEO_CACHE_KEY = 'music-video-cache';
+
+// Called once at server startup, before the first verification can run -
+// see app.listen in server.js. Returns a plain object (trackId -> result),
+// or {} if nothing's been saved yet / the load fails, so callers can seed
+// their in-memory Map straight from it without a null check.
+async function loadMusicVideoCache() {
+    try {
+        const raw = await redisGet(MUSIC_VIDEO_CACHE_KEY);
+        if (raw == null) return {};
+        return JSON.parse(raw);
+    } catch (err) {
+        console.error('[EVENTS] Failed to load music-video cache from Redis:', err.message);
+        return {};
+    }
+}
+
+// Debounced the same way per-event writes are above (SAVE_DEBOUNCE_MS) -
+// without this, a queue's worth of tracks all resolving verification within
+// a few seconds of each other (see the eager, queue-time trigger) would
+// otherwise hit Redis once per track instead of once per burst. `getSnapshot`
+// is a function, not a value, and is only called once the debounce window
+// actually fires - so the write always reflects everything added during
+// that window, not just whatever existed the moment the timer was first
+// scheduled.
+let musicVideoCacheSaveTimeout = null;
+function scheduleMusicVideoCacheSave(getSnapshot) {
+    if (musicVideoCacheSaveTimeout) return;
+    musicVideoCacheSaveTimeout = setTimeout(async () => {
+        musicVideoCacheSaveTimeout = null;
+        try {
+            await redisSet(MUSIC_VIDEO_CACHE_KEY, JSON.stringify(getSnapshot()));
+        } catch (err) {
+            console.error('[EVENTS] Failed to save music-video cache to Redis:', err.message);
+        }
+    }, SAVE_DEBOUNCE_MS);
+}
+
+// Mirrors flushAllSaves() above - called from the same shutdown handler in
+// server.js so a debounce window still in flight doesn't drop whatever
+// verification work finished right before the process went down.
+async function flushMusicVideoCacheSave(getSnapshot) {
+    if (musicVideoCacheSaveTimeout) {
+        clearTimeout(musicVideoCacheSaveTimeout);
+        musicVideoCacheSaveTimeout = null;
+    }
+    try {
+        await redisSet(MUSIC_VIDEO_CACHE_KEY, JSON.stringify(getSnapshot()));
+    } catch (err) {
+        console.error('[EVENTS] Failed to flush music-video cache to Redis:', err.message);
+    }
+}
+
 // slug -> last time it was touched via getEvent. Used only to decide what's
 // safe to drop from the in-memory cache below; has no effect on the data
 // itself, which always lives in Redis regardless of cache state.
@@ -974,6 +1037,9 @@ module.exports = {
     resetEventPassword,
     scheduleSave,
     flushAllSaves,
+    loadMusicVideoCache,
+    scheduleMusicVideoCacheSave,
+    flushMusicVideoCacheSave,
     verifyPassword,
     getLoadedEvents,
     getActiveEventsSummary,
