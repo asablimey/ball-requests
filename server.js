@@ -616,18 +616,21 @@ function titleLooksDisqualified(title) {
     return DISQUALIFYING_TITLE_PATTERNS.some(re => re.test(title || ''));
 }
 
-// A video whose length differs from the song's by more than this has an
-// intro, skit or outro the audio doesn't - so matching timestamps would put
-// the picture seconds out of step with the music no matter how good the
-// sync loop is. Such videos are rejected outright.
-// NOTE: most real official music videos run 5-20s longer than the Spotify
-// track (studio countdown, an intro skit, a longer fade-out) - a 2s
-// tolerance rejected almost all of them, which is why so few tracks were
-// ever getting a video at all. The sync loop (see mvCheck in
-// visual-display.html) actively corrects drift during playback anyway, so
-// this only needs to catch a genuinely WRONG video (a full alternate edit,
-// a compilation, a different song entirely), not fine-grained intro length.
-const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 20000;
+// A video whose length differs from the song's by more than this almost
+// certainly isn't a genuine candidate at all (wrong song, a compilation, a
+// full alternate edit) - not worth the bandwidth of even downloading its
+// audio to check further. This is DELIBERATELY loose: it's only a cheap
+// pre-filter for "is this worth analyzing", not the thing that decides
+// whether a video is actually in sync. That decision now belongs to the
+// audio-verification step below (findAudioVerifiedMusicVideo), which
+// listens to the actual audio instead of guessing from total runtime - a
+// video can pass this duration check and still fail verification (a
+// different edit that happens to be a similar length), and in principle a
+// video could fail a tighter duration check yet still be a perfectly
+// synced upload (a long spoken intro) - verification is what actually
+// decides that now, this just avoids wasting a download on the obviously
+// wrong ones.
+const MUSIC_VIDEO_MAX_DURATION_DIFF_MS = 60000;
 
 // "PT3M45S" / "PT1H2M3S" -> milliseconds (null if unparseable, e.g. live "P0D").
 function parseIsoDurationMs(iso) {
@@ -737,36 +740,79 @@ function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurat
     return eligible.length ? eligible[0].v : null;
 }
 
-// How many seconds of a candidate's audio to actually pull and scan.
-// Enough to cover a cold-open/bumper/logo intro comfortably; scanning
-// further than this just costs more download+decode time per video for no
-// real benefit, since a genuine song intro (as opposed to dead air before
-// one) counts as "started" anyway - see the opensQuiet check below.
-const MUSIC_VIDEO_INTRO_SCAN_SEC = 20;
-const MUSIC_VIDEO_SILENCE_THRESHOLD_DB = '-35dB';
-const MUSIC_VIDEO_SILENCE_MIN_DURATION_SEC = 0.3;
-const MUSIC_VIDEO_OFFSET_DETECT_TIMEOUT_MS = 15000;
-
-// Finds how many ms of dead air/bumper sit at the front of a video before
-// the actual song content starts, so mvTargetSec() (see
-// visual-display.html) can aim past it instead of assuming the video's
-// 0:00 lines up with the track's 0:00. Only works for a COLD-OPEN style
-// intro (silence, a logo sting, a spoken "subscribe" bit) - it cannot help
-// a video with a genuinely different musical intro, since real audio reads
-// as "started" whether or not it's the right audio. Relies on the
-// assumption (true for the tracks this was built against) that the
-// Spotify master itself has no lead-in silence, so "first sustained sound
-// in the video" and "the track's 0:00" are the same instant.
+// --- Audio-verified matching ---------------------------------------------
+// The old approach only checked total video length against the track's
+// length, then guessed the intro offset by looking for literal silence at
+// the front. Both were weak proxies for the thing that actually matters:
+// is this video's audio the SAME RECORDING as the track, in step with it,
+// start to finish? A video can be the right length while being a
+// different edit throughout (a longer bridge, a shorter outro cancelling
+// each other out) - no fixed offset fixes that, and it can have a
+// perfectly real, non-silent cold open (dialogue, a sound effect, a drum
+// count-in) that the silence detector simply never saw.
 //
-// Best-effort end to end: any failure (extraction blocked, ffmpeg missing,
-// video geo-restricted, a network hiccup) resolves to 0 rather than
-// rejecting - a wrong POSITIVE offset would misalign playback outright,
-// whereas 0 just falls back to the previous assume-no-intro behavior for
-// that one video. Never awaited inline in the request path that needs a
-// video RIGHT NOW (see the /api/music-video handler) - this can take a few
-// seconds (download + decode), so it always runs in the background and the
-// cache picks up the real number once it resolves.
-function detectVideoIntroOffsetMs(videoId) {
+// This replaces both checks with one: pull a chunk of audio from a
+// candidate video, pull a chunk of REFERENCE audio for the same track
+// (a plain official-audio upload - see getReferenceAudioEnvelope), and
+// directly compare them. That gives both a precise offset (however the
+// intro is built, silent or not) AND a confidence score that tells us
+// whether the video is really the same recording all the way through
+// (see findAudioVerifiedMusicVideo below) - not just "the same length".
+
+// How many seconds of audio to pull from the front of each track/video for
+// comparison. Long enough to give the correlation something to lock onto
+// even through a real intro; short enough to keep every download+decode
+// bounded regardless of how long the actual song runs.
+const MUSIC_VIDEO_AUDIO_WINDOW_SEC = 100;
+// Coarse loudness samples per second. Deliberately low-resolution: this
+// compares OVERALL ENERGY OVER TIME (like a rough amplitude envelope), not
+// raw waveform, which is what makes it tolerant of two different YouTube
+// encodes of the same recording (different loudness normalization, EQ,
+// bitrate) - the actual waveforms differ, but the loudness contour over
+// time doesn't.
+const MUSIC_VIDEO_ENVELOPE_RATE_HZ = 50;
+const MUSIC_VIDEO_PCM_SAMPLE_RATE = 4000; // decode rate fed into the envelope reducer, not the final resolution
+const MUSIC_VIDEO_SAMPLES_PER_ENVELOPE_POINT = MUSIC_VIDEO_PCM_SAMPLE_RATE / MUSIC_VIDEO_ENVELOPE_RATE_HZ;
+// How far off the front the true offset could plausibly be - generous
+// enough for any real cold open, tight enough to keep the search cheap.
+const MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC = 20;
+// A genuine full-length match against a same-length window scores at or
+// near 1.0 even across different encodes/loudness (tested up to ~1.0 on
+// clean and re-encoded audio); a video that only matches for PART of the
+// window (a different edit partway through) lands roughly mid-range
+// (~0.4-0.5); unrelated audio scores near 0. 0.55 sits cleanly above the
+// "partial match" band, so a video only has to clear it if the correlation
+// found a genuine match across the WHOLE analyzed window, not just a
+// portion of it.
+const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
+// Reference audio (see getReferenceAudioEnvelope) is expected to be the
+// exact studio master - its own runtime should match Spotify's reported
+// duration almost exactly, unlike a "video" candidate which may
+// legitimately run longer. A wide gap here means we found someone's cover,
+// a remix, or the wrong song entirely - not something worth trusting as
+// ground truth.
+const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
+const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
+const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
+// A small negative measured offset is just noise around a true ~0 (the
+// video's content genuinely starts right at its own front) - the display
+// already clamps the applied offset at 0 (see mvTargetSec), so nothing
+// further to do there. A LARGE negative offset means something different:
+// the video is missing content the reference has at ITS start (a trimmed
+// intro) - the video's own 0:00 is actually already partway into the song.
+// A positive-only "start further into the video" offset cannot fix that
+// (there's no "start further into the song" equivalent on this side), so
+// past this tolerance the candidate is rejected outright rather than
+// clamped, same as any other confirmed non-match.
+const MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS = 500;
+
+// Downloads audioonly from a YouTube video and reduces it to a coarse
+// loudness-over-time envelope. Resolves to null (never throws/rejects) on
+// any failure - a broken download just means "can't verify this one",
+// never a crash or a hung request; callers already treat null as "skip
+// this candidate" or "couldn't confirm anything either way", per their own
+// comments below.
+function extractAudioEnvelope(videoId, maxDurationSec) {
     return new Promise((resolve) => {
         let audioStream;
         try {
@@ -775,64 +821,215 @@ function detectVideoIntroOffsetMs(videoId) {
                 filter: 'audioonly'
             });
         } catch (e) {
-            console.error(`[MV-OFFSET] Could not open audio stream for ${videoId}:`, e.message);
-            return resolve(0);
+            console.error(`[MV-MATCH] Could not open audio stream for ${videoId}:`, e.message);
+            return resolve(null);
         }
 
         let ff;
         try {
             ff = spawn(ffmpegPath, [
                 '-i', 'pipe:0',
-                '-t', String(MUSIC_VIDEO_INTRO_SCAN_SEC),
-                '-af', `silencedetect=noise=${MUSIC_VIDEO_SILENCE_THRESHOLD_DB}:d=${MUSIC_VIDEO_SILENCE_MIN_DURATION_SEC}`,
-                '-f', 'null', '-'
+                '-t', String(maxDurationSec),
+                '-ac', '1',
+                '-ar', String(MUSIC_VIDEO_PCM_SAMPLE_RATE),
+                '-f', 's16le',
+                'pipe:1'
             ]);
         } catch (e) {
-            console.error(`[MV-OFFSET] Could not start ffmpeg for ${videoId}:`, e.message);
-            return resolve(0);
+            console.error(`[MV-MATCH] Could not start ffmpeg for ${videoId}:`, e.message);
+            return resolve(null);
         }
 
-        let stderr = '';
+        const chunks = [];
         let settled = false;
-        const finish = (ms) => {
+        const finish = (result) => {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            resolve(ms);
+            resolve(result);
         };
 
         const timeout = setTimeout(() => {
             try { ff.kill('SIGKILL'); } catch (e) { /* already gone */ }
-            finish(0);
-        }, MUSIC_VIDEO_OFFSET_DETECT_TIMEOUT_MS);
+            finish(null);
+        }, MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS);
 
-        ff.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        ff.stdout.on('data', (chunk) => chunks.push(chunk));
+        ff.stderr.on('data', () => {}); // ffmpeg's own progress chatter - not needed here
         ff.on('error', (e) => {
-            console.error(`[MV-OFFSET] ffmpeg error for ${videoId}:`, e.message);
-            finish(0);
+            console.error(`[MV-MATCH] ffmpeg error for ${videoId}:`, e.message);
+            finish(null);
         });
 
         audioStream.on('error', (e) => {
-            console.error(`[MV-OFFSET] Audio stream error for ${videoId}:`, e.message);
+            console.error(`[MV-MATCH] Audio stream error for ${videoId}:`, e.message);
             try { ff.kill('SIGKILL'); } catch (e2) { /* already gone */ }
-            finish(0);
+            finish(null);
         });
         audioStream.pipe(ff.stdin);
 
         ff.on('close', () => {
-            // ffmpeg logs a silence_start/silence_end pair for every quiet
-            // stretch it finds. Only a stretch starting at (effectively)
-            // 0:00 counts as intro dead air - a silent GAP later in the
-            // clip (e.g. a beat drop) isn't an offset, it's just the song.
-            const opensQuiet = /silence_start:\s*0(\.0+)?\b/.test(stderr);
-            if (!opensQuiet) return finish(0); // no lead-in silence - assume it starts at 0:00
-            const match = stderr.match(/silence_end:\s*([\d.]+)/);
-            if (!match) return finish(0);
-            const sec = parseFloat(match[1]);
-            if (!Number.isFinite(sec) || sec <= 0 || sec > MUSIC_VIDEO_INTRO_SCAN_SEC) return finish(0);
-            finish(Math.round(sec * 1000));
+            const buf = Buffer.concat(chunks);
+            if (buf.length < MUSIC_VIDEO_PCM_SAMPLE_RATE * 2 * 3) return finish(null); // <3s decoded - not enough to compare
+            const samples = new Int16Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 2));
+            const envLen = Math.floor(samples.length / MUSIC_VIDEO_SAMPLES_PER_ENVELOPE_POINT);
+            const envelope = new Float64Array(envLen);
+            for (let i = 0; i < envLen; i++) {
+                let sum = 0;
+                const base = i * MUSIC_VIDEO_SAMPLES_PER_ENVELOPE_POINT;
+                for (let j = 0; j < MUSIC_VIDEO_SAMPLES_PER_ENVELOPE_POINT; j++) {
+                    sum += Math.abs(samples[base + j] / 32768);
+                }
+                envelope[i] = sum / MUSIC_VIDEO_SAMPLES_PER_ENVELOPE_POINT;
+            }
+            finish(envelope);
         });
     });
+}
+
+// Slides `probeEnvelope` against `refEnvelope` across every lag in the
+// search window and returns the lag that maximizes their correlation,
+// plus a confidence score (a true Pearson correlation coefficient, -1..1,
+// of just the overlapping window at that lag).
+//
+// IMPORTANT: normalization is computed fresh from each lag's own
+// overlapping slice, not from the whole envelope up front. Reusing a
+// whole-signal z-score here let short, edge-of-search-range overlaps
+// occasionally look like a "perfect" match purely by chance, since a small
+// enough slice can agree by coincidence - requiring a large minimum
+// overlap AND normalizing per-window is what makes the confidence score
+// mean what it's supposed to mean.
+function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverlapFraction = 0.8) {
+    const maxLagSamples = Math.round(maxLagSec * MUSIC_VIDEO_ENVELOPE_RATE_HZ);
+    const minOverlapSamples = Math.floor(Math.min(refEnvelope.length, probeEnvelope.length) * minOverlapFraction);
+
+    let bestLag = 0;
+    let bestScore = -Infinity;
+
+    for (let lag = -maxLagSamples; lag <= maxLagSamples; lag++) {
+        const start = Math.max(0, lag);
+        const end = Math.min(refEnvelope.length, probeEnvelope.length + lag);
+        const overlapLen = end - start;
+        if (overlapLen < minOverlapSamples) continue;
+
+        let sumR = 0, sumP = 0;
+        for (let i = start; i < end; i++) { sumR += refEnvelope[i]; sumP += probeEnvelope[i - lag]; }
+        const meanR = sumR / overlapLen, meanP = sumP / overlapLen;
+        let varR = 0, varP = 0, cov = 0;
+        for (let i = start; i < end; i++) {
+            const dr = refEnvelope[i] - meanR;
+            const dp = probeEnvelope[i - lag] - meanP;
+            varR += dr * dr; varP += dp * dp; cov += dr * dp;
+        }
+        const score = cov / (Math.sqrt(varR * varP) || 1e-9);
+        if (score > bestScore) { bestScore = score; bestLag = lag; }
+    }
+
+    // bestLag > 0 means the PROBE (candidate video) needed to be shifted
+    // backward to line up - i.e. it has that much extra lead-in content
+    // the reference doesn't. videoLeadMs is the app's existing convention
+    // (see mvTargetSec in visual-display.html): a POSITIVE number means
+    // "the video needs to seek further ahead of the raw song position by
+    // this much" - which is exactly -bestLag in this loop's own indexing
+    // (probe[i - lag] means a positive lag shifts probe's timeline back).
+    return {
+        videoLeadMs: Math.round((-bestLag / MUSIC_VIDEO_ENVELOPE_RATE_HZ) * 1000),
+        confidence: bestScore
+    };
+}
+
+// Per-track cache of "what's the ground-truth audio for this song", global
+// across every event on the server (not per-event) - whether video X syncs
+// with track Y is a fact about those two YouTube uploads, not about which
+// venue happens to be playing it. Runtime-only like the rest of this
+// feature's state (musicVideoRuntime, schedulerBoundaryWatch): rebuilt from
+// scratch on a restart rather than persisted, which is fine here since
+// it's just a performance/reliability cache, never the source of truth.
+// Value is `undefined` (key absent) = not looked up yet, `null` = looked up
+// and no usable reference audio exists for this track, or the envelope
+// itself.
+const referenceAudioEnvelopeCache = new Map();
+
+// Per-track cache of the FINAL, audio-verified answer: which video (if any)
+// actually syncs with this song, and at what offset. Separate from
+// referenceAudioEnvelopeCache above (that one caches the ground-truth audio
+// itself; this one caches the conclusion reached from it) and, like it,
+// global across every event and never persisted - once any event on the
+// server has verified a song, every other event that plays it (including
+// a replay at the same event) gets the answer instantly with no re-search,
+// no re-download, and no waiting on the placeholder-then-upgrade dance
+// below. Value is `undefined` (key absent) = not resolved yet, `null` =
+// resolved and confirmed no video syncs, or {videoId, introOffsetMs,
+// confidence} for a confirmed match.
+const verifiedMusicVideoCache = new Map();
+
+// Finds a plain-audio upload of the track itself (not the "official music
+// video" - a topic-channel auto-upload, a lyric video, an "Official Audio"
+// post) to use as ground truth for comparison. This deliberately does NOT
+// reuse titleLooksDisqualified/the video-matching rules above - a lyric
+// video or an audio-only upload is disqualified as a VIDEO candidate
+// because there's nothing worth watching, but it's exactly what we want as
+// a REFERENCE, since it's the most likely upload to be an untouched rip of
+// the actual master rather than a re-cut video edit.
+async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs) {
+    if (referenceAudioEnvelopeCache.has(trackId)) return referenceAudioEnvelopeCache.get(trackId);
+    let result = null;
+    try {
+        const trackCore = normalizeForMatch(coreSongTitle(title));
+        const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} audio`);
+        const eligible = candidates
+            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
+            .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
+            .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS)
+            .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
+        if (eligible.length > 0) {
+            result = await extractAudioEnvelope(eligible[0].videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+        }
+    } catch (e) {
+        console.error(`[MV-MATCH] Reference audio lookup failed for "${title}":`, e.message);
+    }
+    referenceAudioEnvelopeCache.set(trackId, result);
+    return result;
+}
+
+// Tries each candidate (best-ranked first, same ordering pickBestMusicVideo
+// would use) against the real reference audio and accepts the first one
+// that's genuinely a match across the whole analyzed window, offset and
+// all. Returns:
+//   - {videoId, introOffsetMs, confidence} - a verified match, use it
+//   - null - reference audio exists and NONE of the candidates matched it;
+//     we now know none of them are actually in sync, so don't show one
+//   - undefined - couldn't get reference audio at all (none found, or the
+//     download failed) - we simply don't know, so callers should leave
+//     whatever they were already showing alone rather than tear it down
+//     over an infrastructure hiccup.
+async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId) {
+    const trackCore = normalizeForMatch(coreSongTitle(trackTitle));
+    if (!trackCore) return undefined;
+
+    const ranked = candidates
+        .filter(v => !excludeVideoIds.has(v.videoId))
+        .filter(v => !titleLooksDisqualified(v.title))
+        .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
+        .filter(v => normalizeForMatch(v.title).includes(trackCore))
+        .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS)
+        .sort((a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs))
+        .slice(0, MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY);
+
+    if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match"
+
+    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
+    if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
+
+    for (const candidate of ranked) {
+        const candidateEnvelope = await extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+        if (!candidateEnvelope) continue; // this one failed to download - try the next, not a rejection
+        const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+        if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
+        if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
+        return { videoId: candidate.videoId, introOffsetMs: Math.max(0, videoLeadMs), confidence };
+    }
+    return null; // every reachable candidate was checked against real audio and none matched
 }
 
 // Per-event runtime state for the feature above - none of this is
@@ -3774,22 +3971,46 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         const excludeVideoIds = new Set(
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
-        const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
-        const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title);
-        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null, introOffsetMs: 0 };
-        // Runs in the background rather than being awaited here - it can
-        // take several seconds (download + decode) and this response needs
-        // to go out now so the display can start the video. The video
-        // simply plays with no offset applied until this resolves (a few
-        // seconds into the song, at most), then the real number takes over
-        // on the next poll. Guarded against the track/video having already
-        // moved on by the time this finishes.
-        if (best) {
-            detectVideoIntroOffsetMs(best.videoId).then(ms => {
-                if (runtime.cache.trackId === np.trackId && runtime.cache.videoId === best.videoId) {
-                    runtime.cache.introOffsetMs = ms;
-                }
-            });
+
+        if (verifiedMusicVideoCache.has(np.trackId) && !(verifiedMusicVideoCache.get(np.trackId) && excludeVideoIds.has(verifiedMusicVideoCache.get(np.trackId).videoId))) {
+            // Some other event (or an earlier play of this song at THIS
+            // event) already did the real work of checking this song's
+            // audio - reuse that answer outright. No placeholder, no
+            // guessing, no wait: either a confirmed match or a confirmed
+            // "nothing syncs", both instant.
+            // Skipped when the cached video is one THIS event just
+            // blacklisted via /sync-failed - see that handler, which also
+            // clears this global cache entry so it gets re-verified for
+            // everyone, but the local exclude-list check here closes the
+            // gap for the moment in between.
+            const cached = verifiedMusicVideoCache.get(np.trackId);
+            runtime.cache = {
+                trackId: np.trackId, searchedTrackId: np.trackId,
+                matched: !!cached, videoId: cached ? cached.videoId : null,
+                introOffsetMs: cached ? cached.introOffsetMs : 0
+            };
+        } else {
+            // Never seen this song before anywhere on this server (or the
+            // cached verified video is one this event just blacklisted).
+            // Show a same-as-before rough guess right away (still better than
+            // nothing while the real check runs) using the plain duration
+            // pre-filter, then run the actual audio verification in the
+            // background and let it overwrite this guess - whether that
+            // means locking in the right video/offset, or pulling the plug
+            // entirely once we've confirmed nothing candidate actually
+            // matches.
+            const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
+            const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title);
+            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null, introOffsetMs: 0 };
+
+            findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title, np.trackId).then(result => {
+                if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - leave the rough guess in place, don't cache anything so this gets retried next time
+                verifiedMusicVideoCache.set(np.trackId, result);
+                if (runtime.cache.trackId !== np.trackId) return; // event has moved on to a different song since we started
+                runtime.cache.matched = !!result;
+                runtime.cache.videoId = result ? result.videoId : null;
+                runtime.cache.introOffsetMs = result ? result.introOffsetMs : 0;
+            }).catch(e => console.error(`[MV-MATCH] Verification failed for "${np.title}":`, e.message));
         }
     }
 
@@ -3827,6 +4048,16 @@ app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) =
     }
     const runtime = ensureMusicVideoRuntime(event);
     runtime.blacklist.add(`${trackId}|${videoId}`);
+    // If this video was the server-wide "verified" answer for this song,
+    // it's now known to be wrong in practice (whatever the audio check
+    // thought) - clear it so the NEXT poll (here and at every other event
+    // playing this song) re-verifies from scratch and tries a different
+    // candidate, rather than everyone continuing to get handed the same
+    // video straight from cache forever.
+    const cachedMatch = verifiedMusicVideoCache.get(trackId);
+    if (cachedMatch && cachedMatch.videoId === videoId) {
+        verifiedMusicVideoCache.delete(trackId);
+    }
     // Force the next poll to search again instead of re-offering the
     // video that was just reported as not working.
     // keepCurrent: the video is already on screen and playing - it finishes.
