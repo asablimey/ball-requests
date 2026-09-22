@@ -979,6 +979,165 @@ function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverl
     };
 }
 
+// --- Item 4: static "album cover" rejection --------------------------------
+// Some uploads billed as the "official video" are just a static image (the
+// album cover, usually) with the whole song playing behind it - audio-
+// verified genuinely real, since the audio itself is often the actual
+// studio master, but not a real MUSIC VIDEO in any sense worth putting on a
+// screen at an event. The audio cross-correlation above can't catch this -
+// the audio is fine - so this is a second, independent signal: motion.
+// Frames are sampled evenly across the CANDIDATE'S ENTIRE RUNTIME (not just
+// the front, unlike the audio check's MUSIC_VIDEO_AUDIO_WINDOW_SEC window) -
+// a static cover with a few seconds of real footage stapled onto the front
+// or back would sail past a front-loaded sample.
+
+// How many frames to sample across the whole video. Low - this only needs
+// to distinguish "basically nothing ever changes" from "this is a real
+// video", not produce a precise motion curve, and every extra sample is
+// another ffmpeg process spawned per candidate.
+const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 10;
+// Per-frame grab timeout - one stuck/slow sample (a network hiccup on just
+// that one ranged request) shouldn't hang the whole check; grabFrameAt just
+// resolves null for that sample instead, same convention as everything
+// else in this feature.
+const MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS = 8000;
+// Frames are downscaled hard before comparing - cheap to diff, and coarse
+// enough that ordinary video-compression noise between two visually
+// identical frames of a genuinely static image doesn't register as "motion".
+const MUSIC_VIDEO_MOTION_FRAME_WIDTH = 32;
+const MUSIC_VIDEO_MOTION_FRAME_HEIGHT = 18;
+// Average per-pixel grayscale difference (0-255 scale) between consecutive
+// sampled frames, below which a candidate is treated as a static image.
+// START CONSERVATIVE (per the implementation prompt) - this constant has
+// not been empirically tuned against a real library of static-cover
+// uploads yet, so treat it as a first guess: revisit once there's real
+// data on where genuine static-image uploads land versus real videos that
+// happen to have long, genuinely still moments (a slow ballad's static
+// shot, a held closeup). A low, permissive threshold here only lets more
+// through, so it's the safer direction to start from than a high one that
+// might reject real videos.
+const MUSIC_VIDEO_MOTION_MIN_AVG_DIFF = 4;
+
+// Grabs one small downscaled grayscale frame from a YouTube video at a
+// given timestamp, by handing ffmpeg the video's own direct CDN URL and
+// letting it seek with `-ss` before `-i` (a ranged HTTP request against
+// that URL, not a full download) rather than piping the whole stream
+// through ytdl the way extractAudioEnvelope does - there's no reason to
+// pull the first N seconds of video just to grab one frame from minute 3.
+// Resolves to null (never throws/rejects) on any failure, same convention
+// as extractAudioEnvelope - a failed sample just means "skip this sample
+// point", not a crash.
+function grabFrameAt(videoUrl, timestampSec) {
+    return new Promise((resolve) => {
+        let ff;
+        try {
+            ff = spawn(ffmpegPath, [
+                '-ss', String(Math.max(0, timestampSec)),
+                '-i', videoUrl,
+                '-frames:v', '1',
+                '-vf', `scale=${MUSIC_VIDEO_MOTION_FRAME_WIDTH}:${MUSIC_VIDEO_MOTION_FRAME_HEIGHT},format=gray`,
+                '-f', 'rawvideo',
+                'pipe:1'
+            ]);
+        } catch (e) {
+            console.error('[MV-MATCH] Could not start ffmpeg for frame grab:', e.message);
+            return resolve(null);
+        }
+
+        const chunks = [];
+        let settled = false;
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(result);
+        };
+
+        const timeout = setTimeout(() => {
+            try { ff.kill('SIGKILL'); } catch (e) { /* already gone */ }
+            finish(null);
+        }, MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS);
+
+        ff.stdout.on('data', (chunk) => chunks.push(chunk));
+        ff.stderr.on('data', () => {}); // ffmpeg's own progress chatter - not needed here
+        ff.on('error', (e) => {
+            console.error('[MV-MATCH] ffmpeg error during frame grab:', e.message);
+            finish(null);
+        });
+        ff.on('close', () => {
+            const buf = Buffer.concat(chunks);
+            const expectedBytes = MUSIC_VIDEO_MOTION_FRAME_WIDTH * MUSIC_VIDEO_MOTION_FRAME_HEIGHT; // 1 byte/pixel, grayscale
+            if (buf.length < expectedBytes) return finish(null);
+            finish(buf.subarray(0, expectedBytes));
+        });
+    });
+}
+
+// Per-video (not per-track) cache of the motion result - a property of the
+// YOUTUBE VIDEO itself, same reasoning as referenceAudioEnvelopeCache below.
+// Runtime-only, like that cache: rebuilt fresh on restart, which is fine
+// since this is a performance cache, not a safety-critical judgment (unlike
+// item 5's moderation cache, which will need to persist). Value:
+// `undefined` (key absent) = not checked yet, `null` = couldn't determine
+// (info lookup or every frame grab failed), or the numeric average
+// consecutive-frame difference.
+const motionScoreCache = new Map();
+
+// Samples MUSIC_VIDEO_MOTION_SAMPLE_COUNT frames evenly across the whole
+// video and returns the average per-pixel grayscale difference between each
+// consecutive pair - low means "looks static", high means "looks like a
+// real video". Returns null if fewer than 2 frames actually came back
+// (not enough to compare), which callers treat as "couldn't verify this
+// signal" rather than a rejection.
+async function computeMotionScore(videoId, durationMs) {
+    if (!durationMs || durationMs <= 0) return null;
+    let info;
+    try {
+        info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+    } catch (e) {
+        console.error(`[MV-MATCH] Could not fetch video info for motion check on ${videoId}:`, e.message);
+        return null;
+    }
+    // Only pixels matter here - grab the smallest video stream available
+    // rather than spending bandwidth on a high-res one just to immediately
+    // downscale it to 32x18.
+    const format = ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'videoandaudio' })
+        || ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'video' });
+    if (!format || !format.url) return null;
+
+    const durationSec = durationMs / 1000;
+    const timestamps = [];
+    for (let i = 0; i < MUSIC_VIDEO_MOTION_SAMPLE_COUNT; i++) {
+        // Evenly spaced, offset half a slot in from both ends so a sample
+        // doesn't land right on a black intro/outro frame that wouldn't be
+        // representative of the video's actual content either way.
+        timestamps.push(durationSec * (i + 0.5) / MUSIC_VIDEO_MOTION_SAMPLE_COUNT);
+    }
+
+    const frames = (await Promise.all(timestamps.map(t => grabFrameAt(format.url, t)))).filter(Boolean);
+    if (frames.length < 2) return null;
+
+    let totalDiff = 0;
+    for (let i = 1; i < frames.length; i++) {
+        const a = frames[i - 1], b = frames[i];
+        let diff = 0;
+        for (let p = 0; p < a.length; p++) diff += Math.abs(a[p] - b[p]);
+        totalDiff += diff / a.length;
+    }
+    return totalDiff / (frames.length - 1);
+}
+
+// Cached wrapper around computeMotionScore - see motionScoreCache above.
+// Every call site (just findAudioVerifiedMusicVideo below, today) can call
+// this freely per candidate without worrying about re-sampling the same
+// video on a replay or a re-verification at a different event.
+async function getMotionScore(videoId, durationMs) {
+    if (motionScoreCache.has(videoId)) return motionScoreCache.get(videoId);
+    const score = await computeMotionScore(videoId, durationMs);
+    motionScoreCache.set(videoId, score);
+    return score;
+}
+
 // Per-track cache of "what's the ground-truth audio for this song", global
 // across every event on the server (not per-event) - whether video X syncs
 // with track Y is a fact about those two YouTube uploads, not about which
@@ -1071,8 +1230,15 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
 
     for (const candidate of ranked) {
-        const candidateEnvelope = await extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+        // Item 4: the motion check runs alongside the audio download/decode
+        // for this same candidate, not after it - two independent checks on
+        // the same video, neither waiting on the other.
+        const [candidateEnvelope, motionScore] = await Promise.all([
+            extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
+            getMotionScore(candidate.videoId, candidate.durationMs)
+        ]);
         if (!candidateEnvelope) continue; // this one failed to download - try the next, not a rejection
+        if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue; // couldn't sample it, or it looks like a static image - try the next
         const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
         if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
         if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
