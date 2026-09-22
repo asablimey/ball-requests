@@ -184,13 +184,10 @@
             opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
         }
         #video-view.is-visible { opacity: 1; }
-        /* The frame is exactly the 16:9 picture (fitted to the screen). The
-           player inside it is made taller than the frame - by --yt-pad above
-           and below - so YouTube's own top bar (title / channel / share) and
-           bottom strip sit in the overflow and are clipped away. The video
-           itself is letterboxed inside the taller player, so it lands
-           exactly on the frame with nothing cropped. If any strip of
-           YouTube UI ever peeks through, increase --yt-pad. */
+        /* The frame is exactly the 16:9 picture (fitted to the screen), plus
+           a bit of extra room revealed at the bottom for native subtitles -
+           see --yt-pad-ratio/--mv-caption-reveal on .video-frame below for
+           the actual mechanics and why they're split apart. */
         /* Two independent player slots stacked on top of each other, each
            with its own YouTube player, click-blocker and loading-cover.
            Only one is ever "is-active" (on screen) at a time. Song-to-song
@@ -206,30 +203,52 @@
         }
         .video-slot.is-active { opacity: 1; z-index: 1; }
         .video-frame {
-            --yt-pad: 14%;
+            /* Fraction of the CORE picture's height cropped away at the TOP
+               only. This stays untouched - it's what hides YouTube's own
+               title/channel bar, which briefly flashes in even with
+               controls:0 (see playerVars below), and has nothing to do
+               with subtitles. */
+            --yt-pad-ratio: 0.14;
             /* Reserved black strip at the bottom of the SCREEN (not the
-               video itself) that the video is never allowed to cover. This
-               exists because YouTube draws its own native subtitles near
-               the bottom edge of the video's own picture - somewhere this
-               page has no access to reposition directly, since that's
-               inside a cross-origin iframe. Shrinking the video slightly
-               and anchoring it to the top (instead of centering it edge to
-               edge) pushes that whole bottom edge - captions included -
-               up above this margin, while .mv-logo/.mv-info-pop (which are
-               positioned against the SCREEN, not this frame - see their
-               own rules below) stay exactly where they were. If captions
-               still clip into that reserved strip on your actual display,
-               raise this value; if the black margin looks bigger than it
-               needs to be, lower it. */
+               video) that the video is never allowed to cover, so
+               .mv-logo/.mv-info-pop (positioned against the screen, not
+               this frame - see their own rules below, unaffected by
+               anything here) never sit on top of it. */
             --mv-caption-margin: 110px;
+            /* How much extra of the iframe to reveal PAST the core
+               picture's own bottom edge, on top of (not instead of) the
+               --yt-pad-ratio crop above. This is the actual subtitle fix:
+               YouTube draws its native captions in that same narrow strip
+               just below the true picture, which the old symmetric crop
+               was clipping into along with the (much smaller) bit of real
+               bottom UI actually down there. Revealing this rather than
+               relying on --mv-caption-margin above is what matters - that
+               margin only keeps the video off the info box, it doesn't
+               reach into the crop itself. Raise this if subtitles are
+               still being cut off; lower it if any YouTube UI peeks back
+               in at the bottom.
+               NOTE: this can only be estimated without a live YouTube
+               embed to check the real caption position against - it's a
+               starting point, not a measured value. */
+            --mv-caption-reveal: 70px;
             position: absolute; left: 50%; top: 0;
-            width: min(100vw, calc((100vh - var(--mv-caption-margin)) * 16 / 9));
-            height: min(calc(100vw * 9 / 16), calc(100vh - var(--mv-caption-margin)));
+            width: min(100vw, calc((100vh - var(--mv-caption-margin) - var(--mv-caption-reveal)) * 16 / 9));
+            height: calc(min(calc(100vw * 9 / 16), calc(100vh - var(--mv-caption-margin) - var(--mv-caption-reveal))) + var(--mv-caption-reveal));
             transform: translateX(-50%); overflow: hidden; background: #000;
         }
+        /* top/height below are expressed against (100% - reveal) rather
+           than the frame's raw 100%, because the frame is now taller than
+           the pure aspect-fit picture by exactly --mv-caption-reveal (see
+           above) - (100% - reveal) recovers "the core picture's own
+           height" to crop the TOP edge against, same as the original
+           symmetric version did, while the extra revealed strip at the
+           bottom is left alone rather than also being cropped. */
         .video-frame .yt-player-el, .video-frame .yt-player-el iframe {
-            position: absolute; left: 0; top: calc(-1 * var(--yt-pad));
-            width: 100% !important; height: calc(100% + 2 * var(--yt-pad)) !important; border: 0;
+            position: absolute; left: 0;
+            top: calc(-1 * (100% - var(--mv-caption-reveal)) * var(--yt-pad-ratio));
+            width: 100% !important;
+            height: calc((100% - var(--mv-caption-reveal)) * (1 + 2 * var(--yt-pad-ratio)) + var(--mv-caption-reveal)) !important;
+            border: 0;
         }
         .video-click-blocker {
             position: absolute; inset: 0; z-index: 5;
