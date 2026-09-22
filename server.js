@@ -1032,6 +1032,44 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     return null; // every reachable candidate was checked against real audio and none matched
 }
 
+// --- Item 1: eager (queue-time) verification --------------------------------
+// Previously findAudioVerifiedMusicVideo only ran once a track was flagged
+// isNewTrack inside /api/music-video - i.e. after the song had already
+// started playing, with no guaranteed lead time to finish the check before
+// the audience needed an answer. This runs the exact same pipeline the
+// moment a track ID is known to be coming up - added to this app's own
+// guest-request queue, or spotted in Spotify's own /me/player/queue - so
+// verification gets as much of a head start as the queue is deep, instead
+// of racing the song itself.
+//
+// Deliberately idempotent per trackId: verifiedMusicVideoCache.has() and
+// verificationInFlight together make every call after the first one for a
+// given track a no-op, so every call site (the request routes, the
+// upcoming-queue diff, and the /api/music-video fallback below) can call
+// this freely - on every poll, for every track still sitting in a queue -
+// without worrying about re-triggering work or racing itself.
+const verificationInFlight = new Set();
+function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
+    if (!trackId || !title || !durationMs) return;
+    if (verifiedMusicVideoCache.has(trackId)) return; // already resolved (a match, or confirmed no-match)
+    if (verificationInFlight.has(trackId)) return; // a run for this track is already in progress
+    verificationInFlight.add(trackId);
+
+    const artistNames = (artistNamesRaw || '').split(',').map(s => s.trim()).filter(Boolean);
+    (async () => {
+        try {
+            const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} official music video`);
+            const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
+            if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - don't cache, so a later trigger (e.g. once the song actually starts) retries instead of getting stuck
+            verifiedMusicVideoCache.set(trackId, result);
+        } catch (e) {
+            console.error(`[MV-MATCH] Eager verification failed for "${title}":`, e.message);
+        } finally {
+            verificationInFlight.delete(trackId);
+        }
+    })();
+}
+
 // Per-event runtime state for the feature above - none of this is
 // persisted (events.scheduleSave is never called for it), so it's rebuilt
 // fresh on every process restart, same as schedulerRuntime.
@@ -2295,7 +2333,8 @@ function buildRequestHandler(isKiosk) {
                 artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
                 artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
                 explicit: t.explicit || false,
-                duration: formatDuration(t.duration_ms || 0)
+                duration: formatDuration(t.duration_ms || 0),
+                durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below - `duration` above is already formatted for display
             };
             releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
             primaryArtistId = t.artists?.[0]?.id || null;
@@ -2388,6 +2427,12 @@ function buildRequestHandler(isKiosk) {
                 console.error(`[SPOTIFY QUEUE] (${event.slug}) Failed to stage next track:`, err.message);
             });
         }
+
+        // Item 1: this track is now guaranteed to be sitting in a queue -
+        // start music-video verification for it immediately rather than
+        // waiting for it to actually start playing. No-op if it's already
+        // resolved or already running (see triggerMusicVideoVerification).
+        triggerMusicVideoVerification(trackId, verifiedTrack.artist, verifiedTrack.name, verifiedTrack.durationMs);
 
         event.requestLog.push({
             trackId,
@@ -3496,7 +3541,8 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
         artist: (t.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
         artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
         explicit: t.explicit || false,
-        duration: formatDuration(t.duration_ms || 0)
+        duration: formatDuration(t.duration_ms || 0),
+        durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below
     };
     const requesterName = (typeof label === 'string' && label.trim() !== '') ? label.trim().slice(0, 30) : 'DJ Added';
 
@@ -3521,6 +3567,11 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
             queueTrackOnSpotify(event, verifiedTrack.id);
         }
     }
+
+    // Item 1: same eager verification trigger as the guest-request route -
+    // a DJ-added track is just as much "known to be coming up" as a guest
+    // request is.
+    triggerMusicVideoVerification(verifiedTrack.id, verifiedTrack.artist, verifiedTrack.name, verifiedTrack.durationMs);
 
     event.requestLog.push({
         trackId: verifiedTrack.id,
@@ -3695,8 +3746,22 @@ async function syncNowPlayingForEvent(event) {
                 id: t.id,
                 title: t.name,
                 artist: (t.artists || []).map(a => a.name).join(', '),
-                artwork: t.album?.images?.[0]?.url || null
+                artwork: t.album?.images?.[0]?.url || null,
+                durationMs: t.duration_ms || 0
             }));
+
+            // Item 1: a track can reach Spotify's own queue without ever
+            // passing through this app's guest-request route (queued
+            // directly in Spotify, or staged by pushNextTrackToSpotifyIfNeeded
+            // itself) - diff against what the PREVIOUS poll saw so eager
+            // verification fires exactly once per track as it first appears,
+            // not on every single poll it happens to still be sitting there.
+            const previouslySeenIds = new Set((event.cachedNowPlaying.upcoming || []).map(u => u.id));
+            upcoming.forEach(u => {
+                if (!previouslySeenIds.has(u.id)) {
+                    triggerMusicVideoVerification(u.id, u.artist, u.title, u.durationMs);
+                }
+            });
         }
 
         event.cachedNowPlaying = {
@@ -3857,9 +3922,11 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 // be active right now (the scheduler side - see the Music Videos lane),
 // AND (2) this particular song has to land on a "video" slot in that
 // block's videosInARow/visualsAfter repeating pattern rather than a
-// "visuals" slot. Even then, a video is only ever returned if YouTube
-// search plus every strictness rule in pickBestMusicVideo turns up a
-// confident match - anything less falls straight back to Ambient
+// "visuals" slot. Even then, a video is only ever returned once it has an
+// entry in verifiedMusicVideoCache - the audio-cross-correlation-backed
+// result from findAudioVerifiedMusicVideo, normally already resolved by now
+// thanks to the eager, queue-time trigger (see triggerMusicVideoVerification)
+// - anything unresolved or unmatched falls straight back to Ambient
 // Visuals, same as if no Music Videos block were active at all.
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
@@ -3964,20 +4031,20 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         return res.json({ ...emptyResponse, enabled: true, matched: false });
     }
 
-    // Search fresh only once per track (cached across the rest of that
-    // song's polls) rather than re-querying YouTube every 3 seconds.
+    // Check the verified cache fresh once per track (cached across the rest
+    // of that song's polls) rather than re-checking every 3 seconds.
     if (runtime.cache.searchedTrackId !== np.trackId) {
-        const artistNames = np.artist.split(',').map(s => s.trim()).filter(Boolean);
         const excludeVideoIds = new Set(
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
 
         if (verifiedMusicVideoCache.has(np.trackId) && !(verifiedMusicVideoCache.get(np.trackId) && excludeVideoIds.has(verifiedMusicVideoCache.get(np.trackId).videoId))) {
             // Some other event (or an earlier play of this song at THIS
-            // event) already did the real work of checking this song's
-            // audio - reuse that answer outright. No placeholder, no
-            // guessing, no wait: either a confirmed match or a confirmed
-            // "nothing syncs", both instant.
+            // event, or - per item 1 - this same play, started well before
+            // the song actually began) already did the real work of
+            // checking this song's audio - reuse that answer outright. No
+            // placeholder, no guessing, no wait: either a confirmed match or
+            // a confirmed "nothing syncs", both instant.
             // Skipped when the cached video is one THIS event just
             // blacklisted via /sync-failed - see that handler, which also
             // clears this global cache entry so it gets re-verified for
@@ -3990,27 +4057,18 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 introOffsetMs: cached ? cached.introOffsetMs : 0
             };
         } else {
-            // Never seen this song before anywhere on this server (or the
-            // cached verified video is one this event just blacklisted).
-            // Show a same-as-before rough guess right away (still better than
-            // nothing while the real check runs) using the plain duration
-            // pre-filter, then run the actual audio verification in the
-            // background and let it overwrite this guess - whether that
-            // means locking in the right video/offset, or pulling the plug
-            // entirely once we've confirmed nothing candidate actually
-            // matches.
-            const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
-            const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title);
-            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null, introOffsetMs: 0 };
-
-            findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title, np.trackId).then(result => {
-                if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - leave the rough guess in place, don't cache anything so this gets retried next time
-                verifiedMusicVideoCache.set(np.trackId, result);
-                if (runtime.cache.trackId !== np.trackId) return; // event has moved on to a different song since we started
-                runtime.cache.matched = !!result;
-                runtime.cache.videoId = result ? result.videoId : null;
-                runtime.cache.introOffsetMs = result ? result.introOffsetMs : 0;
-            }).catch(e => console.error(`[MV-MATCH] Verification failed for "${np.title}":`, e.message));
+            // No verified answer yet - either this track skipped straight to
+            // playing without ever sitting in a queue we saw (an admin
+            // force-play via Spotify directly, say), or item 1's eager check
+            // simply hasn't finished yet. Either way, an unverified guess is
+            // no longer eligible to display (see item 6's reveal-gating) -
+            // fall back to ambient visuals for THIS play and (re)start
+            // verification now. triggerMusicVideoVerification is a no-op if
+            // an eager run for this track is already in flight; if it
+            // resolves before the song ends, the next poll picks it up from
+            // the cache branch above.
+            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
+            triggerMusicVideoVerification(np.trackId, np.artist, np.title, np.durationMs, excludeVideoIds);
         }
     }
 
