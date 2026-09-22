@@ -611,7 +611,48 @@ function channelMatchesAnyArtist(channelTitle, artistNames) {
 // wrongly rejects a title that happens to contain "audio" as part of an
 // unrelated word - it's still meant to catch "Official Audio", "(Audio)",
 // "Audio Only", etc.
-const DISQUALIFYING_TITLE_PATTERNS = [/lyric/i, /\baudio\b/i];
+//
+// Item 3: extended with the same word-boundary approach to also exclude
+// live/concert recordings from VIDEO candidate selection - "live," "concert,"
+// "in concert," "tour," "live at," "live performance," "unplugged," and
+// "acoustic session" all describe real footage of a real performance, so
+// this is a different problem from item 4's static-image check or item 5's
+// content-moderation check: a live cut is legitimate, watchable content
+// that's simply the wrong ARTIFACT for this feature, which drives the
+// display in lockstep with Spotify's STUDIO audio - a live version's
+// different tempo/arrangement/crowd noise will never actually stay in sync,
+// no matter how good the offset detection is. Several of these patterns
+// overlap (any "live at ..." title already matches the bare \blive\b
+// pattern) - kept as separate entries anyway so the list reads as an
+// explicit, auditable checklist rather than relying on one broad pattern
+// to implicitly cover the rest.
+// Deliberately NOT applied to getReferenceAudioEnvelope's search (the
+// ground-truth audio lookup) - that path already avoids "video" heuristics
+// like this one on purpose, for a different reason (see its own comment).
+//
+// TUNING NOTE: this is a title heuristic sitting in front of the real
+// backstop - the audio cross-correlation step in findAudioVerifiedMusicVideo
+// - so it can in principle wrongly exclude a legitimate official video that
+// happens to be built from live-performance footage but is synced to
+// studio audio underneath. The audio check is what should actually be
+// trusted if that turns out to be a real problem in practice; if false
+// rejections from this list become common, consider relaxing it from a
+// hard exclusion to a "deprioritize, don't reject outright" signal (e.g.
+// sort these candidates to the back of the queue instead of dropping them)
+// rather than removing the check entirely. Not implemented now - noted
+// here for whoever tunes this next.
+const DISQUALIFYING_TITLE_PATTERNS = [
+    /lyric/i,
+    /\baudio\b/i,
+    /\blive\b/i,
+    /\bconcert\b/i,
+    /\bin concert\b/i,
+    /\btour\b/i,
+    /\blive at\b/i,
+    /\blive performance\b/i,
+    /\bunplugged\b/i,
+    /\bacoustic session\b/i
+];
 function titleLooksDisqualified(title) {
     return DISQUALIFYING_TITLE_PATTERNS.some(re => re.test(title || ''));
 }
@@ -963,6 +1004,14 @@ const referenceAudioEnvelopeCache = new Map();
 // confidence} for a confirmed match.
 const verifiedMusicVideoCache = new Map();
 
+// Converts the live Map to a plain object for JSON persistence (see item 2:
+// loadMusicVideoCache/scheduleMusicVideoCacheSave in eventStore.js). Read
+// fresh at write time by the debounce in eventStore, not snapshotted here -
+// see that function's own comment for why.
+function musicVideoCacheSnapshot() {
+    return Object.fromEntries(verifiedMusicVideoCache);
+}
+
 // Finds a plain-audio upload of the track itself (not the "official music
 // video" - a topic-channel auto-upload, a lyric video, an "Official Audio"
 // post) to use as ground truth for comparison. This deliberately does NOT
@@ -1062,6 +1111,7 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
             const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
             if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - don't cache, so a later trigger (e.g. once the song actually starts) retries instead of getting stuck
             verifiedMusicVideoCache.set(trackId, result);
+            events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2: debounced Redis persist
         } catch (e) {
             console.error(`[MV-MATCH] Eager verification failed for "${title}":`, e.message);
         } finally {
@@ -4115,6 +4165,7 @@ app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) =
     const cachedMatch = verifiedMusicVideoCache.get(trackId);
     if (cachedMatch && cachedMatch.videoId === videoId) {
         verifiedMusicVideoCache.delete(trackId);
+        events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2: debounced Redis persist
     }
     // Force the next poll to search again instead of re-offering the
     // video that was just reported as not working.
@@ -4157,6 +4208,7 @@ app.get('*', (req, res) => {
 // Flush any debounced-but-not-yet-written event saves on shutdown.
 async function shutdown() {
     await events.flushAllSaves();
+    await events.flushMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2
     process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -4171,6 +4223,20 @@ app.listen(PORT, async () => {
         console.warn('are set in your environment variables and the server is');
         console.warn('redeployed/restarted.');
         console.warn('==========================================================');
+    }
+    // Item 2: seed the in-memory verifiedMusicVideoCache from Redis before
+    // anything else runs, so a restart/redeploy doesn't throw away prior
+    // audio-verification work. Loaded here (not at module load time, above)
+    // because it needs the network, and nothing tries to read the cache
+    // before the server is actually accepting requests.
+    try {
+        const persisted = await events.loadMusicVideoCache();
+        for (const [trackId, result] of Object.entries(persisted)) {
+            verifiedMusicVideoCache.set(trackId, result);
+        }
+        console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.`);
+    } catch (err) {
+        console.error('[SERVER] Failed to load persisted music-video cache:', err.message);
     }
     await getSpotifyToken();
 });
