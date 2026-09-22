@@ -5,6 +5,9 @@ const fetch = require('node-fetch');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./eventStore');
+const ytdl = require('@distube/ytdl-core');
+const ffmpegPath = require('ffmpeg-static');
+const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -732,6 +735,104 @@ function pickBestMusicVideo(candidates, artistNames, excludeVideoIds, trackDurat
     });
     eligible.sort((a, b) => (a.bucket - b.bucket) || (a.index - b.index));
     return eligible.length ? eligible[0].v : null;
+}
+
+// How many seconds of a candidate's audio to actually pull and scan.
+// Enough to cover a cold-open/bumper/logo intro comfortably; scanning
+// further than this just costs more download+decode time per video for no
+// real benefit, since a genuine song intro (as opposed to dead air before
+// one) counts as "started" anyway - see the opensQuiet check below.
+const MUSIC_VIDEO_INTRO_SCAN_SEC = 20;
+const MUSIC_VIDEO_SILENCE_THRESHOLD_DB = '-35dB';
+const MUSIC_VIDEO_SILENCE_MIN_DURATION_SEC = 0.3;
+const MUSIC_VIDEO_OFFSET_DETECT_TIMEOUT_MS = 15000;
+
+// Finds how many ms of dead air/bumper sit at the front of a video before
+// the actual song content starts, so mvTargetSec() (see
+// visual-display.html) can aim past it instead of assuming the video's
+// 0:00 lines up with the track's 0:00. Only works for a COLD-OPEN style
+// intro (silence, a logo sting, a spoken "subscribe" bit) - it cannot help
+// a video with a genuinely different musical intro, since real audio reads
+// as "started" whether or not it's the right audio. Relies on the
+// assumption (true for the tracks this was built against) that the
+// Spotify master itself has no lead-in silence, so "first sustained sound
+// in the video" and "the track's 0:00" are the same instant.
+//
+// Best-effort end to end: any failure (extraction blocked, ffmpeg missing,
+// video geo-restricted, a network hiccup) resolves to 0 rather than
+// rejecting - a wrong POSITIVE offset would misalign playback outright,
+// whereas 0 just falls back to the previous assume-no-intro behavior for
+// that one video. Never awaited inline in the request path that needs a
+// video RIGHT NOW (see the /api/music-video handler) - this can take a few
+// seconds (download + decode), so it always runs in the background and the
+// cache picks up the real number once it resolves.
+function detectVideoIntroOffsetMs(videoId) {
+    return new Promise((resolve) => {
+        let audioStream;
+        try {
+            audioStream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
+                quality: 'lowestaudio',
+                filter: 'audioonly'
+            });
+        } catch (e) {
+            console.error(`[MV-OFFSET] Could not open audio stream for ${videoId}:`, e.message);
+            return resolve(0);
+        }
+
+        let ff;
+        try {
+            ff = spawn(ffmpegPath, [
+                '-i', 'pipe:0',
+                '-t', String(MUSIC_VIDEO_INTRO_SCAN_SEC),
+                '-af', `silencedetect=noise=${MUSIC_VIDEO_SILENCE_THRESHOLD_DB}:d=${MUSIC_VIDEO_SILENCE_MIN_DURATION_SEC}`,
+                '-f', 'null', '-'
+            ]);
+        } catch (e) {
+            console.error(`[MV-OFFSET] Could not start ffmpeg for ${videoId}:`, e.message);
+            return resolve(0);
+        }
+
+        let stderr = '';
+        let settled = false;
+        const finish = (ms) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(ms);
+        };
+
+        const timeout = setTimeout(() => {
+            try { ff.kill('SIGKILL'); } catch (e) { /* already gone */ }
+            finish(0);
+        }, MUSIC_VIDEO_OFFSET_DETECT_TIMEOUT_MS);
+
+        ff.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        ff.on('error', (e) => {
+            console.error(`[MV-OFFSET] ffmpeg error for ${videoId}:`, e.message);
+            finish(0);
+        });
+
+        audioStream.on('error', (e) => {
+            console.error(`[MV-OFFSET] Audio stream error for ${videoId}:`, e.message);
+            try { ff.kill('SIGKILL'); } catch (e2) { /* already gone */ }
+            finish(0);
+        });
+        audioStream.pipe(ff.stdin);
+
+        ff.on('close', () => {
+            // ffmpeg logs a silence_start/silence_end pair for every quiet
+            // stretch it finds. Only a stretch starting at (effectively)
+            // 0:00 counts as intro dead air - a silent GAP later in the
+            // clip (e.g. a beat drop) isn't an offset, it's just the song.
+            const opensQuiet = /silence_start:\s*0(\.0+)?\b/.test(stderr);
+            if (!opensQuiet) return finish(0); // no lead-in silence - assume it starts at 0:00
+            const match = stderr.match(/silence_end:\s*([\d.]+)/);
+            if (!match) return finish(0);
+            const sec = parseFloat(match[1]);
+            if (!Number.isFinite(sec) || sec <= 0 || sec > MUSIC_VIDEO_INTRO_SCAN_SEC) return finish(0);
+            finish(Math.round(sec * 1000));
+        });
+    });
 }
 
 // Per-event runtime state for the feature above - none of this is
@@ -3566,7 +3667,7 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     const vcfg = ensureVisualsConfigs(event);
-    const emptyResponse = { enabled: false, matched: false, videoId: null, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
+    const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
 
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
@@ -3624,6 +3725,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 enabled: true,
                 matched: true,
                 videoId: runtime.cache.videoId,
+                introOffsetMs: runtime.cache.introOffsetMs || 0,
                 trackId: np.trackId,
                 progressMs: np.progressMs,
                 durationMs: np.durationMs,
@@ -3656,7 +3758,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         // Only an actual track change advances the pattern position -
         // repeated polls mid-song must never move it forward.
         if (runtime.cache.trackId !== null) runtime.cycleCount++;
-        runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null };
+        runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
     }
 
     if (!forceVideos && !committed && (runtime.cycleCount % cycleLength) >= videosInARow) {
@@ -3674,13 +3776,28 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         );
         const candidates = await youtubeSearchVideos(`${np.artist} ${np.title} official music video`);
         const best = pickBestMusicVideo(candidates, artistNames, excludeVideoIds, np.durationMs, np.title);
-        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null };
+        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: !!best, videoId: best ? best.videoId : null, introOffsetMs: 0 };
+        // Runs in the background rather than being awaited here - it can
+        // take several seconds (download + decode) and this response needs
+        // to go out now so the display can start the video. The video
+        // simply plays with no offset applied until this resolves (a few
+        // seconds into the song, at most), then the real number takes over
+        // on the next poll. Guarded against the track/video having already
+        // moved on by the time this finishes.
+        if (best) {
+            detectVideoIntroOffsetMs(best.videoId).then(ms => {
+                if (runtime.cache.trackId === np.trackId && runtime.cache.videoId === best.videoId) {
+                    runtime.cache.introOffsetMs = ms;
+                }
+            });
+        }
     }
 
     res.json({
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
+        introOffsetMs: runtime.cache.introOffsetMs || 0,
         trackId: np.trackId,
         progressMs: np.progressMs,
         durationMs: np.durationMs,
