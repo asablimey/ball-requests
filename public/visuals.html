@@ -207,9 +207,25 @@
         .video-slot.is-active { opacity: 1; z-index: 1; }
         .video-frame {
             --yt-pad: 14%;
-            position: absolute; left: 50%; top: 50%;
-            width: min(100vw, 177.7778vh); height: min(56.25vw, 100vh);
-            transform: translate(-50%, -50%); overflow: hidden; background: #000;
+            /* Reserved black strip at the bottom of the SCREEN (not the
+               video itself) that the video is never allowed to cover. This
+               exists because YouTube draws its own native subtitles near
+               the bottom edge of the video's own picture - somewhere this
+               page has no access to reposition directly, since that's
+               inside a cross-origin iframe. Shrinking the video slightly
+               and anchoring it to the top (instead of centering it edge to
+               edge) pushes that whole bottom edge - captions included -
+               up above this margin, while .mv-logo/.mv-info-pop (which are
+               positioned against the SCREEN, not this frame - see their
+               own rules below) stay exactly where they were. If captions
+               still clip into that reserved strip on your actual display,
+               raise this value; if the black margin looks bigger than it
+               needs to be, lower it. */
+            --mv-caption-margin: 110px;
+            position: absolute; left: 50%; top: 0;
+            width: min(100vw, calc((100vh - var(--mv-caption-margin)) * 16 / 9));
+            height: min(calc(100vw * 9 / 16), calc(100vh - var(--mv-caption-margin)));
+            transform: translateX(-50%); overflow: hidden; background: #000;
         }
         .video-frame .yt-player-el, .video-frame .yt-player-el iframe {
             position: absolute; left: 0; top: calc(-1 * var(--yt-pad));
@@ -234,6 +250,16 @@
         /* Fades out (never pops) so there's no flash when it lifts; it
            comes back instantly, so YouTube's UI never gets a frame in. */
         .video-loading-cover.is-hidden { opacity: 0; transition: opacity 0.3s ease; }
+        /* Used ONLY by completeHandoff()'s song-to-song hard cut. Unlike
+           .is-hidden above (which fades over 0.3s - right for the FIRST
+           video's reveal out of a loading state), this snaps instantly
+           with no transition at all. By the time completeHandoff() applies
+           this, the incoming video is already confirmed playing in sync -
+           there's nothing to smooth over, and re-using .is-hidden's fade
+           here was the actual cause of the visible black gap between
+           videos: for that 0.3s, the viewer was looking at this cover
+           itself, mid-fade, on top of an already-playing video. */
+        .video-loading-cover.is-hidden-instant { opacity: 0; transition: none; }
 
         /* ---------- Music Video overlay: logo + now-playing popup ----------
            Sit above both slots (z-index above the loading covers) so they
@@ -1081,7 +1107,7 @@
                 } else {
                     if (slot === activeSlot) {
                         if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
-                        if (mvRevealed) document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden');
+                        if (mvRevealed) document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
                     }
                 }
             };
@@ -1501,8 +1527,8 @@
 
             document.getElementById(`video-slot-${oldSlot}`).classList.remove('is-active');
             document.getElementById(`video-slot-${newSlot}`).classList.add('is-active');
-            document.getElementById(`video-loading-cover-${newSlot}`).classList.add('is-hidden');
-            document.getElementById(`video-loading-cover-${oldSlot}`).classList.remove('is-hidden');
+            document.getElementById(`video-loading-cover-${newSlot}`).classList.add('is-hidden-instant');
+            document.getElementById(`video-loading-cover-${oldSlot}`).classList.remove('is-hidden', 'is-hidden-instant');
 
             if (players[oldSlot].ready) {
                 try { players[oldSlot].yt.stopVideo(); } catch (e) { /* ignore */ }
@@ -1620,7 +1646,7 @@
                 if (st.ready) {
                     try { st.yt.stopVideo(); } catch (e) { /* ignore */ }
                 }
-                document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden');
+                document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             });
             if (wasRevealed) {
                 // Force a fresh render rather than assuming whatever ambient
