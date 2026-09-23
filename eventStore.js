@@ -453,6 +453,66 @@ async function flushMusicVideoCacheSave(getSnapshot) {
     }
 }
 
+// Mirrors loadMusicVideoCache/scheduleMusicVideoCacheSave/flushMusicVideoCacheSave
+// above, but for item 8's family-mode safety lists rather than the technical
+// match cache. Deliberately global (one key, not per-event) - the denylist in
+// particular is meant to be a hard block everywhere, not something that has
+// to be re-added at every event. Stored together as one blob (denylist +
+// allowlist) since they're small, related, and always read/written together
+// by the admin surface that manages them - no reason to split into two Redis
+// keys and two debounce timers for data this size.
+const FAMILY_LISTS_KEY = 'music-video-family-lists';
+
+// Called once at server startup alongside loadMusicVideoCache - see app.listen
+// in server.js. Returns { denylist: [], allowlist: {} } if nothing's been
+// saved yet / the load fails, so callers can seed both in-memory structures
+// straight from it without a null check.
+async function loadFamilyLists() {
+    try {
+        const raw = await redisGet(FAMILY_LISTS_KEY);
+        if (raw == null) return { denylist: [], allowlist: {} };
+        const parsed = JSON.parse(raw);
+        return {
+            denylist: Array.isArray(parsed.denylist) ? parsed.denylist : [],
+            allowlist: (parsed.allowlist && typeof parsed.allowlist === 'object') ? parsed.allowlist : {}
+        };
+    } catch (err) {
+        console.error('[EVENTS] Failed to load family-mode lists from Redis:', err.message);
+        return { denylist: [], allowlist: {} };
+    }
+}
+
+// Debounced the same way scheduleMusicVideoCacheSave is - `getSnapshot` is a
+// function, called only once the debounce window fires, so a burst of admin
+// edits in quick succession still lands as one write reflecting all of them.
+let familyListsSaveTimeout = null;
+function scheduleFamilyListsSave(getSnapshot) {
+    if (familyListsSaveTimeout) return;
+    familyListsSaveTimeout = setTimeout(async () => {
+        familyListsSaveTimeout = null;
+        try {
+            await redisSet(FAMILY_LISTS_KEY, JSON.stringify(getSnapshot()));
+        } catch (err) {
+            console.error('[EVENTS] Failed to save family-mode lists to Redis:', err.message);
+        }
+    }, SAVE_DEBOUNCE_MS);
+}
+
+// Mirrors flushMusicVideoCacheSave - called from the same shutdown handler in
+// server.js so a debounce window still in flight doesn't drop a last-minute
+// admin edit to either list.
+async function flushFamilyListsSave(getSnapshot) {
+    if (familyListsSaveTimeout) {
+        clearTimeout(familyListsSaveTimeout);
+        familyListsSaveTimeout = null;
+    }
+    try {
+        await redisSet(FAMILY_LISTS_KEY, JSON.stringify(getSnapshot()));
+    } catch (err) {
+        console.error('[EVENTS] Failed to flush family-mode lists to Redis:', err.message);
+    }
+}
+
 // slug -> last time it was touched via getEvent. Used only to decide what's
 // safe to drop from the in-memory cache below; has no effect on the data
 // itself, which always lives in Redis regardless of cache state.
@@ -1040,6 +1100,9 @@ module.exports = {
     loadMusicVideoCache,
     scheduleMusicVideoCacheSave,
     flushMusicVideoCacheSave,
+    loadFamilyLists,
+    scheduleFamilyListsSave,
+    flushFamilyListsSave,
     verifyPassword,
     getLoadedEvents,
     getActiveEventsSummary,
