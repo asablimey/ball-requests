@@ -1257,6 +1257,39 @@ function musicVideoCacheSnapshot() {
     return Object.fromEntries(verifiedMusicVideoCache);
 }
 
+// --- Item 8: family-mode safety lists ---------------------------------------
+// Independent of verifiedMusicVideoCache above, which only answers "is this
+// genuinely the same recording" - a technical-match question. These answer
+// "is this appropriate to show a family/school audience", a judgment
+// verifiedMusicVideoCache was never meant to carry and that automated content
+// moderation (item 5) can't fully guarantee on its own - see the Maroon 5
+// "This Love" case: a correctly-matched, official, moderation-passing video
+// that's still not appropriate for that audience. Both are global (not
+// scoped to one event), since a track that's inappropriate at one school
+// event is inappropriate everywhere, and a track a human has already vetted
+// as family-safe shouldn't need re-vetting at every event either.
+//
+// musicVideoDenylist: a hard block, trackId only. Checked ahead of
+// everything else - triggerMusicVideoVerification refuses to even start the
+// verification pipeline for a denylisted track, and the display route below
+// refuses to show one regardless of what verifiedMusicVideoCache says,
+// covering the case where a track was verified and cached BEFORE it was
+// added to the denylist.
+// musicVideoAllowlist: the opposite direction, trackId -> the specific
+// {videoId, introOffsetMs} a human has manually approved for family-mode
+// playback. Only consulted when an event has familyModeEnabled on (see
+// ensureVisualsConfigs) - with family mode on, a track plays its video ONLY
+// if it's here, regardless of what the automated pipeline concluded. This
+// flips the default from "show unless automatically rejected" to "don't
+// show unless a human already approved it", which is the actual point of
+// family mode.
+const musicVideoDenylist = new Set();
+const musicVideoAllowlist = new Map();
+
+function familyListsSnapshot() {
+    return { denylist: [...musicVideoDenylist], allowlist: Object.fromEntries(musicVideoAllowlist) };
+}
+
 // Finds a plain-audio upload of the track itself (not the "official music
 // video" - a topic-channel auto-upload, a lyric video, an "Official Audio"
 // post) to use as ground truth for comparison. This deliberately does NOT
@@ -1357,6 +1390,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
 const verificationInFlight = new Set();
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
     if (!trackId || !title || !durationMs) return;
+    if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
     if (verifiedMusicVideoCache.has(trackId)) return; // already resolved (a match, or confirmed no-match)
     if (verificationInFlight.has(trackId)) return; // a run for this track is already in progress
     verificationInFlight.add(trackId);
@@ -1390,7 +1424,7 @@ const MUSIC_VIDEO_OFFSET_MAX_MS = 5000;
 function ensureVisualsConfigs(event) {
     if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') event.visualsConfigs = {};
     const v = event.visualsConfigs;
-    for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
+    for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll', 'familyModeEnabled']) {
         if (typeof v[key] !== 'boolean') v[key] = false;
     }
     // How far ahead (positive) or behind (negative) of the raw Spotify
@@ -3589,6 +3623,63 @@ app.post('/e/:slug/api/admin/visuals/toggle-mute', makeVisualsToggleRoute('muteV
 app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute('showQueue'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
+app.post('/e/:slug/api/admin/visuals/toggle-family-mode', makeVisualsToggleRoute('familyModeEnabled'));
+
+// Item 8: family-mode safety lists. Deliberately global (see the comment on
+// musicVideoDenylist/musicVideoAllowlist above) - reachable from any event's
+// admin panel, same as the rest of /e/:slug/api/admin, but the effect isn't
+// scoped to that one event. GET returns both lists so the admin UI can show
+// what's already there; the POST/DELETE pairs add or remove a single track.
+app.get('/e/:slug/api/admin/visuals/family-lists', (req, res) => {
+    res.json({
+        denylist: [...musicVideoDenylist],
+        allowlist: Object.fromEntries(musicVideoAllowlist)
+    });
+});
+
+app.post('/e/:slug/api/admin/visuals/family-denylist', (req, res) => {
+    const { trackId } = req.body || {};
+    if (!trackId || typeof trackId !== 'string') return res.status(400).json({ error: 'trackId is required.' });
+    musicVideoDenylist.add(trackId);
+    // A track being denylisted always wins over a stale allow entry - remove
+    // it there too rather than leaving both lists disagreeing about the same
+    // track, which the display route above would otherwise have to arbitrate.
+    musicVideoAllowlist.delete(trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, denylist: [...musicVideoDenylist] });
+});
+
+app.delete('/e/:slug/api/admin/visuals/family-denylist/:trackId', (req, res) => {
+    musicVideoDenylist.delete(req.params.trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, denylist: [...musicVideoDenylist] });
+});
+
+// Approving a track for family mode requires the specific {videoId,
+// introOffsetMs} that's actually going to play, not just the trackId - a
+// human reviewing this is expected to be looking at verifiedMusicVideoCache's
+// existing entry for the track (or a candidate they've watched themselves)
+// and approving THAT specific video, not just green-lighting the trackId in
+// the abstract for whatever the pipeline finds later.
+app.post('/e/:slug/api/admin/visuals/family-allowlist', (req, res) => {
+    const { trackId, videoId, introOffsetMs } = req.body || {};
+    if (!trackId || typeof trackId !== 'string') return res.status(400).json({ error: 'trackId is required.' });
+    if (!videoId || typeof videoId !== 'string') return res.status(400).json({ error: 'videoId is required.' });
+    if (musicVideoDenylist.has(trackId)) return res.status(400).json({ error: 'This track is denylisted; remove it from the denylist first.' });
+    musicVideoAllowlist.set(trackId, {
+        videoId,
+        introOffsetMs: Number.isFinite(Number(introOffsetMs)) ? Number(introOffsetMs) : 0,
+        approvedAt: Date.now()
+    });
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, allowlist: Object.fromEntries(musicVideoAllowlist) });
+});
+
+app.delete('/e/:slug/api/admin/visuals/family-allowlist/:trackId', (req, res) => {
+    musicVideoAllowlist.delete(req.params.trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, allowlist: Object.fromEntries(musicVideoAllowlist) });
+});
 
 // How far ahead/behind of the raw Spotify position the whole video stream
 // targets - see MUSIC_VIDEO_OFFSET_MIN_MS/MAX_MS. Positive moves the video
@@ -4377,6 +4468,27 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
             triggerMusicVideoVerification(np.trackId, np.artist, np.title, np.durationMs, excludeVideoIds);
         }
+
+        // Item 8: the denylist is a hard block regardless of family mode -
+        // covers a track that was verified and cached BEFORE it was added to
+        // the denylist (triggerMusicVideoVerification only stops NEW checks,
+        // it can't retroactively un-cache one that already resolved).
+        // Family mode's allowlist only matters when the event has it on: with
+        // it on, a track's video plays ONLY if a human has already approved
+        // it here, regardless of what the automated pipeline concluded -
+        // deliberately stricter than the normal "show unless rejected"
+        // default, since automated moderation alone isn't a strong enough
+        // guarantee for that audience (see the comment on musicVideoAllowlist
+        // above).
+        if (runtime.cache.matched) {
+            if (musicVideoDenylist.has(np.trackId)) {
+                runtime.cache.matched = false;
+                runtime.cache.videoId = null;
+            } else if (vcfg.familyModeEnabled && !musicVideoAllowlist.has(np.trackId)) {
+                runtime.cache.matched = false;
+                runtime.cache.videoId = null;
+            }
+        }
     }
 
     res.json({
@@ -4466,6 +4578,7 @@ app.get('*', (req, res) => {
 async function shutdown() {
     await events.flushAllSaves();
     await events.flushMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2
+    await events.flushFamilyListsSave(familyListsSnapshot); // item 8
     process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -4494,6 +4607,17 @@ app.listen(PORT, async () => {
         console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.`);
     } catch (err) {
         console.error('[SERVER] Failed to load persisted music-video cache:', err.message);
+    }
+    // Item 8: seed the denylist/allowlist the same way, before anything else
+    // runs - a track shouldn't be able to slip past a restart-cleared
+    // denylist for even one request.
+    try {
+        const persisted = await events.loadFamilyLists();
+        for (const trackId of persisted.denylist) musicVideoDenylist.add(trackId);
+        for (const [trackId, entry] of Object.entries(persisted.allowlist)) musicVideoAllowlist.set(trackId, entry);
+        console.log(`[SERVER] Loaded family-mode lists from Redis: ${musicVideoDenylist.size} denylisted, ${musicVideoAllowlist.size} allowlisted.`);
+    } catch (err) {
+        console.error('[SERVER] Failed to load persisted family-mode lists:', err.message);
     }
     await getSpotifyToken();
 });
