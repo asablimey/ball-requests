@@ -945,6 +945,10 @@
         // for MV_HANDOFF_CONFIRM_MS continuously before revealMusicVideo()
         // actually runs.
         let mvRevealReadySince = null;
+        let mvCorrectingActive = false; // item 7 - true while an on-screen hard-seek correction is
+                                          // deliberately hidden behind the cover, waiting to be confirmed
+                                          // back in sync before it's shown again
+        let mvCorrectingReadySince = null;
         let mvLoadTimeout = null;
         const MV_LOAD_TIMEOUT_MS = 15000; // never confirmed ready to reveal in this long -> give up on it (see revealReadyCheck)
         let currentVideoTrackId = null;   // trackId/videoId of the video currently ON SCREEN (or loading into it)
@@ -997,6 +1001,12 @@
         const MV_NUDGE_START_MS = 300;    // start speed-nudging beyond this drift - widened so small/normal
         const MV_NUDGE_STOP_MS = 150;     // jitter never triggers a visible nudge; the fixed lead below
         const MV_SEEK_THRESHOLD_MS = 900; // does the actual work now, this is just a safety net for real drift
+        const MV_POST_REVEAL_SEEK_THRESHOLD_MS = 1800; // item 7 - once a video is genuinely ON SCREEN,
+                                                         // don't reach for a hard seek until drift is well
+                                                         // past the pre-reveal/handoff tolerance above. Rate-
+                                                         // nudging (invisible) absorbs everything under this;
+                                                         // a hard seek this wide should be rare for a genuine
+                                                         // same-master video once the initial lock is good.
         const MV_SETTLE_MS = 4000;        // grace after a load/seek before judging it
         const MV_BIG_DRIFT_MS = 3000;
         // How long the song-info popup shows itself at the start and end of
@@ -1126,7 +1136,13 @@
                         st.seekIssuedAt = null;
                         if (lat < 5000) mvSeekLatencyMs = Math.round(mvSeekLatencyMs * 0.5 + lat * 0.5);
                     }
-                    if (slot === activeSlot && mvRevealed) {
+                    // item 7: don't let this reactive listener uncover the video the
+                    // instant YouTube reports PLAYING again after our own corrective
+                    // seek - that's exactly the premature-reveal race this item exists
+                    // to close. While a correction is in flight, activeCorrectionCheck()
+                    // is the only thing allowed to lift the cover again, once drift is
+                    // actually confirmed settled, not just once playback resumed.
+                    if (slot === activeSlot && mvRevealed && !mvCorrectingActive) {
                         document.getElementById(`video-loading-cover-${slot}`).classList.add('is-hidden');
                     }
                     // If this is the pre-reveal active slot, revealReadyCheck()
@@ -1399,7 +1415,8 @@
         function mvTick() {
             mvSampleReading();
             pendingCheck();
-            revealReadyCheck(); // item 6 - cold-start counterpart to pendingCheck, see its own comment
+            revealReadyCheck();      // item 6 - cold-start counterpart to pendingCheck, see its own comment
+            activeCorrectionCheck(); // item 7 - on-screen hard-seek correction, covered until confirmed re-synced
             mvUpdateOverlay();
             if (++mvSampleCount % MV_CHECK_EVERY_N_SAMPLES === 0) mvCheck();
         }
@@ -1512,8 +1529,25 @@
                 mvConsecutiveBigDrifts = 0;
             }
 
-            if (absMs > MV_SEEK_THRESHOLD_MS) {
-                if (!settling) { mvSetRate(activeSlot, 1); mvSeekTo(activeSlot, mvTargetSec()); }
+            // item 7: once a video is genuinely on screen, only reach for a hard seek
+            // past a wider threshold than the one used for the initial lock/handoff -
+            // rate-nudging alone absorbs everything under it, invisibly.
+            const seekThreshold = mvRevealed ? MV_POST_REVEAL_SEEK_THRESHOLD_MS : MV_SEEK_THRESHOLD_MS;
+
+            if (absMs > seekThreshold) {
+                if (!settling) {
+                    mvSetRate(activeSlot, 1);
+                    if (mvRevealed) {
+                        // Cover it BEFORE issuing the seek, not after - closes the race
+                        // where the reactive onStateChange listener loses to whatever
+                        // actually renders in the iframe (a spinner, a brief play/pause
+                        // button) during the seek's own buffering window.
+                        mvCorrectingActive = true;
+                        mvCorrectingReadySince = null;
+                        document.getElementById(`video-loading-cover-${activeSlot}`).classList.remove('is-hidden', 'is-hidden-instant');
+                    }
+                    mvSeekTo(activeSlot, mvTargetSec());
+                }
             } else if (absMs > MV_NUDGE_START_MS || (st.currentRate !== 1 && absMs > MV_NUDGE_STOP_MS)) {
                 mvSetRate(activeSlot, driftMs < 0 ? 1.25 : 0.75);
             } else {
@@ -1607,6 +1641,22 @@
             if (result.confirmed) revealMusicVideo();
         }
 
+        // item 7 - third counterpart to pendingCheck/revealReadyCheck: a video
+        // that's already on screen and had to be hard-seeked mid-play. Same
+        // underlying question ("confirmed PLAYING and within normal tolerance for
+        // MV_HANDOFF_CONFIRM_MS straight"), just applied to the active slot after
+        // mvCheck has deliberately covered it for a correction, instead of on
+        // first load.
+        function activeCorrectionCheck() {
+            if (!mvCorrectingActive) return;
+            const result = checkSlotConfirmedInSync(activeSlot, mvCorrectingReadySince);
+            mvCorrectingReadySince = result.readySince;
+            if (result.confirmed) {
+                mvCorrectingActive = false;
+                document.getElementById(`video-loading-cover-${activeSlot}`).classList.add('is-hidden');
+            }
+        }
+
         // The actual hard cut: makes the pending slot active and the
         // previously-active slot the new standby, with no CSS transition on
         // either - an instant swap, never a fade through black or ambient.
@@ -1636,6 +1686,7 @@
             mvLastCorrectionAt = Date.now();
             mvConsecutiveBigDrifts = 0;
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
+            mvCorrectingActive = false; mvCorrectingReadySince = null; // item 7 - old slot's correction context doesn't carry over
             mvLastReading = null;
             mvLastReadingChangedAt = 0;
         }
