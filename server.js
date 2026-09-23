@@ -5,6 +5,14 @@ const fetch = require('node-fetch');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./eventStore');
+// @distube/ytdl-core checks GitHub for its own updates on require by
+// default - harmless normally, but seen 403'ing in production (GitHub
+// rate-limiting the check itself) and adds noise/latency for something
+// that has nothing to do with actually serving requests. Must be set
+// before the require() below; setting it in Render's own env vars would
+// also work, but doing it here means it's not a step anyone deploying
+// this can forget.
+process.env.YTDL_NO_UPDATE = '1';
 const ytdl = require('@distube/ytdl-core');
 const ffmpegPath = require('ffmpeg-static');
 const { spawn } = require('child_process');
@@ -820,8 +828,80 @@ async function tryResolveChannelByHandle(artistName) {
 // is about collapsing near-simultaneous calls for the same track (and
 // nearby calls for other tracks by the same artist), not caching a channel's
 // contents indefinitely.
+//
+// artistUploadsListInFlight closes a real race the cache alone didn't:
+// several DIFFERENT tracks by the same artist verified concurrently (e.g.
+// a big backlog of queued tracks all triggering at once on server
+// restart) each call this function before any of them finish, so each one
+// sees an empty cache and fetches independently - four duplicate
+// playlistItems.list calls for the same artist within a couple of seconds
+// was observed in production logs. Same fix as artistChannelInFlight above,
+// applied one level down: the first caller's in-flight promise is what
+// every concurrent caller for that playlist ID awaits, not a fresh fetch.
 const ARTIST_UPLOADS_LIST_TTL_MS = 10 * 60 * 1000;
 const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetchedAt }
+const artistUploadsListInFlight = new Map(); // uploadsPlaylistId -> Promise<videos>
+
+async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults) {
+    if (!youtubeQuotaAvailable(1)) return [];
+    try {
+        const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
+        youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
+        if (!res.ok) return [];
+        const data = await res.json();
+        const videos = (data.items || [])
+            .map(item => ({
+                videoId: item.snippet?.resourceId?.videoId,
+                title: item.snippet?.title || '',
+                channelTitle: item.snippet?.channelTitle || '',
+                durationMs: null
+            }))
+            .filter(v => v.videoId);
+        if (videos.length > 0) {
+            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+        }
+        return videos;
+    } catch (e) {
+        console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
+        return [];
+    }
+}
+
+// The cheap path: list an artist's own uploads (1 unit) and let the
+// existing downstream filtering (title/duration matching in
+// getReferenceAudioEnvelope, disqualification rules in
+// findAudioVerifiedMusicVideo) pick out whatever's usable from it - same
+// shape of result as youtubeSearchVideos, so callers can fall back to that
+// without a special case. Tries each artist name in order (a feat. credit
+// after the primary artist, say) and stops at the first channel that
+// actually has uploads to offer.
+async function youtubeListArtistUploads(artistNames, maxResults = 25) {
+    for (const artistName of artistNames) {
+        const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
+        if (!uploadsPlaylistId) continue;
+
+        const cached = artistUploadsListCache.get(uploadsPlaylistId);
+        if (cached && (Date.now() - cached.fetchedAt) < ARTIST_UPLOADS_LIST_TTL_MS) {
+            if (cached.videos.length > 0) return cached.videos;
+            continue;
+        }
+
+        let promise = artistUploadsListInFlight.get(uploadsPlaylistId);
+        if (!promise) {
+            promise = fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults).then(videos => {
+                artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
+                return videos;
+            });
+            artistUploadsListInFlight.set(uploadsPlaylistId, promise);
+            promise.finally(() => artistUploadsListInFlight.delete(uploadsPlaylistId));
+        }
+
+        const videos = await promise;
+        if (videos.length > 0) return videos;
+    }
+    return [];
+}
 
 async function resolveArtistUploadsPlaylistId(artistName) {
     const key = normalizeForMatch(artistName);
@@ -866,53 +946,6 @@ async function resolveArtistUploadsPlaylistId(artistName) {
     } finally {
         artistChannelInFlight.delete(key);
     }
-}
-
-// The cheap path: list an artist's own uploads (1 unit) and let the
-// existing downstream filtering (title/duration matching in
-// getReferenceAudioEnvelope, disqualification rules in
-// findAudioVerifiedMusicVideo) pick out whatever's usable from it - same
-// shape of result as youtubeSearchVideos, so callers can fall back to that
-// without a special case. Tries each artist name in order (a feat. credit
-// after the primary artist, say) and stops at the first channel that
-// actually has uploads to offer. Checks artistUploadsListCache before
-// spending anything - see its own comment above for why.
-async function youtubeListArtistUploads(artistNames, maxResults = 25) {
-    for (const artistName of artistNames) {
-        const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
-        if (!uploadsPlaylistId) continue;
-
-        const cached = artistUploadsListCache.get(uploadsPlaylistId);
-        if (cached && (Date.now() - cached.fetchedAt) < ARTIST_UPLOADS_LIST_TTL_MS) {
-            if (cached.videos.length > 0) return cached.videos;
-            continue;
-        }
-
-        if (!youtubeQuotaAvailable(1)) continue;
-        try {
-            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
-            youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
-            if (!res.ok) continue;
-            const data = await res.json();
-            const videos = (data.items || [])
-                .map(item => ({
-                    videoId: item.snippet?.resourceId?.videoId,
-                    title: item.snippet?.title || '',
-                    channelTitle: item.snippet?.channelTitle || '',
-                    durationMs: null
-                }))
-                .filter(v => v.videoId);
-            if (videos.length > 0) {
-                const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
-                videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
-            }
-            artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
-            if (videos.length > 0) return videos;
-        } catch (e) {
-            console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
-        }
-    }
-    return [];
 }
 
 // Tries the cheap artist-uploads path first, only spending a search.list
@@ -1632,6 +1665,39 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
 // this freely - on every poll, for every track still sitting in a queue -
 // without worrying about re-triggering work or racing itself.
 const verificationInFlight = new Set();
+
+// Caps how many verification pipelines run at once. Without this, a big
+// backlog hitting all at once (e.g. an existing 15-track queue seen right
+// after a server restart) fires that many simultaneous ytdl audio
+// downloads AND that many simultaneous YouTube Data API calls in the same
+// instant - exactly the traffic pattern YouTube's own bot-detection looks
+// for ("Sign in to confirm you're not a bot" errors were observed in
+// production immediately following a burst like this), and it front-loads
+// a big chunk of the daily quota budget into one moment instead of
+// spreading it out. Extra triggers beyond the cap just wait their turn in
+// a plain FIFO queue - correctness is unaffected (verificationInFlight
+// above already guarantees no duplicate work per track), this only paces
+// how many run at the same instant.
+const MV_VERIFICATION_MAX_CONCURRENT = 3;
+let mvVerificationActiveCount = 0;
+const mvVerificationQueue = [];
+
+function mvVerificationRunNext() {
+    if (mvVerificationActiveCount >= MV_VERIFICATION_MAX_CONCURRENT) return;
+    const job = mvVerificationQueue.shift();
+    if (!job) return;
+    mvVerificationActiveCount++;
+    job().finally(() => {
+        mvVerificationActiveCount--;
+        mvVerificationRunNext();
+    });
+}
+
+function mvVerificationSchedule(job) {
+    mvVerificationQueue.push(job);
+    mvVerificationRunNext();
+}
+
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
     if (!trackId || !title || !durationMs) return;
     if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
@@ -1640,7 +1706,7 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
     verificationInFlight.add(trackId);
 
     const artistNames = (artistNamesRaw || '').split(',').map(s => s.trim()).filter(Boolean);
-    (async () => {
+    mvVerificationSchedule(async () => {
         try {
             const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`);
             const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
@@ -1652,7 +1718,7 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
         } finally {
             verificationInFlight.delete(trackId);
         }
-    })();
+    });
 }
 
 // Per-event runtime state for the feature above - none of this is
