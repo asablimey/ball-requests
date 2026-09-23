@@ -779,6 +779,50 @@ async function youtubeFetchDurations(videoIds) {
 const artistChannelCache = new Map();
 const artistChannelInFlight = new Map();
 
+// Cheap first guess at an artist's channel: many official artist/VEVO
+// channels have a predictable handle (@artistname, @artistnameVEVO). This
+// costs 1 unit per guess via channels.list?forHandle= - trying two guesses
+// (2 units total) before ever reaching for the 100-unit search.list below
+// is a strict improvement whenever it hits, and costs nothing extra when it
+// doesn't (the search.list fallback still runs exactly as before). Verifies
+// the returned channel's own title actually contains the artist name before
+// trusting it - a handle guess resolving to some unrelated channel that
+// happens to exist under that name is the one way this could go wrong, so
+// it gets the same sanity check the search.list path already applies.
+async function tryResolveChannelByHandle(artistName) {
+    const slug = artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!slug) return null;
+    const key = normalizeForMatch(artistName);
+    for (const handle of [slug, `${slug}vevo`]) {
+        if (!youtubeQuotaAvailable(1)) return null;
+        try {
+            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&forHandle=${encodeURIComponent('@' + handle)}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'channels.list', `handle guess "@${handle}" for "${artistName}"`);
+            if (res.ok) {
+                const data = await res.json();
+                const item = data.items?.[0];
+                if (item && normalizeForMatch(item.snippet?.title || '').includes(key)) {
+                    return item.contentDetails?.relatedPlaylists?.uploads || null;
+                }
+            }
+        } catch (e) {
+            console.error(`[MUSIC VIDEO] Handle guess "@${handle}" failed for "${artistName}":`, e.message);
+        }
+    }
+    return null;
+}
+
+// The reference-audio lookup and the video-candidate lookup for the SAME
+// track both end up calling youtubeListArtistUploads for the same artist -
+// without this, that's two playlistItems.list + two videos.list calls per
+// track instead of one. Short TTL (not permanent, unlike artistChannelCache
+// above) because an artist's actual uploads genuinely change over time; this
+// is about collapsing near-simultaneous calls for the same track (and
+// nearby calls for other tracks by the same artist), not caching a channel's
+// contents indefinitely.
+const ARTIST_UPLOADS_LIST_TTL_MS = 10 * 60 * 1000;
+const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetchedAt }
+
 async function resolveArtistUploadsPlaylistId(artistName) {
     const key = normalizeForMatch(artistName);
     if (!key) return null;
@@ -786,9 +830,9 @@ async function resolveArtistUploadsPlaylistId(artistName) {
     if (artistChannelInFlight.has(key)) return artistChannelInFlight.get(key);
 
     const promise = (async () => {
-        let uploadsPlaylistId = null;
+        let uploadsPlaylistId = await tryResolveChannelByHandle(artistName);
         try {
-            if (youtubeQuotaAvailable(100)) {
+            if (!uploadsPlaylistId && youtubeQuotaAvailable(100)) {
                 const searchRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=3&q=${encodeURIComponent(artistName + ' official')}&key=${YOUTUBE_API_KEY}`);
                 youtubeQuotaRecord(100, 'search.list', `channel lookup for "${artistName}"`);
                 if (searchRes.ok) {
@@ -831,11 +875,20 @@ async function resolveArtistUploadsPlaylistId(artistName) {
 // shape of result as youtubeSearchVideos, so callers can fall back to that
 // without a special case. Tries each artist name in order (a feat. credit
 // after the primary artist, say) and stops at the first channel that
-// actually has uploads to offer.
+// actually has uploads to offer. Checks artistUploadsListCache before
+// spending anything - see its own comment above for why.
 async function youtubeListArtistUploads(artistNames, maxResults = 25) {
     for (const artistName of artistNames) {
         const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
-        if (!uploadsPlaylistId || !youtubeQuotaAvailable(1)) continue;
+        if (!uploadsPlaylistId) continue;
+
+        const cached = artistUploadsListCache.get(uploadsPlaylistId);
+        if (cached && (Date.now() - cached.fetchedAt) < ARTIST_UPLOADS_LIST_TTL_MS) {
+            if (cached.videos.length > 0) return cached.videos;
+            continue;
+        }
+
+        if (!youtubeQuotaAvailable(1)) continue;
         try {
             const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
             youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
@@ -849,10 +902,12 @@ async function youtubeListArtistUploads(artistNames, maxResults = 25) {
                     durationMs: null
                 }))
                 .filter(v => v.videoId);
-            if (videos.length === 0) continue;
-            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
-            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
-            return videos;
+            if (videos.length > 0) {
+                const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+                videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+            }
+            artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
+            if (videos.length > 0) return videos;
         } catch (e) {
             console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
         }
