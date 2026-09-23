@@ -209,40 +209,56 @@
                controls:0 (see playerVars below), and has nothing to do
                with subtitles. */
             --yt-pad-ratio: 0.14;
-            /* Reserved black strip at the bottom of the SCREEN (not the
-               video) that the video is never allowed to cover, so
-               .mv-logo/.mv-info-pop (positioned against the screen, not
-               this frame - see their own rules below, unaffected by
-               anything here) never sit on top of it. */
-            --mv-caption-margin: 85px;
             /* How much extra of the iframe to reveal PAST the core
                picture's own bottom edge, on top of (not instead of) the
                --yt-pad-ratio crop above. This is the actual subtitle fix:
                YouTube draws its native captions in that same narrow strip
-               just below the true picture, which the old symmetric crop
-               was clipping into along with the (much smaller) bit of real
-               bottom UI actually down there. Revealing this rather than
-               relying on --mv-caption-margin above is what matters - that
-               margin only keeps the video off the info box, it doesn't
-               reach into the crop itself. Raise this if subtitles are
+               just below the true picture, which a plain symmetric crop
+               would clip into along with the (much smaller) bit of real
+               bottom UI actually down there. Raise this if subtitles are
                still being cut off; lower it if any YouTube UI peeks back
                in at the bottom.
                NOTE: this can only be estimated without a live YouTube
                embed to check the real caption position against - it's a
                starting point, not a measured value. */
             --mv-caption-reveal: 70px;
-            position: absolute; left: 50%; top: 0;
-            width: min(100vw, calc((100vh - var(--mv-caption-margin) - var(--mv-caption-reveal)) * 16 / 9));
-            height: calc(min(calc(100vw * 9 / 16), calc(100vh - var(--mv-caption-margin) - var(--mv-caption-reveal))) + var(--mv-caption-reveal));
-            transform: translateX(-50%); overflow: hidden; background: #000;
+            /* item 10: fills the screen edge to edge - no more side
+               letterbox bars. The old version computed width FROM a height
+               budget that had already been shrunk to reserve room for
+               .mv-logo/.mv-info-pop, which meant width came out smaller
+               than the actual screen even though nothing required that -
+               a side effect of a height-first "contain" calculation, not
+               an intentional design choice. .video-cover-fit below (not
+               this element) is what actually sizes and crops the 16:9
+               picture to fill this box; the overlay now simply sits
+               directly on top of the video everywhere, relying on its own
+               text-shadow/opacity to stay legible over moving content,
+               same as it already does over ambient visuals. */
+            position: absolute; inset: 0;
+            overflow: hidden; background: #000;
+        }
+        /* item 10: the actual "cover" element - always at least as big as
+           the full screen at a genuine 16:9 ratio, cropping whichever axis
+           overflows, instead of ever shrinking to avoid cropping. Standard
+           CSS pattern for covering a box with a fixed-aspect element: sized
+           full-width at 16:9 height, OR (via min-width/min-height, whichever
+           actually ends up larger) full-height at 16:9 width - exactly one
+           of the two constraints binds on a given screen and the other
+           overflows, centered by the translate below. */
+        .video-cover-fit {
+            position: absolute; top: 50%; left: 50%;
+            width: 100vw; height: 56.25vw; /* 16:9 at full viewport width */
+            min-width: 177.78vh; min-height: 100vh; /* 16:9 at full viewport height */
+            transform: translate(-50%, -50%);
         }
         /* top/height below are expressed against (100% - reveal) rather
-           than the frame's raw 100%, because the frame is now taller than
-           the pure aspect-fit picture by exactly --mv-caption-reveal (see
+           than .video-cover-fit's raw 100%, because that box is now taller
+           than the pure 16:9 picture by exactly --mv-caption-reveal (see
            above) - (100% - reveal) recovers "the core picture's own
-           height" to crop the TOP edge against, same as the original
-           symmetric version did, while the extra revealed strip at the
-           bottom is left alone rather than also being cropped. */
+           height" to crop the TOP edge against, while the extra revealed
+           strip at the bottom is left alone rather than also being
+           cropped. Unchanged by item 10 - only the containing block
+           (.video-cover-fit, sized above) changed, not this math. */
         .video-frame .yt-player-el, .video-frame .yt-player-el iframe {
             position: absolute; left: 0;
             top: calc(-1 * (100% - var(--mv-caption-reveal)) * var(--yt-pad-ratio));
@@ -349,12 +365,12 @@
          Content), which always wins - see pollMusicVideo. -->
     <div id="video-view">
         <div class="video-slot is-active" id="video-slot-a">
-            <div class="video-frame"><div class="yt-player-el" id="yt-player-a"></div></div>
+            <div class="video-frame"><div class="video-cover-fit"><div class="yt-player-el" id="yt-player-a"></div></div></div>
             <div class="video-click-blocker"></div>
             <div class="video-loading-cover" id="video-loading-cover-a"></div>
         </div>
         <div class="video-slot" id="video-slot-b">
-            <div class="video-frame"><div class="yt-player-el" id="yt-player-b"></div></div>
+            <div class="video-frame"><div class="video-cover-fit"><div class="yt-player-el" id="yt-player-b"></div></div></div>
             <div class="video-click-blocker"></div>
             <div class="video-loading-cover" id="video-loading-cover-b"></div>
         </div>
