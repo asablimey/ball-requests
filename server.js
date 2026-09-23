@@ -681,18 +681,215 @@ function parseIsoDurationMs(iso) {
     return ms > 0 ? Math.round(ms) : null;
 }
 
+// --- Item 9: minimize YouTube Data API quota usage --------------------------
+// Default quota is 10,000 units/day per project. search.list costs 100
+// units/call; playlistItems.list, channels.list and videos.list each cost
+// only 1. Every new track used to cost at least 200 units (one search.list
+// for the video candidate, one for the reference audio) before any actual
+// matching happened - easily exhausted once a few events are running at
+// once (this project has already hit 429 quotaExceeded in production). The
+// functions below try a 1-unit path first - an artist's own channel
+// uploads, once that channel is known - and only fall back to the 100-unit
+// search.list when a channel can't be confidently identified or its
+// uploads don't contain anything usable.
+
+const YOUTUBE_DAILY_QUOTA_BUDGET = Number(process.env.YOUTUBE_DAILY_QUOTA_BUDGET) || 10000;
+const YOUTUBE_QUOTA_SAFETY_MARGIN_UNITS = 300; // stop issuing search.list well before actually hitting the wall
+
+let youtubeQuotaUsedToday = 0;
+let youtubeQuotaDayKey = null;
+
+// Resets at midnight Pacific, matching Google's own daily quota reset.
+// Uses Intl's timezone handling rather than a manual UTC offset so DST is
+// handled for free.
+function youtubeQuotaDateKey() {
+    return new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+}
+
+function youtubeQuotaRolloverIfNeeded() {
+    const key = youtubeQuotaDateKey();
+    if (key !== youtubeQuotaDayKey) {
+        youtubeQuotaDayKey = key;
+        youtubeQuotaUsedToday = 0;
+    }
+}
+
+// Call BEFORE issuing a request of the given cost. Cheap (1-unit) calls are
+// allowed right up to the real limit; only the expensive search.list calls
+// respect the extra safety margin, since those are what actually drives
+// exhaustion, and it's safe to just skip one (falling back to "couldn't
+// verify this track right now") rather than degrade a 1-unit lookup that
+// was already going to happen anyway.
+function youtubeQuotaAvailable(units) {
+    youtubeQuotaRolloverIfNeeded();
+    const margin = units >= 100 ? YOUTUBE_QUOTA_SAFETY_MARGIN_UNITS : 0;
+    return (youtubeQuotaUsedToday + units) <= (YOUTUBE_DAILY_QUOTA_BUDGET - margin);
+}
+
+function youtubeQuotaRecord(units, callType, detail) {
+    youtubeQuotaRolloverIfNeeded();
+    youtubeQuotaUsedToday += units;
+    console.log(`[MUSIC VIDEO] YouTube API: ${callType} cost ${units} unit(s) (${youtubeQuotaUsedToday}/${YOUTUBE_DAILY_QUOTA_BUDGET} used today)${detail ? ' - ' + detail : ''}`);
+}
+
+// Wraps a single YouTube Data API fetch with capped exponential backoff on
+// 429 specifically (quota/rate-limit responses). Previously a 429 just got
+// logged and given up on immediately, re-triable by the very next poll,
+// which did nothing but spend the retry hitting the same wall again. Any
+// other failure (network error, 5xx, malformed response) still fails
+// immediately, same as before - backoff only makes sense for "the server is
+// telling me to wait", not general errors.
+async function youtubeFetchWithBackoff(url, maxRetries = 2) {
+    let attempt = 0;
+    while (true) {
+        const res = await fetch(url);
+        if (res.status !== 429 || attempt >= maxRetries) return res;
+        const waitMs = 500 * Math.pow(3, attempt); // 500ms, then 1500ms
+        await new Promise(r => setTimeout(r, waitMs));
+        attempt++;
+    }
+}
+
+// videoIds -> Map<videoId, durationMs>. Pulled out of youtubeSearchVideos so
+// both the search.list path and the new cheap artist-uploads path below can
+// share this exact 1-unit lookup instead of each keeping their own copy.
+async function youtubeFetchDurations(videoIds) {
+    if (videoIds.length === 0 || !youtubeQuotaAvailable(1)) return new Map();
+    try {
+        const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(',')}&key=${YOUTUBE_API_KEY}`);
+        youtubeQuotaRecord(1, 'videos.list', `${videoIds.length} video(s), duration lookup`);
+        if (!res.ok) return new Map();
+        const data = await res.json();
+        return new Map((data.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
+    } catch (e) {
+        console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
+        return new Map();
+    }
+}
+
+// artistNameNormalized -> uploads playlist ID, or null if none could be
+// confidently identified. Deliberately permanent/in-memory only (not
+// persisted like verifiedMusicVideoCache) - losing it on a restart just
+// costs the next track by that artist one extra search.list call, a far
+// smaller loss than losing real audio-verification work would be.
+// artistChannelInFlight de-dupes concurrent lookups the same way
+// verificationInFlight does for trackId in triggerMusicVideoVerification -
+// several tracks by the same artist queued close together share one search
+// instead of each starting their own.
+const artistChannelCache = new Map();
+const artistChannelInFlight = new Map();
+
+async function resolveArtistUploadsPlaylistId(artistName) {
+    const key = normalizeForMatch(artistName);
+    if (!key) return null;
+    if (artistChannelCache.has(key)) return artistChannelCache.get(key);
+    if (artistChannelInFlight.has(key)) return artistChannelInFlight.get(key);
+
+    const promise = (async () => {
+        let uploadsPlaylistId = null;
+        try {
+            if (youtubeQuotaAvailable(100)) {
+                const searchRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=3&q=${encodeURIComponent(artistName + ' official')}&key=${YOUTUBE_API_KEY}`);
+                youtubeQuotaRecord(100, 'search.list', `channel lookup for "${artistName}"`);
+                if (searchRes.ok) {
+                    const searchData = await searchRes.json();
+                    const candidateId = (searchData.items || [])
+                        .map(i => ({ channelId: i.id?.channelId, title: i.snippet?.channelTitle || '' }))
+                        .find(c => c.channelId && normalizeForMatch(c.title).includes(key))?.channelId;
+                    if (candidateId && youtubeQuotaAvailable(1)) {
+                        const channelRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${candidateId}&key=${YOUTUBE_API_KEY}`);
+                        youtubeQuotaRecord(1, 'channels.list', `uploads playlist for "${artistName}"`);
+                        if (channelRes.ok) {
+                            const channelData = await channelRes.json();
+                            uploadsPlaylistId = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[MUSIC VIDEO] Channel resolution failed for "${artistName}":`, e.message);
+        }
+        // Cache the miss too, not just a hit - an artist with no confidently
+        // identifiable channel shouldn't cost a fresh search.list on every
+        // single track of theirs that ever gets requested.
+        artistChannelCache.set(key, uploadsPlaylistId);
+        return uploadsPlaylistId;
+    })();
+
+    artistChannelInFlight.set(key, promise);
+    try {
+        return await promise;
+    } finally {
+        artistChannelInFlight.delete(key);
+    }
+}
+
+// The cheap path: list an artist's own uploads (1 unit) and let the
+// existing downstream filtering (title/duration matching in
+// getReferenceAudioEnvelope, disqualification rules in
+// findAudioVerifiedMusicVideo) pick out whatever's usable from it - same
+// shape of result as youtubeSearchVideos, so callers can fall back to that
+// without a special case. Tries each artist name in order (a feat. credit
+// after the primary artist, say) and stops at the first channel that
+// actually has uploads to offer.
+async function youtubeListArtistUploads(artistNames, maxResults = 25) {
+    for (const artistName of artistNames) {
+        const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
+        if (!uploadsPlaylistId || !youtubeQuotaAvailable(1)) continue;
+        try {
+            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            const videos = (data.items || [])
+                .map(item => ({
+                    videoId: item.snippet?.resourceId?.videoId,
+                    title: item.snippet?.title || '',
+                    channelTitle: item.snippet?.channelTitle || '',
+                    durationMs: null
+                }))
+                .filter(v => v.videoId);
+            if (videos.length === 0) continue;
+            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+            return videos;
+        } catch (e) {
+            console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
+        }
+    }
+    return [];
+}
+
+// Tries the cheap artist-uploads path first, only spending a search.list
+// call if that comes back empty (no identifiable channel, or that channel's
+// uploads don't contain anything usable). This is what both call sites
+// below should use instead of calling youtubeSearchVideos directly.
+async function youtubeFindCandidates(artistNames, fallbackQuery) {
+    const cheap = await youtubeListArtistUploads(artistNames);
+    if (cheap.length > 0) return cheap;
+    return youtubeSearchVideos(fallbackQuery);
+}
+
 // Raw YouTube Data API v3 text search, restricted to embeddable videos.
 // Returns [] on any failure (missing key, quota exhausted, network) rather
 // than throwing - a YouTube outage should just mean "no music video for
-// this track", never a broken poll for the display.
+// this track", never a broken poll for the display. This is the expensive
+// fallback (100 units) - see youtubeFindCandidates above, which tries the
+// cheap artist-uploads path first and only reaches this when that comes up
+// empty.
 async function youtubeSearchVideos(query, maxResults = 10) {
     if (!YOUTUBE_API_KEY) {
         console.error('[MUSIC VIDEO] YOUTUBE_API_KEY is not set - skipping search.');
         return [];
     }
+    if (!youtubeQuotaAvailable(100)) {
+        console.warn(`[MUSIC VIDEO] Skipping search.list for "${query}" - daily YouTube quota budget exhausted, falling back to ambient visuals for this track.`);
+        return [];
+    }
     try {
         const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${maxResults}&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
-        const res = await fetch(url);
+        const res = await youtubeFetchWithBackoff(url);
+        youtubeQuotaRecord(100, 'search.list', query);
         if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.error(`[MUSIC VIDEO] YouTube search returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
@@ -707,21 +904,13 @@ async function youtubeSearchVideos(query, maxResults = 10) {
                 durationMs: null
             }))
             .filter(v => v.videoId);
-        // One cheap videos.list call (1 quota unit for all candidates) to get
-        // each video's real length. If it fails, durationMs stays null and
-        // pickBestMusicVideo then refuses every candidate: a video whose
+        // One cheap videos.list call (1 unit for all candidates together) to
+        // get each video's real length. If it fails, durationMs stays null
+        // and pickBestMusicVideo then refuses every candidate: a video whose
         // length can't be checked can't be trusted to be in sync.
         if (videos.length > 0) {
-            try {
-                const dRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videos.map(v => v.videoId).join(',')}&key=${YOUTUBE_API_KEY}`);
-                if (dRes.ok) {
-                    const dData = await dRes.json();
-                    const byId = new Map((dData.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
-                    videos.forEach(v => { v.durationMs = byId.get(v.videoId) ?? null; });
-                }
-            } catch (e) {
-                console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
-            }
+            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
         }
         return videos;
     } catch (e) {
@@ -1303,7 +1492,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     let result = null;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} audio`);
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`);
         const eligible = candidates
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
@@ -1398,7 +1587,7 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
     const artistNames = (artistNamesRaw || '').split(',').map(s => s.trim()).filter(Boolean);
     (async () => {
         try {
-            const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} official music video`);
+            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`);
             const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
             if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - don't cache, so a later trigger (e.g. once the song actually starts) retries instead of getting stuck
             verifiedMusicVideoCache.set(trackId, result);
