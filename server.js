@@ -979,33 +979,50 @@ function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverl
     };
 }
 
-// --- Item 4: static "album cover" rejection --------------------------------
+// --- Item 4: static "album cover" rejection, + Item 5: content-moderation
+// gate - combined, because item 5 explicitly reuses item 4's sampled
+// frames instead of sampling the video twice -----------------------------
 // Some uploads billed as the "official video" are just a static image (the
 // album cover, usually) with the whole song playing behind it - audio-
 // verified genuinely real, since the audio itself is often the actual
 // studio master, but not a real MUSIC VIDEO in any sense worth putting on a
 // screen at an event. The audio cross-correlation above can't catch this -
-// the audio is fine - so this is a second, independent signal: motion.
-// Frames are sampled evenly across the CANDIDATE'S ENTIRE RUNTIME (not just
-// the front, unlike the audio check's MUSIC_VIDEO_AUDIO_WINDOW_SEC window) -
-// a static cover with a few seconds of real footage stapled onto the front
-// or back would sail past a front-loaded sample.
+// the audio is fine - so item 4 is a second, independent signal: motion.
+// Separately, item 5 is a content-safety check: some sampled frame content
+// simply shouldn't be shown, regardless of how well it syncs. Both checks
+// need frames sampled evenly across the CANDIDATE'S ENTIRE RUNTIME (not
+// just the front, unlike the audio check's MUSIC_VIDEO_AUDIO_WINDOW_SEC
+// window - a static cover, or a brief inappropriate clip, tacked onto the
+// front or back of an otherwise-fine video would sail past a front-loaded
+// sample either way) - so rather than each running its own sampling pass,
+// they share one: grabFramePairAt below grabs a single frame per timestamp
+// and produces BOTH the small JPEG item 5's moderation check needs and the
+// even-smaller downscaled grayscale buffer item 4's motion-diff needs, in
+// one ffmpeg invocation per timestamp (two mapped outputs, not two seeks).
 
 // How many frames to sample across the whole video. Low - this only needs
 // to distinguish "basically nothing ever changes" from "this is a real
-// video", not produce a precise motion curve, and every extra sample is
-// another ffmpeg process spawned per candidate.
+// video" (item 4), and to give item 5's moderation check reasonable
+// coverage without exploding cost - not to produce a precise motion curve.
+// Every extra sample is another ffmpeg process spawned per candidate.
 const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 10;
 // Per-frame grab timeout - one stuck/slow sample (a network hiccup on just
-// that one ranged request) shouldn't hang the whole check; grabFrameAt just
-// resolves null for that sample instead, same convention as everything
-// else in this feature.
+// that one ranged request) shouldn't hang the whole check; grabFramePairAt
+// just resolves null for that sample instead, same convention as
+// everything else in this feature.
 const MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS = 8000;
-// Frames are downscaled hard before comparing - cheap to diff, and coarse
-// enough that ordinary video-compression noise between two visually
-// identical frames of a genuinely static image doesn't register as "motion".
+// The grayscale frame used for item 4's motion diff is downscaled hard -
+// cheap to diff, and coarse enough that ordinary video-compression noise
+// between two visually identical frames of a genuinely static image
+// doesn't register as "motion".
 const MUSIC_VIDEO_MOTION_FRAME_WIDTH = 32;
 const MUSIC_VIDEO_MOTION_FRAME_HEIGHT = 18;
+// The JPEG frame handed to item 5's moderation check needs to actually be
+// legible to a classifier (or a human reviewing flagged content later),
+// so it's kept much larger than the motion-diff frame - still small enough
+// to keep bandwidth/API payload size down.
+const MUSIC_VIDEO_MODERATION_FRAME_WIDTH = 160;
+const MUSIC_VIDEO_MODERATION_FRAME_HEIGHT = 90;
 // Average per-pixel grayscale difference (0-255 scale) between consecutive
 // sampled frames, below which a candidate is treated as a static image.
 // START CONSERVATIVE (per the implementation prompt) - this constant has
@@ -1018,33 +1035,41 @@ const MUSIC_VIDEO_MOTION_FRAME_HEIGHT = 18;
 // might reject real videos.
 const MUSIC_VIDEO_MOTION_MIN_AVG_DIFF = 4;
 
-// Grabs one small downscaled grayscale frame from a YouTube video at a
-// given timestamp, by handing ffmpeg the video's own direct CDN URL and
-// letting it seek with `-ss` before `-i` (a ranged HTTP request against
-// that URL, not a full download) rather than piping the whole stream
-// through ytdl the way extractAudioEnvelope does - there's no reason to
-// pull the first N seconds of video just to grab one frame from minute 3.
+// Grabs ONE frame from a YouTube video at a given timestamp and produces
+// both representations items 4 and 5 need from it, in a single ffmpeg
+// invocation rather than seeking to the same timestamp twice: the JPEG
+// (item 5's moderation input) comes out ffmpeg's normal stdout (fd 1), and
+// the downscaled grayscale raw buffer (item 4's motion-diff input) comes
+// out a second, explicitly mapped output on an extra pipe (fd 3) - Node's
+// spawn() is given a 4th stdio slot to receive it. Seeks with `-ss` before
+// `-i` against the video's own direct CDN URL (a ranged HTTP request, not
+// a full download) rather than piping the whole stream through ytdl the
+// way extractAudioEnvelope does - there's no reason to pull minutes of
+// video just to grab one frame.
 // Resolves to null (never throws/rejects) on any failure, same convention
 // as extractAudioEnvelope - a failed sample just means "skip this sample
 // point", not a crash.
-function grabFrameAt(videoUrl, timestampSec) {
+function grabFramePairAt(videoUrl, timestampSec) {
     return new Promise((resolve) => {
         let ff;
         try {
             ff = spawn(ffmpegPath, [
                 '-ss', String(Math.max(0, timestampSec)),
                 '-i', videoUrl,
-                '-frames:v', '1',
+                '-map', '0:v:0', '-frames:v', '1',
+                '-vf', `scale=${MUSIC_VIDEO_MODERATION_FRAME_WIDTH}:${MUSIC_VIDEO_MODERATION_FRAME_HEIGHT}`,
+                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+                '-map', '0:v:0', '-frames:v', '1',
                 '-vf', `scale=${MUSIC_VIDEO_MOTION_FRAME_WIDTH}:${MUSIC_VIDEO_MOTION_FRAME_HEIGHT},format=gray`,
-                '-f', 'rawvideo',
-                'pipe:1'
-            ]);
+                '-f', 'rawvideo', 'pipe:3'
+            ], { stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
         } catch (e) {
             console.error('[MV-MATCH] Could not start ffmpeg for frame grab:', e.message);
             return resolve(null);
         }
 
-        const chunks = [];
+        const jpegChunks = [];
+        const grayChunks = [];
         let settled = false;
         const finish = (result) => {
             if (settled) return;
@@ -1058,52 +1083,102 @@ function grabFrameAt(videoUrl, timestampSec) {
             finish(null);
         }, MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS);
 
-        ff.stdout.on('data', (chunk) => chunks.push(chunk));
+        ff.stdout.on('data', (chunk) => jpegChunks.push(chunk));
+        ff.stdio[3].on('data', (chunk) => grayChunks.push(chunk));
         ff.stderr.on('data', () => {}); // ffmpeg's own progress chatter - not needed here
         ff.on('error', (e) => {
             console.error('[MV-MATCH] ffmpeg error during frame grab:', e.message);
             finish(null);
         });
         ff.on('close', () => {
-            const buf = Buffer.concat(chunks);
-            const expectedBytes = MUSIC_VIDEO_MOTION_FRAME_WIDTH * MUSIC_VIDEO_MOTION_FRAME_HEIGHT; // 1 byte/pixel, grayscale
-            if (buf.length < expectedBytes) return finish(null);
-            finish(buf.subarray(0, expectedBytes));
+            const jpeg = Buffer.concat(jpegChunks);
+            const grayBuf = Buffer.concat(grayChunks);
+            const expectedGrayBytes = MUSIC_VIDEO_MOTION_FRAME_WIDTH * MUSIC_VIDEO_MOTION_FRAME_HEIGHT; // 1 byte/pixel, grayscale
+            if (jpeg.length === 0 || grayBuf.length < expectedGrayBytes) return finish(null);
+            finish({ jpeg, gray: grayBuf.subarray(0, expectedGrayBytes) });
         });
     });
 }
 
-// Per-video (not per-track) cache of the motion result - a property of the
-// YOUTUBE VIDEO itself, same reasoning as referenceAudioEnvelopeCache below.
-// Runtime-only, like that cache: rebuilt fresh on restart, which is fine
-// since this is a performance cache, not a safety-critical judgment (unlike
-// item 5's moderation cache, which will need to persist). Value:
-// `undefined` (key absent) = not checked yet, `null` = couldn't determine
-// (info lookup or every frame grab failed), or the numeric average
-// consecutive-frame difference.
-const motionScoreCache = new Map();
+// Pure helper for item 4: average per-pixel grayscale difference between
+// each consecutive pair of already-sampled frames. Low means "looks
+// static", high means "looks like a real video". Returns null if fewer
+// than 2 frames came back (not enough to compare), which callers treat as
+// "couldn't verify this signal" rather than a rejection.
+function averageConsecutiveFrameDiff(grayFrames) {
+    if (grayFrames.length < 2) return null;
+    let totalDiff = 0;
+    for (let i = 1; i < grayFrames.length; i++) {
+        const a = grayFrames[i - 1], b = grayFrames[i];
+        let diff = 0;
+        for (let p = 0; p < a.length; p++) diff += Math.abs(a[p] - b[p]);
+        totalDiff += diff / a.length;
+    }
+    return totalDiff / (grayFrames.length - 1);
+}
 
-// Samples MUSIC_VIDEO_MOTION_SAMPLE_COUNT frames evenly across the whole
-// video and returns the average per-pixel grayscale difference between each
-// consecutive pair - low means "looks static", high means "looks like a
-// real video". Returns null if fewer than 2 frames actually came back
-// (not enough to compare), which callers treat as "couldn't verify this
-// signal" rather than a rejection.
-async function computeMotionScore(videoId, durationMs) {
-    if (!durationMs || durationMs <= 0) return null;
+// --- Item 5: content-moderation gate ---------------------------------------
+// Abstracted behind this one function so the underlying image-moderation
+// provider - AWS Rekognition, Google Cloud Vision SafeSearch, Azure Content
+// Moderator, a self-hosted classifier, whatever ends up chosen - can be
+// swapped without touching any of the calling code below it. No provider
+// is wired up yet (that needs real API credentials/config this codebase
+// doesn't have), so this is currently a stub that reports "not flagged"
+// for everything; replace the body with a real call once a provider is
+// picked, keeping the same {flagged} shape so nothing else has to change.
+//
+// REJECT-ONLY: this filter's only job is to catch what it can - a `false`
+// here means "nothing was detected", NOT "this frame is confirmed safe",
+// and it does not guarantee zero unsafe content ever reaches a screen. See
+// item 8's family-mode allowlist for a second, human-reviewed layer for
+// events that need a stronger guarantee than an automated classifier can
+// give. Newly auto-approved matches (family mode off) should ideally be
+// surfaced for a human to review AFTER THE FACT, not gated on that review
+// before playing at all - there's no admin surface in this codebase for
+// that review queue yet. That's a real feature in its own right, so this
+// is left as a documentation/architecture note for whoever builds it next,
+// not an implementation here.
+async function checkFrameSafety(frameBuffer) {
+    // TODO: wire up a real provider here. Example shape, for AWS Rekognition:
+    //   const res = await rekognitionClient.send(new DetectModerationLabelsCommand({
+    //       Image: { Bytes: frameBuffer }, MinConfidence: 80
+    //   }));
+    //   return { flagged: (res.ModerationLabels || []).length > 0 };
+    return { flagged: false };
+}
+
+// Per-video (not per-track) cache of the combined item 4 + item 5 result -
+// both are properties of the YOUTUBE VIDEO itself, same reasoning as
+// referenceAudioEnvelopeCache below, and combined into one cache (rather
+// than one each) because they now share a single frame-sampling pass - see
+// the comment above grabFramePairAt. Runtime-only, like the other
+// per-video caches on this page: rebuilt fresh on restart, which is fine
+// for the motion score (a performance cache, not a safety-critical
+// judgment) - the moderation half is reproduced fresh on every restart
+// too, which is an intentional trade-off: a persisted moderation verdict
+// that later turns out to be wrong (a classifier bug fixed upstream, a
+// deliberately reconsidered case) would otherwise survive indefinitely
+// with no way to invalidate it, whereas today it's naturally rechecked
+// against whatever the provider currently returns after any restart.
+// Value: undefined = not checked yet, or { motionScore: number|null,
+// moderationFlagged: boolean }.
+const frameVerificationCache = new Map();
+
+async function computeFrameVerification(videoId, durationMs) {
+    if (!durationMs || durationMs <= 0) return { motionScore: null, moderationFlagged: false };
     let info;
     try {
         info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
     } catch (e) {
-        console.error(`[MV-MATCH] Could not fetch video info for motion check on ${videoId}:`, e.message);
-        return null;
+        console.error(`[MV-MATCH] Could not fetch video info for frame checks on ${videoId}:`, e.message);
+        return { motionScore: null, moderationFlagged: false };
     }
     // Only pixels matter here - grab the smallest video stream available
     // rather than spending bandwidth on a high-res one just to immediately
-    // downscale it to 32x18.
+    // downscale everything pulled from it.
     const format = ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'videoandaudio' })
         || ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'video' });
-    if (!format || !format.url) return null;
+    if (!format || !format.url) return { motionScore: null, moderationFlagged: false };
 
     const durationSec = durationMs / 1000;
     const timestamps = [];
@@ -1114,28 +1189,39 @@ async function computeMotionScore(videoId, durationMs) {
         timestamps.push(durationSec * (i + 0.5) / MUSIC_VIDEO_MOTION_SAMPLE_COUNT);
     }
 
-    const frames = (await Promise.all(timestamps.map(t => grabFrameAt(format.url, t)))).filter(Boolean);
-    if (frames.length < 2) return null;
+    // The one shared sampling pass - see grabFramePairAt's comment for why
+    // this replaces what would otherwise be two separate sampling passes
+    // (one for item 4, one for item 5).
+    const frames = (await Promise.all(timestamps.map(t => grabFramePairAt(format.url, t)))).filter(Boolean);
 
-    let totalDiff = 0;
-    for (let i = 1; i < frames.length; i++) {
-        const a = frames[i - 1], b = frames[i];
-        let diff = 0;
-        for (let p = 0; p < a.length; p++) diff += Math.abs(a[p] - b[p]);
-        totalDiff += diff / a.length;
+    const motionScore = averageConsecutiveFrameDiff(frames.map(f => f.gray));
+
+    // Item 5's moderation check, run across every sampled frame IN PARALLEL
+    // (not sequentially, and not sequentially after the motion score above
+    // either - Promise.all here, motion diffing already done synchronously
+    // above it). Any single flagged frame rejects the candidate outright;
+    // scores are never averaged the way the motion score is.
+    let moderationFlagged = false;
+    if (frames.length > 0) {
+        const results = await Promise.all(frames.map(f => checkFrameSafety(f.jpeg).catch(e => {
+            console.error(`[MV-MATCH] Moderation check failed for a frame of ${videoId}:`, e.message);
+            return { flagged: false }; // a check that couldn't RUN is not evidence of anything - never treated as a flag
+        })));
+        moderationFlagged = results.some(r => r && r.flagged);
     }
-    return totalDiff / (frames.length - 1);
+
+    return { motionScore, moderationFlagged };
 }
 
-// Cached wrapper around computeMotionScore - see motionScoreCache above.
-// Every call site (just findAudioVerifiedMusicVideo below, today) can call
-// this freely per candidate without worrying about re-sampling the same
-// video on a replay or a re-verification at a different event.
-async function getMotionScore(videoId, durationMs) {
-    if (motionScoreCache.has(videoId)) return motionScoreCache.get(videoId);
-    const score = await computeMotionScore(videoId, durationMs);
-    motionScoreCache.set(videoId, score);
-    return score;
+// Cached wrapper around computeFrameVerification - see frameVerificationCache
+// above. The only call site today (findAudioVerifiedMusicVideo below) can
+// call this freely per candidate without worrying about re-sampling the
+// same video on a replay or a re-verification at a different event.
+async function getFrameVerification(videoId, durationMs) {
+    if (frameVerificationCache.has(videoId)) return frameVerificationCache.get(videoId);
+    const result = await computeFrameVerification(videoId, durationMs);
+    frameVerificationCache.set(videoId, result);
+    return result;
 }
 
 // Per-track cache of "what's the ground-truth audio for this song", global
@@ -1230,15 +1316,20 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
 
     for (const candidate of ranked) {
-        // Item 4: the motion check runs alongside the audio download/decode
-        // for this same candidate, not after it - two independent checks on
-        // the same video, neither waiting on the other.
-        const [candidateEnvelope, motionScore] = await Promise.all([
+        // Items 4 & 5: the combined motion + moderation check runs alongside
+        // the audio download/decode for this same candidate, not after it -
+        // independent checks on the same video, none waiting on another.
+        const [candidateEnvelope, frameVerification] = await Promise.all([
             extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
-            getMotionScore(candidate.videoId, candidate.durationMs)
+            getFrameVerification(candidate.videoId, candidate.durationMs)
         ]);
         if (!candidateEnvelope) continue; // this one failed to download - try the next, not a rejection
-        if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue; // couldn't sample it, or it looks like a static image - try the next
+        const { motionScore, moderationFlagged } = frameVerification;
+        // Item 5 first and unconditionally - a moderation flag rejects the
+        // candidate outright regardless of anything else, audio match
+        // included. Item 4 next: no usable frames, or it looks static.
+        if (moderationFlagged) continue;
+        if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue;
         const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
         if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
         if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
