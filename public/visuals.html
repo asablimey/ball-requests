@@ -932,10 +932,21 @@
         let activeSlot = 'a';
         let musicVideoActive = false;   // a video has been chosen for the current song and is loading/playing
         let mvRevealed = false;         // ...and is actually on screen (ambient visuals stand down only then)
-        let mvRevealTimer = null;
+        // Item 6: the cold-start reveal used to fire off a bare PLAYING +
+        // fixed-delay timer (mvRevealTimer/MV_REVEAL_DELAY_MS), with no
+        // drift check at all - unlike the song-to-song handoff path
+        // (pendingCheck/completeHandoff below), which already requires
+        // confirmed PLAYING + in-sync before cutting over. Replaced with
+        // the same confirm-gate, via revealReadyCheck() below - see
+        // checkSlotConfirmedInSync, the helper the two paths now share.
+        // mvRevealReadySince plays the same role here that pendingReadySince
+        // plays for the handoff path: when the active slot first looked
+        // ready to reveal, reset to null the moment it isn't - must hold
+        // for MV_HANDOFF_CONFIRM_MS continuously before revealMusicVideo()
+        // actually runs.
+        let mvRevealReadySince = null;
         let mvLoadTimeout = null;
-        const MV_REVEAL_DELAY_MS = 700;   // must have been genuinely PLAYING this long before it's shown
-        const MV_LOAD_TIMEOUT_MS = 15000; // never started in this long -> give up on it
+        const MV_LOAD_TIMEOUT_MS = 15000; // never confirmed ready to reveal in this long -> give up on it (see revealReadyCheck)
         let currentVideoTrackId = null;   // trackId/videoId of the video currently ON SCREEN (or loading into it)
         let currentVideoId = null;
         let mvDriftInterval = null;
@@ -1090,9 +1101,13 @@
         //    preloading in the non-active slot (song-to-song handoff) or
         //    because ambient visuals are still what's showing (the very
         //    first video of a session). The active slot's cover only lifts
-        //    once its video has genuinely been PLAYING for MV_REVEAL_DELAY_MS,
-        //    so YouTube's spinner, poster/play button and title bar have all
-        //    come and gone before anyone can see it.
+        //    once revealReadyCheck (below, driven by the same mvTick loop
+        //    that already drives pendingCheck for handoffs) has confirmed
+        //    it's genuinely PLAYING and within normal sync tolerance for
+        //    MV_HANDOFF_CONFIRM_MS straight - not just "PLAYING for a fixed
+        //    delay" as before (see item 6) - so YouTube's spinner, poster/
+        //    play button and title bar have all come and gone before
+        //    anyone can see it, AND it isn't shown mid-drift either.
         //  - Once on screen, any state other than PLAYING (buffering after
         //    a seek, paused, ended and its "suggested videos" screen) puts
         //    the black cover straight back over it.
@@ -1111,22 +1126,23 @@
                         st.seekIssuedAt = null;
                         if (lat < 5000) mvSeekLatencyMs = Math.round(mvSeekLatencyMs * 0.5 + lat * 0.5);
                     }
-                    if (slot === activeSlot) {
-                        const cover = document.getElementById(`video-loading-cover-${slot}`);
-                        if (mvRevealed) {
-                            cover.classList.add('is-hidden');
-                        } else if (musicVideoActive && !mvRevealTimer) {
-                            mvRevealTimer = setTimeout(() => { mvRevealTimer = null; revealMusicVideo(); }, MV_REVEAL_DELAY_MS);
-                        }
+                    if (slot === activeSlot && mvRevealed) {
+                        document.getElementById(`video-loading-cover-${slot}`).classList.add('is-hidden');
                     }
-                    // If this is the pending slot, pendingCheck() (run every
-                    // tick alongside the active slot's own drift correction)
-                    // takes it from here - there's no cover to manage since
-                    // it's still off screen.
+                    // If this is the pre-reveal active slot, revealReadyCheck()
+                    // (run every tick, same as pendingCheck for a handoff)
+                    // takes it from here - no timer to schedule here anymore.
+                    // Likewise for the pending slot pre-handoff.
                 } else {
                     if (slot === activeSlot) {
-                        if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
                         if (mvRevealed) document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
+                        // Not revealed yet and no longer PLAYING - the confirm
+                        // streak is stale; revealReadyCheck's own next tick
+                        // will also see this and reset mvRevealReadySince,
+                        // but clearing it here means a seek issued from
+                        // OUTSIDE that check (a genuine skip/seek elsewhere)
+                        // can't leave a stale streak lingering an extra tick.
+                        mvRevealReadySince = null;
                     }
                 }
             };
@@ -1160,6 +1176,11 @@
         // used for the FIRST video of a session (nothing to cut from yet) -
         // song-to-song handoffs go through completeHandoff() instead, which
         // is an instant cut with no crossfade.
+        // Called from revealReadyCheck() below once it's confirmed PLAYING +
+        // in-sync for MV_HANDOFF_CONFIRM_MS straight (item 6) - the state
+        // re-checked here is therefore normally already true by the time
+        // this runs; kept as a defensive guard rather than trusted blindly,
+        // same as completeHandoff() re-checks its own caller's work.
         function revealMusicVideo() {
             const st = players[activeSlot];
             if (!musicVideoActive || mvRevealed || !st.ready) return;
@@ -1378,6 +1399,7 @@
         function mvTick() {
             mvSampleReading();
             pendingCheck();
+            revealReadyCheck(); // item 6 - cold-start counterpart to pendingCheck, see its own comment
             mvUpdateOverlay();
             if (++mvSampleCount % MV_CHECK_EVERY_N_SAMPLES === 0) mvCheck();
         }
@@ -1499,36 +1521,90 @@
             }
         }
 
+        // Shared by the song-to-song handoff path (pendingCheck below) and
+        // the cold-start reveal path (revealReadyCheck below) - item 6.
+        // Both need to answer exactly the same question about a slot that
+        // isn't on screen yet: "has it been confirmed PLAYING and within
+        // normal sync tolerance (MV_SEEK_THRESHOLD_MS) continuously for
+        // MV_HANDOFF_CONFIRM_MS?" Before this refactor, the handoff path
+        // already asked that question (this is pendingCheck's original
+        // logic, unchanged in substance) but the reveal path didn't ask it
+        // at all - it just waited for a bare PLAYING + a fixed delay, with
+        // no drift check, which could reveal a video that was already out
+        // of sync the instant it appeared.
+        //
+        // `readySince` is the caller's own streak-start timestamp (null if
+        // no streak yet) - passed in and returned rather than stored here,
+        // since the two call sites can be in flight at once (an ordinary
+        // drift correction on the active slot while a handoff is pending on
+        // the other) and each needs its own independent streak. Also nudges
+        // the slot back into position (rate-limited to once/second) when
+        // it's found to be out of tolerance, same as the original
+        // pendingCheck did - getting INTO sync faster is the whole point of
+        // checking every ~50ms here rather than waiting for mvCheck's
+        // slower ~800ms steady-state cadence.
+        function checkSlotConfirmedInSync(slot, readySince) {
+            const st = players[slot];
+            if (!st.ready || !mvClock) return { confirmed: false, readySince: null };
+            let state, cur;
+            try {
+                state = st.yt.getPlayerState();
+                cur = st.yt.getCurrentTime();
+            } catch (e) { return { confirmed: false, readySince: null }; }
+            if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') return { confirmed: false, readySince: null };
+
+            const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
+            if (driftMs > MV_SEEK_THRESHOLD_MS) {
+                // Nudge it back into position and wait for the next check -
+                // no more than once a second so this doesn't fight itself.
+                if (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000) {
+                    mvSeekTo(slot, mvTargetSec());
+                }
+                return { confirmed: false, readySince: null };
+            }
+            const since = readySince || Date.now();
+            return { confirmed: (Date.now() - since) >= MV_HANDOFF_CONFIRM_MS, readySince: since };
+        }
+
         // Watches whatever's preloading in the non-active slot (see
         // startMusicVideo). Runs on the same ~50ms tick as the active
         // slot's own sampling, but only does anything while a handoff is
         // actually in flight. Only cuts over once the incoming video has
         // been genuinely PLAYING and within normal sync tolerance for
         // MV_HANDOFF_CONFIRM_MS in a row - never on a single lucky reading -
-        // so the cut itself never has to be immediately re-corrected.
+        // so the cut itself never has to be immediately re-corrected. See
+        // checkSlotConfirmedInSync above for the actual check - shared with
+        // revealReadyCheck below (item 6).
         function pendingCheck() {
             if (!pendingSlot) return;
-            const st = players[pendingSlot];
-            if (!st.ready || !mvClock) { pendingReadySince = null; return; }
-            let state, cur;
-            try {
-                state = st.yt.getPlayerState();
-                cur = st.yt.getCurrentTime();
-            } catch (e) { pendingReadySince = null; return; }
-            if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') { pendingReadySince = null; return; }
+            const result = checkSlotConfirmedInSync(pendingSlot, pendingReadySince);
+            pendingReadySince = result.readySince;
+            if (result.confirmed) completeHandoff();
+        }
 
-            const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
-            if (driftMs > MV_SEEK_THRESHOLD_MS) {
-                pendingReadySince = null;
-                // Nudge it back into position and wait for the next check -
-                // no more than once a second so this doesn't fight itself.
-                if (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000) {
-                    mvSeekTo(pendingSlot, mvTargetSec());
-                }
-                return;
-            }
-            if (!pendingReadySince) { pendingReadySince = Date.now(); return; }
-            if (Date.now() - pendingReadySince >= MV_HANDOFF_CONFIRM_MS) completeHandoff();
+        // Cold-start counterpart to pendingCheck above (item 6) - the very
+        // first video of a session has no "previous video" to hand off
+        // from, so there's no pendingSlot/completeHandoff involved, but the
+        // question is the same one: is the active slot confirmed PLAYING
+        // and in sync yet? Runs from the same mvTick loop pendingCheck does
+        // - which, for THIS path, is already ticking before reveal:
+        // startMusicVideo starts mvDriftInterval immediately on load, not
+        // revealMusicVideo - so this has been polling since the moment the
+        // video started loading, the same way pendingCheck has always
+        // polled a preloading pending slot.
+        // The existing mvLoadTimeout (MV_LOAD_TIMEOUT_MS, set in
+        // startMusicVideo) already provides the "never plays" giveup this
+        // needs, unchanged: it only fires while `!mvRevealed`, and reveal
+        // now happens strictly later (once confirmed in sync) than it used
+        // to (once merely PLAYING) - so a video that plays but never
+        // settles into sync hits that same existing timeout and falls back
+        // via reportVideoFailureAndStop(), exactly per item 6's spec,
+        // without needing a second timer here.
+        function revealReadyCheck() {
+            if (!musicVideoActive || mvRevealed) { mvRevealReadySince = null; return; }
+            const result = checkSlotConfirmedInSync(activeSlot, mvRevealReadySince);
+            mvRevealReadySince = result.readySince;
+            if (result.confirmed) revealMusicVideo();
         }
 
         // The actual hard cut: makes the pending slot active and the
@@ -1611,22 +1687,28 @@
             }
 
             // Nothing on screen yet (coming from ambient) - load into the
-            // already-active slot and reveal it the original way once it's
-            // genuinely playing.
+            // already-active slot; revealReadyCheck (via mvTick, started
+            // below) reveals it once confirmed in sync (item 6).
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
-            if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
+            mvRevealReadySince = null;
             loadIntoSlot(activeSlot, videoId);
 
-            // If it never actually starts playing, stop waiting on it.
-            // Only blacklist it if the player itself was ready and it STILL
-            // never played - that's the video's fault. If the player never
-            // came up at all (see loadYouTubeApi's retry loop), this is an
-            // infrastructure hiccup, not a bad video - drop back to ambient
-            // without poisoning it, so it's offered again once things
-            // recover (retryLoadIfNeeded also re-kicks it immediately if
-            // the player comes up mid-wait).
+            // If it never actually reveals, stop waiting on it - this now
+            // covers two cases, not just the original one, because reveal
+            // itself now means more than it used to (item 6): either it
+            // never actually starts playing, OR it plays but never settles
+            // into sync (revealReadyCheck's confirm-gate never succeeds).
+            // Both look identical from here - `!mvRevealed` still true when
+            // this fires - so no new logic is needed, just this comment.
+            // Only blacklist it if the player itself was ready - that's the
+            // video's fault either way. If the player never came up at all
+            // (see loadYouTubeApi's retry loop), this is an infrastructure
+            // hiccup, not a bad video - drop back to ambient without
+            // poisoning it, so it's offered again once things recover
+            // (retryLoadIfNeeded also re-kicks it immediately if the player
+            // comes up mid-wait).
             clearTimeout(mvLoadTimeout);
             mvLoadTimeout = setTimeout(() => {
                 if (!musicVideoActive || mvRevealed) return;
@@ -1649,7 +1731,7 @@
             const wasRevealed = mvRevealed;
             musicVideoActive = false;
             mvRevealed = false;
-            if (mvRevealTimer) { clearTimeout(mvRevealTimer); mvRevealTimer = null; }
+            mvRevealReadySince = null;
             clearTimeout(mvLoadTimeout);
             clearTimeout(pendingLoadTimeout); pendingLoadTimeout = null;
             currentVideoTrackId = null;
