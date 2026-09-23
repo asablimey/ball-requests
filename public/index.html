@@ -1089,30 +1089,36 @@
                 <p class="privacy-updated">Last updated: September 2026</p>
 
                 <h4>What this site is</h4>
-                <p>This is a small, independent song-request tool built for live events. It's not a company product - there's no ad tracking, no data resale, and no account system beyond what's described below.</p>
+                <p>This is a small, independent song-request tool built for live events. It's not a company product - there's no ad tracking and no data resale.</p>
 
-                <h4>What we collect</h4>
+                <h4>What guests see collected</h4>
                 <ul>
                     <li><strong>The name you type in</strong> when you make your first request. It's shown to the admin so they know who requested each song - that's the only reason it's collected.</li>
-                    <li><strong>A random anonymous ID</strong>, generated in your browser and stored locally on your device, used only to stop the same device from voting on a song more than once. It isn't linked to your name or any personal info.</li>
+                    <li><strong>A random anonymous ID</strong>, stored as a cookie on your device, used only to stop the same device from voting on a song more than once. It isn't linked to your name or any personal info.</li>
                     <li><strong>Your song requests and votes themselves</strong> (title, artist, timestamp), so the queue can function and the admin can see request history for the event.</li>
                 </ul>
 
                 <h4>Location (optional)</h4>
                 <p>If you allow it, your browser's location is used for two things: showing how far away each event is when you're picking a venue from the list/map, and - if the event's DJ has turned this on - confirming you're actually near the venue before letting you request or vote. Both checks happen entirely on your own device by comparing your coordinates to the venue's; your location is never sent to or stored on this site's server. You can decline the location prompt and still use the site - you just won't see distances, and a DJ-enabled venue check won't be able to confirm you're there.</p>
 
+                <h4>DJ / admin accounts</h4>
+                <p>Running an event requires a separate account, created with a username, an email address, and a password. Passwords are stored using a one-way cryptographic hash (scrypt) - never in plain text, and not readable by anyone including us. Logging in sets a session cookie so you stay signed in; it identifies your session only, not you personally. If you request a password reset, a one-time link (valid for 30 minutes) is emailed to the address on the account, sent through a third-party email delivery service (Brevo) whose own handling of that email address is covered by <a href="https://www.brevo.com/legal/privacypolicy/" target="_blank" rel="noopener">Brevo's privacy policy</a>, not this one.</p>
+
+                <h4>Music videos</h4>
+                <p>If an event has this feature turned on, the site looks for the official YouTube video matching whatever's playing on Spotify and shows it alongside the audio. To find and verify the right video, the site temporarily downloads short audio clips from candidate YouTube videos and compares them against the actual song using audio analysis on the server - these clips are never stored, saved, or shown to anyone, and are discarded immediately after comparison. The video itself is only ever played through YouTube's own embedded player; nothing is downloaded, stored, or rehosted from the video itself. As an additional safety check, sample frames from candidate videos may be checked by an automated content-moderation service before a video is ever shown, and event organizers can also turn on a stricter "family mode" that only shows videos from a manually pre-approved list. None of this involves your name, your requests, or any guest-identifying information - it's entirely about the song and the video, not about you.</p>
+
                 <h4>What we don't do</h4>
                 <ul>
-                    <li>We don't require an account, email, or password to use this site.</li>
+                    <li>Guests don't need an account, email, or password to use this site - that's only required to run an event as a DJ/admin.</li>
                     <li>We don't sell, share, or use your data for advertising.</li>
-                    <li>We don't use tracking cookies. The only browser storage used is described above, and it's functional, not for tracking you across other sites.</li>
+                    <li>We don't use third-party tracking or advertising cookies. The cookies and storage described above are functional only - they make the site work, and aren't used to track you across other sites.</li>
                 </ul>
 
                 <h4>How long data is kept</h4>
-                <p>Requests, votes, and names are kept only for the duration of the event and are cleared when the server restarts between events. Nothing here is stored in a long-term database.</p>
+                <p>Event data - including guest names, requests, votes, and DJ/admin account details - is stored in a database so an event can be paused and resumed, and isn't automatically wiped when the server restarts. It's kept until the event's admin deletes the event, which removes it. Technical data about which YouTube video matches a given song (and any content-safety decisions made about it) is cached separately and shared across all events - it's about the song/video, not about any guest, and isn't tied to your name, requests, or votes.</p>
 
                 <h4>Third parties</h4>
-                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. The venue map is rendered using tiles from CARTO, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Spotify's and CARTO's own handling of this data is covered by <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify's</a> and <a href="https://carto.com/privacy-policy" target="_blank" rel="noopener">CARTO's</a> privacy policies, not this one.</p>
+                <p>Song search and playback use the Spotify API. You don't log into Spotify yourself to use this site - only the event's DJ connects a Spotify account, separately, to enable playback. Music videos are embedded from YouTube. Password-reset emails are sent through Brevo. The venue map is rendered using tiles from CARTO, which sees your device's IP address and the map area you're viewing (not your precise location, unless you've allowed the location prompt described above). Each of these services' own handling of the data they see is covered by their own privacy policy, not this one: <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noopener">Spotify</a>, <a href="https://www.google.com/policies/privacy/" target="_blank" rel="noopener">YouTube/Google</a>, <a href="https://www.brevo.com/legal/privacypolicy/" target="_blank" rel="noopener">Brevo</a>, <a href="https://carto.com/privacy-policy" target="_blank" rel="noopener">CARTO</a>.</p>
 
                 <h4>Questions</h4>
                 <p>This site is made and maintained by Sam B. If you have questions about how it works, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
@@ -2292,6 +2298,22 @@
         }
         function closePrivacyModal() {
             document.getElementById('privacy-modal').classList.remove('is-visible');
+            // Undo the #privacy deep link on close, so it feels like closing
+            // rather than being stuck on a URL that would just reopen it on
+            // a refresh.
+            if (window.location.hash === '#privacy') {
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        }
+        // Gives the privacy policy a real, directly-linkable URL
+        // (https://<domain>/#privacy) - e.g. for the YouTube API quota-
+        // extension form's "Privacy Policy URL" field, which needs a URL
+        // that shows the actual policy on its own, with no click required.
+        // openPrivacyModal() is otherwise only reachable via a button click
+        // inside the app; this triggers it automatically when the page
+        // loads with #privacy already in the URL.
+        if (window.location.hash === '#privacy') {
+            openPrivacyModal();
         }
 
         async function showPlaylistGrid() {
