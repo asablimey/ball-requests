@@ -856,35 +856,49 @@ async function tryResolveChannelByHandle(artistName) {
 // was observed in production logs. Same fix as artistChannelInFlight above,
 // applied one level down: the first caller's in-flight promise is what
 // every concurrent caller for that playlist ID awaits, not a fresh fetch.
-const ARTIST_UPLOADS_LIST_TTL_MS = 10 * 60 * 1000;
+const ARTIST_UPLOADS_LIST_TTL_MS = 60 * 60 * 1000;
 const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetchedAt }
 const artistUploadsListInFlight = new Map(); // uploadsPlaylistId -> Promise<videos>
 
+// Pages through the channel's uploads (50 per page, 1 unit each, plus 1 unit
+// for that page's durations) instead of only reading the newest page. Big
+// artist channels have hundreds of videos, so the official video for an older
+// single is nowhere near the first page - reading only page one made most
+// songs look like they had no video. ~2 units per page, capped, and the whole
+// list is then cached and shared by every track of that artist.
+const ARTIST_UPLOADS_MAX_PAGES = 12; // up to ~600 videos, ~24 units worst case per artist
 async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults) {
-    if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('playlistItems.list skipped, quota budget exhausted'); return []; }
+    const pageSize = Math.min(50, maxResults || 50);
+    const all = [];
+    let pageToken = '';
     try {
-        const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
-        youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
-        if (!res.ok) { youtubeNoteFailure(`playlistItems.list returned ${res.status}`); return []; }
-        const data = await res.json();
-        const videos = (data.items || [])
-            .map(item => ({
-                videoId: item.snippet?.resourceId?.videoId,
-                title: item.snippet?.title || '',
-                channelTitle: item.snippet?.channelTitle || '',
-                durationMs: null
-            }))
-            .filter(v => v.videoId);
-        if (videos.length > 0) {
-            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
-            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+        for (let page = 0; page < ARTIST_UPLOADS_MAX_PAGES; page++) {
+            if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('playlistItems.list skipped, quota budget exhausted'); break; }
+            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${pageSize}&playlistId=${uploadsPlaylistId}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}" (page ${page + 1})`);
+            if (!res.ok) { youtubeNoteFailure(`playlistItems.list returned ${res.status}`); break; }
+            const data = await res.json();
+            const videos = (data.items || [])
+                .map(item => ({
+                    videoId: item.snippet?.resourceId?.videoId,
+                    title: item.snippet?.title || '',
+                    channelTitle: item.snippet?.channelTitle || '',
+                    durationMs: null
+                }))
+                .filter(v => v.videoId);
+            if (videos.length > 0) {
+                const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+                videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+                all.push(...videos);
+            }
+            pageToken = data.nextPageToken || '';
+            if (!pageToken) break;
         }
-        return videos;
     } catch (e) {
         console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
         youtubeNoteFailure('playlistItems.list threw');
-        return [];
     }
+    return all;
 }
 
 // The cheap path: list an artist's own uploads (1 unit) and let the
@@ -895,7 +909,7 @@ async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults)
 // without a special case. Tries each artist name in order (a feat. credit
 // after the primary artist, say) and stops at the first channel that
 // actually has uploads to offer.
-async function youtubeListArtistUploads(artistNames, maxResults = 50) {
+async function youtubeListArtistUploads(artistNames, maxResults = 50) { // maxResults = page size
     for (const artistName of artistNames) {
         const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
         if (!uploadsPlaylistId) continue;
@@ -989,17 +1003,25 @@ async function resolveArtistUploadsPlaylistId(artistName) {
 // call if that comes back empty (no identifiable channel, or that channel's
 // uploads don't contain anything usable). This is what both call sites
 // below should use instead of calling youtubeSearchVideos directly.
-async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle) {
+async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle, songDurationMs, forReference = false) {
     const cheap = await youtubeListArtistUploads(artistNames);
     if (cheap.length > 0) {
-        // The uploads list is only the channel's most recent ~50 videos. For
-        // anything older, or a song whose video lives elsewhere, that list is
-        // non-empty but contains nothing for THIS song - and returning it
-        // meant the paid search below never ran, so the track was then
-        // (wrongly) recorded as "no video exists". Only trust the cheap list
-        // if at least one entry's title actually names the song.
+        // Only trust the cheap list if it holds something that could actually
+        // pass the same rules applied later (song named in the title, not a
+        // live/lyric/audio upload - unless this is the reference-audio lookup,
+        // which WANTS an audio upload - and roughly the right length).
+        // "Contains the song name" alone isn't enough: a live version
+        // ("Love Again (Live From Mexico)") satisfied it while the real video
+        // was elsewhere, so the paid search below never ran.
         const core = normalizeForMatch(coreSongTitle(songTitle));
-        if (!core || cheap.some(v => normalizeForMatch(v.title).includes(core))) return cheap;
+        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : MUSIC_VIDEO_MAX_DURATION_DIFF_MS;
+        const usable = v => {
+            if (!normalizeForMatch(v.title).includes(core)) return false;
+            if (!forReference && titleLooksDisqualified(v.title)) return false;
+            if (songDurationMs && typeof v.durationMs === 'number' && Math.abs(v.durationMs - songDurationMs) > maxDiff) return false;
+            return true;
+        };
+        if (!core || cheap.some(usable)) return cheap;
     }
     return youtubeSearchVideos(fallbackQuery);
 }
@@ -1594,7 +1616,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 3; // 3: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path - purge once
+const MV_CACHE_SCHEMA_VERSION = 4; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1647,7 +1669,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`, title);
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`, title, durationMs, true);
         const eligible = candidates
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
@@ -1830,7 +1852,7 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
     mvVerificationSchedule(async () => {
         try {
             const failuresBefore = youtubeFailureCount;
-            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`, title);
+            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`, title, durationMs);
             const diag = {};
             const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId, diag);
             verificationDiagCache.set(trackId, diag);
@@ -4180,7 +4202,7 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
     try {
         const artistNames = np.artist.split(',').map(x => x.trim()).filter(Boolean);
         const failuresBefore = youtubeFailureCount;
-        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`, np.title);
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`, np.title, np.durationMs);
         steps.push({ step: '1_youtube_candidates', count: candidates.length, youtubeFailuresDuringLookup: youtubeFailureCount - failuresBefore,
             sample: candidates.slice(0, 8).map(v => ({ title: v.title, channel: v.channelTitle, durationMs: v.durationMs, id: v.videoId })) });
 
