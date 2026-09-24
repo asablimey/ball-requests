@@ -1183,6 +1183,7 @@ const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
 // ground truth.
 const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
 const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
+const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = 2500; // fallback acceptance window when there's no reference audio to verify against
 const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
 // A small negative measured offset is just noise around a true ~0 (the
 // video's content genuinely starts right at its own front) - the display
@@ -1616,7 +1617,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 4; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
+const MV_CACHE_SCHEMA_VERSION = 5; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1737,7 +1738,27 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
 
     const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
     diag.referenceAudioFound = !!refEnvelope;
-    if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
+    if (!refEnvelope) {
+        // No reference audio to compare against (most songs have no "audio"
+        // upload on the artist's own channel, or that download failed). This
+        // used to mean the song NEVER got a video. Instead, fall back to the
+        // next-best evidence: an official upload from the artist's own channel
+        // that names the song and is within ~2.5s of Spotify's length is
+        // almost always the album cut starting at 0:00, so it's offered with
+        // offset 0. Sync is then held by the display's live drift correction,
+        // and a video that turns out not to track gets reported and dropped
+        // (see /sync-failed) like any other. Still requires that it isn't a
+        // static image / flagged frame when those checks can run.
+        const tight = ranked.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
+        for (const c of tight) {
+            const fv = await getFrameVerification(c.videoId, c.durationMs);
+            diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
+            if (!fv.failed && (fv.moderationFlagged || fv.motionScore === null || fv.motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF)) continue;
+            diag.method = 'duration-only (no reference audio)';
+            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0 };
+        }
+        return undefined; // nothing usable yet - stay agnostic, retry later
+    }
 
     for (const candidate of ranked) {
         // Items 4 & 5: the combined motion + moderation check runs alongside
