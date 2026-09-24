@@ -981,7 +981,7 @@
                 <span>Powered by</span>
                 <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
             </div>
-            <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a></div>
+            <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a> | <a onclick="openTermsModal()">Terms</a></div>
         </div>
     </div>
 
@@ -1122,6 +1122,43 @@
 
                 <h4>Questions</h4>
                 <p>This site is made and maintained by Sam B. If you have questions about how it works, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- TERMS OF SERVICE MODAL -->
+    <div class="modal-overlay" id="terms-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">Terms of Service</div>
+                <button class="modal-close-btn" onclick="closeTermsModal()">✕</button>
+            </div>
+            <div class="modal-body privacy-body">
+                <p class="privacy-updated">Last updated: September 2026</p>
+
+                <h4>What this is</h4>
+                <p>Song Request Station is a small, independently-run tool that lets guests at a live event request songs, which the event's DJ or venue plays through their own connected Spotify account. It's provided as-is, by an individual (Sam B), not a company - there's no dedicated support team and no uptime guarantee.</p>
+
+                <h4>Using the site as a guest</h4>
+                <p>You don't need an account to make requests. By using the site you agree to give a real, non-impersonating name when asked, and not to use requests, votes, or any other part of the site to harass anyone, request unlawful content, or otherwise disrupt the event. An event's DJ or venue can remove requests, adjust credits, or restrict access to their event at their own discretion - that's their event, not ours.</p>
+
+                <h4>Running an event as a DJ/admin</h4>
+                <p>Creating an event account means you're responsible for what happens at your event: the songs you allow to play, who you grant access to, and compliance with any licensing (e.g. public performance rights) your venue needs to legally play music and show music videos to the public. Song Request Station only queues requests and displays official YouTube videos through YouTube's own player - it doesn't grant you any licence to publicly perform music or video, and you're responsible for holding whatever licences your venue/event requires. You're also responsible for keeping your account password secure and for anything done through your account.</p>
+
+                <h4>Third-party services</h4>
+                <p>Playback depends on Spotify's API and platform, and music videos are embedded from YouTube - both are subject to their own terms of service (<a href="https://www.spotify.com/legal/end-user-agreement/" target="_blank" rel="noopener">Spotify</a>, <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube</a>), which you agree to when using those features here. If either service changes, restricts, or discontinues access to their API, the related features on this site may stop working without notice - that's outside our control.</p>
+
+                <h4>No warranty</h4>
+                <p>The site is provided "as is," with no guarantee it will be available, error-free, or uninterrupted. Features that depend on third-party services (video matching, playback, maps, password-reset emails) can fail or be delayed for reasons outside our control.</p>
+
+                <h4>Limitation of liability</h4>
+                <p>To the fullest extent permitted by law, Song Request Station and its maker aren't liable for any indirect, incidental, or consequential damages arising from use of the site, including a canceled event, a licensing dispute, or a service outage. Use of the site is at your own risk.</p>
+
+                <h4>Changes</h4>
+                <p>These terms may be updated from time to time; the "last updated" date above will reflect the latest revision. Continuing to use the site after a change means you accept the updated terms.</p>
+
+                <h4>Questions</h4>
+                <p>This site is made and maintained by Sam B. If you have questions about these terms, ask whoever's running the event tonight, or reach out directly if you know how to find them.</p>
             </div>
         </div>
     </div>
@@ -2314,6 +2351,23 @@
         // loads with #privacy already in the URL.
         if (window.location.hash === '#privacy') {
             openPrivacyModal();
+        }
+
+        function openTermsModal() {
+            document.getElementById('terms-modal').classList.add('is-visible');
+        }
+        function closeTermsModal() {
+            document.getElementById('terms-modal').classList.remove('is-visible');
+            // Same deep-link cleanup as closePrivacyModal() - see its comment.
+            if (window.location.hash === '#terms') {
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        }
+        // Same rationale as the #privacy handler above - gives Terms of
+        // Service a directly-linkable URL for the YouTube API form's
+        // "Terms of Service URL" field.
+        if (window.location.hash === '#terms') {
+            openTermsModal();
         }
 
         async function showPlaylistGrid() {
