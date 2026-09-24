@@ -15,6 +15,43 @@ const events = require('./eventStore');
 process.env.YTDL_NO_UPDATE = '1';
 const ytdl = require('@distube/ytdl-core');
 const ffmpegPath = require('ffmpeg-static');
+
+// --- ytdl access: throttling + optional proxy/cookies -------------------------
+// YouTube answers bursts of audio/frame downloads with HTTP 429 (seen in the
+// logs: "Audio stream error ... Status code: 429"), especially from shared
+// hosting IPs like Render's. Every ytdl download/frame grab therefore goes
+// through ONE queue (one at a time, small gap between), and a 429 pauses the
+// whole queue for a while instead of hammering on.
+// Optional env vars if the host IP is throttled even at a gentle rate:
+//   YTDL_PROXY_URL      e.g. http://user:pass@host:port   (residential/other IP)
+//   YTDL_COOKIES_JSON   a JSON array of YouTube cookies (from a logged-in browser)
+let ytdlAgent;
+try {
+    if (process.env.YTDL_PROXY_URL) ytdlAgent = ytdl.createProxyAgent({ uri: process.env.YTDL_PROXY_URL });
+    else if (process.env.YTDL_COOKIES_JSON) ytdlAgent = ytdl.createAgent(JSON.parse(process.env.YTDL_COOKIES_JSON));
+} catch (e) {
+    console.error('[MV-MATCH] Could not set up ytdl proxy/cookies agent:', e.message);
+}
+const ytdlOpts = ytdlAgent ? { agent: ytdlAgent } : {};
+const YTDL_MIN_GAP_MS = 1000;
+const YTDL_429_COOLDOWN_MS = 90000;
+let ytdlCooldownUntil = 0;
+let ytdlChain = Promise.resolve();
+function ytdlNoteThrottled(ms = YTDL_429_COOLDOWN_MS) {
+    ytdlCooldownUntil = Math.max(ytdlCooldownUntil, Date.now() + ms);
+    console.warn(`[MV-MATCH] YouTube is throttling downloads - pausing ytdl work for ${Math.round(ms / 1000)}s.`);
+}
+function withYtdlGate(fn) {
+    const run = async () => {
+        const wait = ytdlCooldownUntil - Date.now();
+        if (wait > 0) await new Promise(r => setTimeout(r, Math.min(wait, YTDL_429_COOLDOWN_MS + 5000)));
+        try { return await fn(); }
+        finally { await new Promise(r => setTimeout(r, YTDL_MIN_GAP_MS)); }
+    };
+    const p = ytdlChain.then(run, run);
+    ytdlChain = p.catch(() => {});
+    return p;
+}
 const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -652,6 +689,7 @@ function channelMatchesAnyArtist(channelTitle, artistNames) {
 const DISQUALIFYING_TITLE_PATTERNS = [
     /lyric/i,
     /\baudio\b/i,
+    /\bvisuali[sz]er\b/i,
     /\blive\b/i,
     /\bconcert\b/i,
     /\bin concert\b/i,
@@ -856,7 +894,7 @@ async function tryResolveChannelByHandle(artistName) {
 // was observed in production logs. Same fix as artistChannelInFlight above,
 // applied one level down: the first caller's in-flight promise is what
 // every concurrent caller for that playlist ID awaits, not a fresh fetch.
-const ARTIST_UPLOADS_LIST_TTL_MS = 60 * 60 * 1000;
+const ARTIST_UPLOADS_LIST_TTL_MS = 6 * 60 * 60 * 1000;
 const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetchedAt }
 const artistUploadsListInFlight = new Map(); // uploadsPlaylistId -> Promise<videos>
 
@@ -1014,7 +1052,7 @@ async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle, song
         // ("Love Again (Live From Mexico)") satisfied it while the real video
         // was elsewhere, so the paid search below never ran.
         const core = normalizeForMatch(coreSongTitle(songTitle));
-        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : MUSIC_VIDEO_MAX_DURATION_DIFF_MS;
+        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : (MV_AUDIO_VERIFY_ENABLED ? MUSIC_VIDEO_MAX_DURATION_DIFF_MS : MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
         const usable = v => {
             if (!normalizeForMatch(v.title).includes(core)) return false;
             if (!forReference && titleLooksDisqualified(v.title)) return false;
@@ -1185,7 +1223,15 @@ const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
 // ground truth.
 const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
 const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
-const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = 2500; // fallback acceptance window when there's no reference audio to verify against
+// Simple mode (the default): no audio downloads at all. A video is offered when
+// it comes from the artist (channel, or an "Official Video" naming the artist),
+// names the song, isn't live/lyric/audio-only, and is within this many ms of
+// Spotify's length - which is almost always the same album cut starting at
+// 0:00. The display then keeps it locked to Spotify's position with its own
+// live drift correction. Set env MV_AUDIO_VERIFY=1 to bring back the old
+// audio-comparison path (slower, needs ytdl to work from the host).
+const MV_AUDIO_VERIFY_ENABLED = process.env.MV_AUDIO_VERIFY === '1';
+const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = Number(process.env.MV_MAX_DURATION_DIFF_MS) || 3000;
 const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
 // A small negative measured offset is just noise around a true ~0 (the
 // video's content genuinely starts right at its own front) - the display
@@ -1206,12 +1252,16 @@ const MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS = 500;
 // this candidate" or "couldn't confirm anything either way", per their own
 // comments below.
 function extractAudioEnvelope(videoId, maxDurationSec) {
+    return withYtdlGate(() => extractAudioEnvelopeRaw(videoId, maxDurationSec));
+}
+function extractAudioEnvelopeRaw(videoId, maxDurationSec) {
     return new Promise((resolve) => {
         let audioStream;
         try {
             audioStream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
                 quality: 'lowestaudio',
-                filter: 'audioonly'
+                filter: 'audioonly',
+                ...ytdlOpts
             });
         } catch (e) {
             console.error(`[MV-MATCH] Could not open audio stream for ${videoId}:`, e.message);
@@ -1256,6 +1306,7 @@ function extractAudioEnvelope(videoId, maxDurationSec) {
 
         audioStream.on('error', (e) => {
             console.error(`[MV-MATCH] Audio stream error for ${videoId}:`, e.message);
+            if (/429|too many requests|not a bot|sign in/i.test(String(e.message))) ytdlNoteThrottled();
             try { ff.kill('SIGKILL'); } catch (e2) { /* already gone */ }
             finish(null);
         });
@@ -1357,7 +1408,7 @@ function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverl
 // video" (item 4), and to give item 5's moderation check reasonable
 // coverage without exploding cost - not to produce a precise motion curve.
 // Every extra sample is another ffmpeg process spawned per candidate.
-const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 10;
+const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 6;
 // Per-frame grab timeout - one stuck/slow sample (a network hiccup on just
 // that one ranged request) shouldn't hang the whole check; grabFramePairAt
 // just resolves null for that sample instead, same convention as
@@ -1516,13 +1567,17 @@ async function checkFrameSafety(frameBuffer) {
 // moderationFlagged: boolean }.
 const frameVerificationCache = new Map();
 
-async function computeFrameVerification(videoId, durationMs) {
+function computeFrameVerification(videoId, durationMs) {
+    return withYtdlGate(() => computeFrameVerificationRaw(videoId, durationMs));
+}
+async function computeFrameVerificationRaw(videoId, durationMs) {
     if (!durationMs || durationMs <= 0) return { motionScore: null, moderationFlagged: false };
     let info;
     try {
-        info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+        info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`, ytdlOpts);
     } catch (e) {
         console.error(`[MV-MATCH] Could not fetch video info for frame checks on ${videoId}:`, e.message);
+        if (/429|too many requests|not a bot|sign in/i.test(String(e.message))) ytdlNoteThrottled();
         return { motionScore: null, moderationFlagged: false, failed: true }; // couldn't RUN the check - not evidence about the video
     }
     // Only pixels matter here - grab the smallest video stream available
@@ -1544,13 +1599,20 @@ async function computeFrameVerification(videoId, durationMs) {
     // The one shared sampling pass - see grabFramePairAt's comment for why
     // this replaces what would otherwise be two separate sampling passes
     // (one for item 4, one for item 5).
-    const frames = (await Promise.all(timestamps.map(t => grabFramePairAt(format.url, t)))).filter(Boolean);
+    // One at a time (was all at once): ten simultaneous ranged requests per
+    // candidate is exactly the burst YouTube answers with 429.
+    const frames = [];
+    for (const t of timestamps) {
+        const f = await grabFramePairAt(format.url, t);
+        if (f) frames.push(f);
+    }
 
     // Fewer than two frames means the sampling itself failed (ytdl/ffmpeg
     // errors, timeouts) - there's nothing to diff, and that says nothing
     // about whether the video is static.
     if (frames.length < 2) {
         console.error(`[MV-MATCH] Frame sampling produced ${frames.length} usable frame(s) for ${videoId} - treating the check as failed, not as a rejection.`);
+        ytdlNoteThrottled(30000);
         return { motionScore: null, moderationFlagged: false, failed: true };
     }
 
@@ -1619,7 +1681,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 6; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
+const MV_CACHE_SCHEMA_VERSION = 7; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1756,6 +1818,19 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         .map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
     diag.checked = [];
 
+    if (!MV_AUDIO_VERIFY_ENABLED) {
+        const artistInTitle = v => artistNames.some(n => { const k = normalizeForMatch(n); return k && normalizeForMatch(v.title).includes(k); });
+        const simple = notDisqualified
+            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames) || (artistInTitle(v) && /official\s+(music\s+)?video/i.test(v.title)))
+            .filter(v => normalizeForMatch(v.title).includes(trackCore))
+            .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS)
+            .sort((a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs));
+        diag.method = 'simple: title/channel/length match, no audio download';
+        diag.simpleMatches = simple.length;
+        if (simple.length === 0) return null; // (the caller refuses to cache this if any YouTube lookup failed)
+        return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0 };
+    }
+
     if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
 
     // Set whenever a candidate couldn't be CHECKED (download failed, frame
@@ -1778,7 +1853,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         // (see /sync-failed) like any other. Still requires that it isn't a
         // static image / flagged frame when those checks can run.
         if (ranked[0]) {
-            try { await ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`); diag.ytdlProbe = 'ok'; }
+            try { await withYtdlGate(() => ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`, ytdlOpts)); diag.ytdlProbe = 'ok'; }
             catch (e) { diag.ytdlProbe = 'FAILED: ' + String(e.message).slice(0, 200); }
         }
         const tight = ranked.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
@@ -4273,7 +4348,7 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
 
         try {
             const t0 = Date.now();
-            const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${probeId}`);
+            const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${probeId}`, ytdlOpts);
             steps.push({ step: '3_ytdl_getInfo', ok: true, ms: Date.now() - t0, formats: (info.formats || []).length });
         } catch (e) {
             steps.push({ step: '3_ytdl_getInfo', ok: false, error: e.message, hint: 'ytdl cannot read YouTube from this server (bot-check / outdated library). Every audio + frame check depends on this.' });
