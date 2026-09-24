@@ -895,7 +895,7 @@ async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults)
 // without a special case. Tries each artist name in order (a feat. credit
 // after the primary artist, say) and stops at the first channel that
 // actually has uploads to offer.
-async function youtubeListArtistUploads(artistNames, maxResults = 25) {
+async function youtubeListArtistUploads(artistNames, maxResults = 50) {
     for (const artistName of artistNames) {
         const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
         if (!uploadsPlaylistId) continue;
@@ -989,9 +989,18 @@ async function resolveArtistUploadsPlaylistId(artistName) {
 // call if that comes back empty (no identifiable channel, or that channel's
 // uploads don't contain anything usable). This is what both call sites
 // below should use instead of calling youtubeSearchVideos directly.
-async function youtubeFindCandidates(artistNames, fallbackQuery) {
+async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle) {
     const cheap = await youtubeListArtistUploads(artistNames);
-    if (cheap.length > 0) return cheap;
+    if (cheap.length > 0) {
+        // The uploads list is only the channel's most recent ~50 videos. For
+        // anything older, or a song whose video lives elsewhere, that list is
+        // non-empty but contains nothing for THIS song - and returning it
+        // meant the paid search below never ran, so the track was then
+        // (wrongly) recorded as "no video exists". Only trust the cheap list
+        // if at least one entry's title actually names the song.
+        const core = normalizeForMatch(coreSongTitle(songTitle));
+        if (!core || cheap.some(v => normalizeForMatch(v.title).includes(core))) return cheap;
+    }
     return youtubeSearchVideos(fallbackQuery);
 }
 
@@ -1585,7 +1594,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 2;
+const MV_CACHE_SCHEMA_VERSION = 3; // 3: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1638,7 +1647,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`);
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`, title);
         const eligible = candidates
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
@@ -1672,18 +1681,29 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
 //     download failed) - we simply don't know, so callers should leave
 //     whatever they were already showing alone rather than tear it down
 //     over an infrastructure hiccup.
-async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId) {
+async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId, diag = {}) {
     const trackCore = normalizeForMatch(coreSongTitle(trackTitle));
     if (!trackCore) return undefined;
 
-    const ranked = candidates
-        .filter(v => !excludeVideoIds.has(v.videoId))
-        .filter(v => !titleLooksDisqualified(v.title))
-        .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
-        .filter(v => normalizeForMatch(v.title).includes(trackCore))
-        .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS)
+    // Stepwise (instead of one chain) so `diag` can record how many
+    // candidates each rule removed - surfaced as `detail` on /api/music-video
+    // so "why no video for this song" can be answered without guessing.
+    const notExcluded = candidates.filter(v => !excludeVideoIds.has(v.videoId));
+    const notDisqualified = notExcluded.filter(v => !titleLooksDisqualified(v.title));
+    const fromArtist = notDisqualified.filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames));
+    const namesSong = fromArtist.filter(v => normalizeForMatch(v.title).includes(trackCore));
+    const rightLength = namesSong.filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS);
+    const ranked = rightLength
         .sort((a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs))
         .slice(0, MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY);
+    diag.songCore = trackCore;
+    diag.candidatesFound = candidates.length;
+    diag.afterNotLiveLyricAudioTitle = notDisqualified.length;
+    diag.afterChannelIsArtist = fromArtist.length;
+    diag.afterTitleNamesSong = namesSong.length;
+    diag.afterLengthWithin60s = rightLength.length;
+    diag.sampleOfCandidates = candidates.slice(0, 6).map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
+    diag.checked = [];
 
     if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
 
@@ -1694,6 +1714,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     let sawTransientFailure = false;
 
     const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
+    diag.referenceAudioFound = !!refEnvelope;
     if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
 
     for (const candidate of ranked) {
@@ -1704,6 +1725,8 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
             extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
             getFrameVerification(candidate.videoId, candidate.durationMs)
         ]);
+        const row = { title: candidate.title, audioDownloaded: !!candidateEnvelope, frameCheckFailed: !!frameVerification.failed, motionScore: frameVerification.motionScore, moderationFlagged: frameVerification.moderationFlagged };
+        diag.checked.push(row);
         if (!candidateEnvelope) { sawTransientFailure = true; continue; } // this one failed to download - try the next, not a rejection
         if (frameVerification.failed) { sawTransientFailure = true; continue; } // frame checks couldn't run - not a rejection either
         const { motionScore, moderationFlagged } = frameVerification;
@@ -1713,6 +1736,8 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         if (moderationFlagged) continue;
         if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue;
         const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+        row.audioConfidence = Math.round(confidence * 1000) / 1000;
+        row.videoLeadMs = videoLeadMs;
         if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
         if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
         return { videoId: candidate.videoId, introOffsetMs: Math.max(0, videoLeadMs), confidence };
@@ -1741,6 +1766,10 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
 // this freely - on every poll, for every track still sitting in a queue -
 // without worrying about re-triggering work or racing itself.
 const verificationInFlight = new Set();
+// Why the last verification of each track ended the way it did (filter
+// counts, per-candidate audio/motion results). In-memory only; shown as
+// `detail` by /api/music-video.
+const verificationDiagCache = new Map();
 
 // Caps how many verification pipelines run at once. Without this, a big
 // backlog hitting all at once (e.g. an existing 15-track queue seen right
@@ -1801,8 +1830,11 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
     mvVerificationSchedule(async () => {
         try {
             const failuresBefore = youtubeFailureCount;
-            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`);
-            const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
+            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`, title);
+            const diag = {};
+            const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId, diag);
+            verificationDiagCache.set(trackId, diag);
+            if (verificationDiagCache.size > 500) verificationDiagCache.delete(verificationDiagCache.keys().next().value);
             if (result === undefined) { // couldn't verify either way (no reference audio, downloads failed) - don't cache, retry after backoff
                 mvVerificationNoteInconclusive(trackId);
                 return;
@@ -4148,7 +4180,7 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
     try {
         const artistNames = np.artist.split(',').map(x => x.trim()).filter(Boolean);
         const failuresBefore = youtubeFailureCount;
-        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`);
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`, np.title);
         steps.push({ step: '1_youtube_candidates', count: candidates.length, youtubeFailuresDuringLookup: youtubeFailureCount - failuresBefore,
             sample: candidates.slice(0, 8).map(v => ({ title: v.title, channel: v.channelTitle, durationMs: v.durationMs, id: v.videoId })) });
 
@@ -5037,6 +5069,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     }
     res.json({
         reason: mvReason,
+        detail: runtime.cache.matched ? undefined : verificationDiagCache.get(np.trackId),
         youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
         enabled: true,
         matched: runtime.cache.matched,
