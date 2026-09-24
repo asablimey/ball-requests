@@ -1242,6 +1242,27 @@ const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = Number(process.env.MV_MAX_DURATION
 // MV_MAX_INTRO_GUESS_MS (default 20s).
 const MV_GUESS_INTRO_ENABLED = process.env.MV_GUESS_INTRO !== '0';
 const MV_MAX_INTRO_GUESS_MS = Number(process.env.MV_MAX_INTRO_GUESS_MS) || 20000;
+// Ceiling for even ATTEMPTING to measure where the song starts inside a
+// longer video. Above this, a duration difference this large is more likely
+// a different edit/mislabeled video than a plain intro, so it's left alone
+// rather than downloading many minutes of audio to check.
+const MV_MAX_INTRO_SEARCH_MS = Number(process.env.MV_MAX_INTRO_SEARCH_MS) || 6 * 60 * 1000;
+
+// Finds the exact point a video's audio lines up with the (intro-free)
+// reference audio, instead of assuming the whole extra length is an intro.
+// Downloads only as much of the candidate as needed to reach past the
+// expected song start, and searches a lag window sized to match - the old
+// fixed 20s search could never find an intro longer than 20s no matter what
+// called it.
+async function measureIntroOffset(videoId, refEnvelope, expectedExtraMs) {
+    const windowSec = Math.min(600, Math.ceil(expectedExtraMs / 1000) + MUSIC_VIDEO_AUDIO_WINDOW_SEC + 15); // full ref length as buffer, or the 80% overlap requirement in crossCorrelateEnvelopes always fails at the true lag
+    const lagSec = Math.min(400, Math.ceil(expectedExtraMs / 1000) + 15);
+    const envelope = await extractAudioEnvelope(videoId, windowSec);
+    if (!envelope) return null;
+    const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, envelope, lagSec);
+    if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE || videoLeadMs < 0) return null;
+    return { introOffsetMs: videoLeadMs, confidence };
+}
 const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
 // A small negative measured offset is just noise around a true ~0 (the
 // video's content genuinely starts right at its own front) - the display
@@ -1691,7 +1712,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 8; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
+const MV_CACHE_SCHEMA_VERSION = 9; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1843,12 +1864,36 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         // intro. Offer it with that offset now; it's refined in the background.
         if (MV_GUESS_INTRO_ENABLED) {
             const longer = officialish
-                .filter(v => v.durationMs > trackDurationMs && (v.durationMs - trackDurationMs) <= MV_MAX_INTRO_GUESS_MS)
+                .filter(v => v.durationMs > trackDurationMs && (v.durationMs - trackDurationMs) <= MV_MAX_INTRO_SEARCH_MS)
                 .sort(closeness);
-            diag.guessedIntroCandidates = longer.length;
+            diag.longerCandidates = longer.length;
             if (longer.length > 0) {
-                diag.method = 'guessed: video is longer than the song, extra length assumed to be an intro';
-                return { videoId: longer[0].videoId, introOffsetMs: longer[0].durationMs - trackDurationMs, confidence: 0, guessed: true };
+                const best = longer[0];
+                const extraMs = best.durationMs - trackDurationMs;
+                // Try to find exactly where the song starts before assuming
+                // anything - a plain intro, a mid-video edit, and a wrong
+                // candidate all look the same from duration alone.
+                if (Date.now() >= ytdlCooldownUntil) {
+                    const ref = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag, opts.allowPaidSearch !== false);
+                    if (ref) {
+                        const measured = await measureIntroOffset(best.videoId, ref, extraMs);
+                        diag.introMeasurement = { videoId: best.videoId, expectedExtraMs: extraMs, result: measured || 'no confident match in that window' };
+                        if (measured) {
+                            diag.method = 'measured: found where the song starts in the video';
+                            return { videoId: best.videoId, introOffsetMs: measured.introOffsetMs, confidence: measured.confidence, verified: true };
+                        }
+                    }
+                }
+                if (extraMs <= MV_MAX_INTRO_GUESS_MS) {
+                    diag.method = 'guessed: video is longer than the song, extra length assumed to be an intro (measured in the background once possible)';
+                    return { videoId: best.videoId, introOffsetMs: extraMs, confidence: 0, guessed: true };
+                }
+                // A real match may still exist here - we just couldn't measure
+                // it yet (throttled, no reference audio) or it's too long to
+                // guess blindly. Not a rejection, so don't cache it as "no
+                // video" - the next play of this song will try again.
+                diag.method = `intro (~${Math.round(extraMs / 1000)}s) too long to guess safely, and could not be measured yet`;
+                return undefined;
             }
         }
         return null; // (the caller refuses to cache this if any YouTube lookup failed)
@@ -2004,14 +2049,14 @@ function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
     const artistNames = (artistNamesRaw || '').split(',').map(x => x.trim()).filter(Boolean);
     mvVerificationSchedule(async () => {
         try {
-            const candidates = await youtubeFindCandidates(artistNames, '', title, durationMs, false, false);
-            const diag = {};
-            const r = await findAudioVerifiedMusicVideo(candidates, artistNames, new Set(), durationMs, title, trackId, diag, { forceAudio: true, allowPaidSearch: false });
+            const ref = await getReferenceAudioEnvelope(trackId, artistNames, title, durationMs, {}, false); // no paid search - background/best-effort
+            if (!ref) return;
+            const measured = await measureIntroOffset(cur.videoId, ref, cur.introOffsetMs); // cur.introOffsetMs is the earlier guess - i.e. the expected extra length
             const now = verifiedMusicVideoCache.get(trackId);
-            if (r && r.videoId && now && now.guessed) {
-                verifiedMusicVideoCache.set(trackId, { ...r, verified: true });
+            if (measured && now && now.guessed && now.videoId === cur.videoId) {
+                verifiedMusicVideoCache.set(trackId, { videoId: cur.videoId, introOffsetMs: measured.introOffsetMs, confidence: measured.confidence, verified: true });
                 events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
-                console.log(`[MV-MATCH] "${title}": guessed offset replaced by measured offset ${r.introOffsetMs}ms.`);
+                console.log(`[MV-MATCH] "${title}": guessed offset (${cur.introOffsetMs}ms) replaced by measured offset ${measured.introOffsetMs}ms.`);
             }
         } catch (e) {
             console.error(`[MV-MATCH] Offset refinement failed for "${title}":`, e.message);
