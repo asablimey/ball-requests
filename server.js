@@ -5,8 +5,53 @@ const fetch = require('node-fetch');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./eventStore');
+// @distube/ytdl-core checks GitHub for its own updates on require by
+// default - harmless normally, but seen 403'ing in production (GitHub
+// rate-limiting the check itself) and adds noise/latency for something
+// that has nothing to do with actually serving requests. Must be set
+// before the require() below; setting it in Render's own env vars would
+// also work, but doing it here means it's not a step anyone deploying
+// this can forget.
+process.env.YTDL_NO_UPDATE = '1';
 const ytdl = require('@distube/ytdl-core');
 const ffmpegPath = require('ffmpeg-static');
+
+// --- ytdl access: throttling + optional proxy/cookies -------------------------
+// YouTube answers bursts of audio/frame downloads with HTTP 429 (seen in the
+// logs: "Audio stream error ... Status code: 429"), especially from shared
+// hosting IPs like Render's. Every ytdl download/frame grab therefore goes
+// through ONE queue (one at a time, small gap between), and a 429 pauses the
+// whole queue for a while instead of hammering on.
+// Optional env vars if the host IP is throttled even at a gentle rate:
+//   YTDL_PROXY_URL      e.g. http://user:pass@host:port   (residential/other IP)
+//   YTDL_COOKIES_JSON   a JSON array of YouTube cookies (from a logged-in browser)
+let ytdlAgent;
+try {
+    if (process.env.YTDL_PROXY_URL) ytdlAgent = ytdl.createProxyAgent({ uri: process.env.YTDL_PROXY_URL });
+    else if (process.env.YTDL_COOKIES_JSON) ytdlAgent = ytdl.createAgent(JSON.parse(process.env.YTDL_COOKIES_JSON));
+} catch (e) {
+    console.error('[MV-MATCH] Could not set up ytdl proxy/cookies agent:', e.message);
+}
+const ytdlOpts = ytdlAgent ? { agent: ytdlAgent } : {};
+const YTDL_MIN_GAP_MS = 1000;
+const YTDL_429_COOLDOWN_MS = 90000;
+let ytdlCooldownUntil = 0;
+let ytdlChain = Promise.resolve();
+function ytdlNoteThrottled(ms = YTDL_429_COOLDOWN_MS) {
+    ytdlCooldownUntil = Math.max(ytdlCooldownUntil, Date.now() + ms);
+    console.warn(`[MV-MATCH] YouTube is throttling downloads - pausing ytdl work for ${Math.round(ms / 1000)}s.`);
+}
+function withYtdlGate(fn) {
+    const run = async () => {
+        const wait = ytdlCooldownUntil - Date.now();
+        if (wait > 0) await new Promise(r => setTimeout(r, Math.min(wait, YTDL_429_COOLDOWN_MS + 5000)));
+        try { return await fn(); }
+        finally { await new Promise(r => setTimeout(r, YTDL_MIN_GAP_MS)); }
+    };
+    const p = ytdlChain.then(run, run);
+    ytdlChain = p.catch(() => {});
+    return p;
+}
 const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -644,6 +689,7 @@ function channelMatchesAnyArtist(channelTitle, artistNames) {
 const DISQUALIFYING_TITLE_PATTERNS = [
     /lyric/i,
     /\baudio\b/i,
+    /\bvisuali[sz]er\b/i,
     /\blive\b/i,
     /\bconcert\b/i,
     /\bin concert\b/i,
@@ -681,21 +727,372 @@ function parseIsoDurationMs(iso) {
     return ms > 0 ? Math.round(ms) : null;
 }
 
+// --- Item 9: minimize YouTube Data API quota usage --------------------------
+// Default quota is 10,000 units/day per project. search.list costs 100
+// units/call; playlistItems.list, channels.list and videos.list each cost
+// only 1. Every new track used to cost at least 200 units (one search.list
+// for the video candidate, one for the reference audio) before any actual
+// matching happened - easily exhausted once a few events are running at
+// once (this project has already hit 429 quotaExceeded in production). The
+// functions below try a 1-unit path first - an artist's own channel
+// uploads, once that channel is known - and only fall back to the 100-unit
+// search.list when a channel can't be confidently identified or its
+// uploads don't contain anything usable.
+
+const YOUTUBE_DAILY_QUOTA_BUDGET = Number(process.env.YOUTUBE_DAILY_QUOTA_BUDGET) || 10000;
+const YOUTUBE_QUOTA_SAFETY_MARGIN_UNITS = 300; // stop issuing search.list well before actually hitting the wall
+
+let youtubeQuotaUsedToday = 0;
+let youtubeQuotaDayKey = null;
+
+// Resets at midnight Pacific, matching Google's own daily quota reset.
+// Uses Intl's timezone handling rather than a manual UTC offset so DST is
+// handled for free.
+function youtubeQuotaDateKey() {
+    return new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+}
+
+function youtubeQuotaRolloverIfNeeded() {
+    const key = youtubeQuotaDateKey();
+    if (key !== youtubeQuotaDayKey) {
+        youtubeQuotaDayKey = key;
+        youtubeQuotaUsedToday = 0;
+    }
+}
+
+// Call BEFORE issuing a request of the given cost. Cheap (1-unit) calls are
+// allowed right up to the real limit; only the expensive search.list calls
+// respect the extra safety margin, since those are what actually drives
+// exhaustion, and it's safe to just skip one (falling back to "couldn't
+// verify this track right now") rather than degrade a 1-unit lookup that
+// was already going to happen anyway.
+function youtubeQuotaAvailable(units) {
+    youtubeQuotaRolloverIfNeeded();
+    const margin = units >= 100 ? YOUTUBE_QUOTA_SAFETY_MARGIN_UNITS : 0;
+    return (youtubeQuotaUsedToday + units) <= (YOUTUBE_DAILY_QUOTA_BUDGET - margin);
+}
+
+// Counts every moment a YouTube lookup FAILED or was SKIPPED (quota budget out,
+// HTTP error, network error, missing key). An empty result that follows any
+// of these is "we couldn't ask", not "there's nothing there" - callers snapshot
+// this before a lookup and compare after, and must never cache or persist a
+// "no match" conclusion if it moved. (Being global, an unrelated failure in a
+// concurrent lookup can also move it - that only errs toward "retry later",
+// never toward wrongly caching a miss.)
+let youtubeFailureCount = 0;
+function youtubeNoteFailure(reason) {
+    youtubeFailureCount++;
+    console.warn(`[MUSIC VIDEO] YouTube lookup failed/skipped (${reason}) - result will not be cached as a miss.`);
+}
+
+function youtubeQuotaRecord(units, callType, detail) {
+    youtubeQuotaRolloverIfNeeded();
+    youtubeQuotaUsedToday += units;
+    console.log(`[MUSIC VIDEO] YouTube API: ${callType} cost ${units} unit(s) (${youtubeQuotaUsedToday}/${YOUTUBE_DAILY_QUOTA_BUDGET} used today)${detail ? ' - ' + detail : ''}`);
+}
+
+// Wraps a single YouTube Data API fetch with capped exponential backoff on
+// 429 specifically (quota/rate-limit responses). Previously a 429 just got
+// logged and given up on immediately, re-triable by the very next poll,
+// which did nothing but spend the retry hitting the same wall again. Any
+// other failure (network error, 5xx, malformed response) still fails
+// immediately, same as before - backoff only makes sense for "the server is
+// telling me to wait", not general errors.
+async function youtubeFetchWithBackoff(url, maxRetries = 2) {
+    let attempt = 0;
+    while (true) {
+        const res = await fetch(url);
+        if (res.status !== 429 || attempt >= maxRetries) return res;
+        const waitMs = 500 * Math.pow(3, attempt); // 500ms, then 1500ms
+        await new Promise(r => setTimeout(r, waitMs));
+        attempt++;
+    }
+}
+
+// videoIds -> Map<videoId, durationMs>. Pulled out of youtubeSearchVideos so
+// both the search.list path and the new cheap artist-uploads path below can
+// share this exact 1-unit lookup instead of each keeping their own copy.
+async function youtubeFetchDurations(videoIds) {
+    if (videoIds.length === 0) return new Map();
+    if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('videos.list skipped, quota budget exhausted'); return new Map(); }
+    try {
+        const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(',')}&key=${YOUTUBE_API_KEY}`);
+        youtubeQuotaRecord(1, 'videos.list', `${videoIds.length} video(s), duration lookup`);
+        if (!res.ok) { youtubeNoteFailure(`videos.list returned ${res.status}`); return new Map(); }
+        const data = await res.json();
+        return new Map((data.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
+    } catch (e) {
+        console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
+        youtubeNoteFailure('videos.list threw');
+        return new Map();
+    }
+}
+
+// artistNameNormalized -> uploads playlist ID, or null if none could be
+// confidently identified. Deliberately permanent/in-memory only (not
+// persisted like verifiedMusicVideoCache) - losing it on a restart just
+// costs the next track by that artist one extra search.list call, a far
+// smaller loss than losing real audio-verification work would be.
+// artistChannelInFlight de-dupes concurrent lookups the same way
+// verificationInFlight does for trackId in triggerMusicVideoVerification -
+// several tracks by the same artist queued close together share one search
+// instead of each starting their own.
+const artistChannelCache = new Map();
+const artistChannelInFlight = new Map();
+
+// Cheap first guess at an artist's channel: many official artist/VEVO
+// channels have a predictable handle (@artistname, @artistnameVEVO). This
+// costs 1 unit per guess via channels.list?forHandle= - trying two guesses
+// (2 units total) before ever reaching for the 100-unit search.list below
+// is a strict improvement whenever it hits, and costs nothing extra when it
+// doesn't (the search.list fallback still runs exactly as before). Verifies
+// the returned channel's own title actually contains the artist name before
+// trusting it - a handle guess resolving to some unrelated channel that
+// happens to exist under that name is the one way this could go wrong, so
+// it gets the same sanity check the search.list path already applies.
+async function tryResolveChannelByHandle(artistName) {
+    const slug = artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!slug) return null;
+    const key = normalizeForMatch(artistName);
+    for (const handle of [slug, `${slug}vevo`]) {
+        if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('channels.list skipped, quota budget exhausted'); return null; }
+        try {
+            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&forHandle=${encodeURIComponent('@' + handle)}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'channels.list', `handle guess "@${handle}" for "${artistName}"`);
+            if (res.ok) {
+                const data = await res.json();
+                const item = data.items?.[0];
+                if (item && normalizeForMatch(item.snippet?.title || '').includes(key)) {
+                    return item.contentDetails?.relatedPlaylists?.uploads || null;
+                }
+            } else {
+                youtubeNoteFailure(`channels.list returned ${res.status}`);
+            }
+        } catch (e) {
+            console.error(`[MUSIC VIDEO] Handle guess "@${handle}" failed for "${artistName}":`, e.message);
+            youtubeNoteFailure('channels.list threw');
+        }
+    }
+    return null;
+}
+
+// The reference-audio lookup and the video-candidate lookup for the SAME
+// track both end up calling youtubeListArtistUploads for the same artist -
+// without this, that's two playlistItems.list + two videos.list calls per
+// track instead of one. Short TTL (not permanent, unlike artistChannelCache
+// above) because an artist's actual uploads genuinely change over time; this
+// is about collapsing near-simultaneous calls for the same track (and
+// nearby calls for other tracks by the same artist), not caching a channel's
+// contents indefinitely.
+//
+// artistUploadsListInFlight closes a real race the cache alone didn't:
+// several DIFFERENT tracks by the same artist verified concurrently (e.g.
+// a big backlog of queued tracks all triggering at once on server
+// restart) each call this function before any of them finish, so each one
+// sees an empty cache and fetches independently - four duplicate
+// playlistItems.list calls for the same artist within a couple of seconds
+// was observed in production logs. Same fix as artistChannelInFlight above,
+// applied one level down: the first caller's in-flight promise is what
+// every concurrent caller for that playlist ID awaits, not a fresh fetch.
+const ARTIST_UPLOADS_LIST_TTL_MS = 6 * 60 * 60 * 1000;
+const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetchedAt }
+const artistUploadsListInFlight = new Map(); // uploadsPlaylistId -> Promise<videos>
+
+// Pages through the channel's uploads (50 per page, 1 unit each, plus 1 unit
+// for that page's durations) instead of only reading the newest page. Big
+// artist channels have hundreds of videos, so the official video for an older
+// single is nowhere near the first page - reading only page one made most
+// songs look like they had no video. ~2 units per page, capped, and the whole
+// list is then cached and shared by every track of that artist.
+const ARTIST_UPLOADS_MAX_PAGES = 12; // up to ~600 videos, ~24 units worst case per artist
+async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults) {
+    const pageSize = Math.min(50, maxResults || 50);
+    const all = [];
+    let pageToken = '';
+    try {
+        for (let page = 0; page < ARTIST_UPLOADS_MAX_PAGES; page++) {
+            if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('playlistItems.list skipped, quota budget exhausted'); break; }
+            const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${pageSize}&playlistId=${uploadsPlaylistId}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}" (page ${page + 1})`);
+            if (!res.ok) { youtubeNoteFailure(`playlistItems.list returned ${res.status}`); break; }
+            const data = await res.json();
+            const videos = (data.items || [])
+                .map(item => ({
+                    videoId: item.snippet?.resourceId?.videoId,
+                    title: item.snippet?.title || '',
+                    channelTitle: item.snippet?.channelTitle || '',
+                    durationMs: null
+                }))
+                .filter(v => v.videoId);
+            if (videos.length > 0) {
+                const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+                videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
+                all.push(...videos);
+            }
+            pageToken = data.nextPageToken || '';
+            if (!pageToken) break;
+        }
+    } catch (e) {
+        console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
+        youtubeNoteFailure('playlistItems.list threw');
+    }
+    return all;
+}
+
+// The cheap path: list an artist's own uploads (1 unit) and let the
+// existing downstream filtering (title/duration matching in
+// getReferenceAudioEnvelope, disqualification rules in
+// findAudioVerifiedMusicVideo) pick out whatever's usable from it - same
+// shape of result as youtubeSearchVideos, so callers can fall back to that
+// without a special case. Tries each artist name in order (a feat. credit
+// after the primary artist, say) and stops at the first channel that
+// actually has uploads to offer.
+async function youtubeListArtistUploads(artistNames, maxResults = 50) { // maxResults = page size
+    for (const artistName of artistNames) {
+        const uploadsPlaylistId = await resolveArtistUploadsPlaylistId(artistName);
+        if (!uploadsPlaylistId) continue;
+
+        const cached = artistUploadsListCache.get(uploadsPlaylistId);
+        if (cached && (Date.now() - cached.fetchedAt) < ARTIST_UPLOADS_LIST_TTL_MS) {
+            if (cached.videos.length > 0) return cached.videos;
+            continue;
+        }
+
+        let promise = artistUploadsListInFlight.get(uploadsPlaylistId);
+        if (!promise) {
+            const failuresBefore = youtubeFailureCount;
+            promise = fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults).then(videos => {
+                // A list fetched during a failure (quota out, HTTP error, or
+                // durations missing) is incomplete - don't let it sit in the
+                // cache for the TTL and keep every track by this artist
+                // looking like it has no usable video.
+                if (youtubeFailureCount === failuresBefore) {
+                    artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
+                }
+                return videos;
+            });
+            artistUploadsListInFlight.set(uploadsPlaylistId, promise);
+            promise.finally(() => artistUploadsListInFlight.delete(uploadsPlaylistId));
+        }
+
+        const videos = await promise;
+        if (videos.length > 0) return videos;
+    }
+    return [];
+}
+
+async function resolveArtistUploadsPlaylistId(artistName) {
+    const key = normalizeForMatch(artistName);
+    if (!key) return null;
+    if (artistChannelCache.has(key)) return artistChannelCache.get(key);
+    if (artistChannelInFlight.has(key)) return artistChannelInFlight.get(key);
+
+    const promise = (async () => {
+        const failuresBefore = youtubeFailureCount;
+        let uploadsPlaylistId = await tryResolveChannelByHandle(artistName);
+        try {
+            if (!uploadsPlaylistId && !youtubeQuotaAvailable(100)) youtubeNoteFailure('channel search.list skipped, quota budget exhausted');
+            if (!uploadsPlaylistId && youtubeQuotaAvailable(100)) {
+                const searchRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=3&q=${encodeURIComponent(artistName + ' official')}&key=${YOUTUBE_API_KEY}`);
+                youtubeQuotaRecord(100, 'search.list', `channel lookup for "${artistName}"`);
+                if (!searchRes.ok) youtubeNoteFailure(`channel search.list returned ${searchRes.status}`);
+                if (searchRes.ok) {
+                    const searchData = await searchRes.json();
+                    const candidateId = (searchData.items || [])
+                        .map(i => ({ channelId: i.id?.channelId, title: i.snippet?.channelTitle || '' }))
+                        .find(c => c.channelId && normalizeForMatch(c.title).includes(key))?.channelId;
+                    if (candidateId && youtubeQuotaAvailable(1)) {
+                        const channelRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${candidateId}&key=${YOUTUBE_API_KEY}`);
+                        youtubeQuotaRecord(1, 'channels.list', `uploads playlist for "${artistName}"`);
+                        if (channelRes.ok) {
+                            const channelData = await channelRes.json();
+                            uploadsPlaylistId = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null;
+                        } else {
+                            youtubeNoteFailure(`channels.list returned ${channelRes.status}`);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[MUSIC VIDEO] Channel resolution failed for "${artistName}":`, e.message);
+            youtubeNoteFailure('channel resolution threw');
+        }
+        // Cache the miss too, not just a hit - an artist with no confidently
+        // identifiable channel shouldn't cost a fresh search.list on every
+        // single track of theirs that ever gets requested.
+        // ...but only a REAL miss. A miss recorded while the quota was out
+        // (or a request failed) would otherwise stick for the life of the
+        // process, long after the quota resets.
+        if (uploadsPlaylistId || youtubeFailureCount === failuresBefore) {
+            artistChannelCache.set(key, uploadsPlaylistId);
+        }
+        return uploadsPlaylistId;
+    })();
+
+    artistChannelInFlight.set(key, promise);
+    try {
+        return await promise;
+    } finally {
+        artistChannelInFlight.delete(key);
+    }
+}
+
+// Tries the cheap artist-uploads path first, only spending a search.list
+// call if that comes back empty (no identifiable channel, or that channel's
+// uploads don't contain anything usable). This is what both call sites
+// below should use instead of calling youtubeSearchVideos directly.
+async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle, songDurationMs, forReference = false, allowPaidSearch = true) {
+    const cheap = await youtubeListArtistUploads(artistNames);
+    if (cheap.length > 0) {
+        // Only trust the cheap list if it holds something that could actually
+        // pass the same rules applied later (song named in the title, not a
+        // live/lyric/audio upload - unless this is the reference-audio lookup,
+        // which WANTS an audio upload - and roughly the right length).
+        // "Contains the song name" alone isn't enough: a live version
+        // ("Love Again (Live From Mexico)") satisfied it while the real video
+        // was elsewhere, so the paid search below never ran.
+        const core = normalizeForMatch(coreSongTitle(songTitle));
+        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : (MV_AUDIO_VERIFY_ENABLED ? MUSIC_VIDEO_MAX_DURATION_DIFF_MS : Math.max(MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS, MV_GUESS_INTRO_ENABLED ? MV_MAX_INTRO_GUESS_MS : 0));
+        const usable = v => {
+            if (!normalizeForMatch(v.title).includes(core)) return false;
+            if (!forReference && titleLooksDisqualified(v.title)) return false;
+            if (songDurationMs && typeof v.durationMs === 'number' && Math.abs(v.durationMs - songDurationMs) > maxDiff) return false;
+            return true;
+        };
+        if (!core || cheap.some(usable)) return cheap;
+    }
+    if (!allowPaidSearch) return cheap;
+    const searched = await youtubeSearchVideos(fallbackQuery);
+    searched.fromSearch = true;
+    return searched;
+}
+
 // Raw YouTube Data API v3 text search, restricted to embeddable videos.
 // Returns [] on any failure (missing key, quota exhausted, network) rather
 // than throwing - a YouTube outage should just mean "no music video for
-// this track", never a broken poll for the display.
+// this track", never a broken poll for the display. This is the expensive
+// fallback (100 units) - see youtubeFindCandidates above, which tries the
+// cheap artist-uploads path first and only reaches this when that comes up
+// empty.
 async function youtubeSearchVideos(query, maxResults = 10) {
     if (!YOUTUBE_API_KEY) {
         console.error('[MUSIC VIDEO] YOUTUBE_API_KEY is not set - skipping search.');
+        youtubeNoteFailure('YOUTUBE_API_KEY not set');
+        return [];
+    }
+    if (!youtubeQuotaAvailable(100)) {
+        console.warn(`[MUSIC VIDEO] Skipping search.list for "${query}" - daily YouTube quota budget exhausted, falling back to ambient visuals for this track.`);
+        youtubeNoteFailure('search.list skipped, quota budget exhausted');
         return [];
     }
     try {
         const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${maxResults}&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`;
-        const res = await fetch(url);
+        const res = await youtubeFetchWithBackoff(url);
+        youtubeQuotaRecord(100, 'search.list', query);
         if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.error(`[MUSIC VIDEO] YouTube search returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
+            youtubeNoteFailure(`search.list returned ${res.status}`);
             return [];
         }
         const data = await res.json();
@@ -707,25 +1104,18 @@ async function youtubeSearchVideos(query, maxResults = 10) {
                 durationMs: null
             }))
             .filter(v => v.videoId);
-        // One cheap videos.list call (1 quota unit for all candidates) to get
-        // each video's real length. If it fails, durationMs stays null and
-        // pickBestMusicVideo then refuses every candidate: a video whose
+        // One cheap videos.list call (1 unit for all candidates together) to
+        // get each video's real length. If it fails, durationMs stays null
+        // and pickBestMusicVideo then refuses every candidate: a video whose
         // length can't be checked can't be trusted to be in sync.
         if (videos.length > 0) {
-            try {
-                const dRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videos.map(v => v.videoId).join(',')}&key=${YOUTUBE_API_KEY}`);
-                if (dRes.ok) {
-                    const dData = await dRes.json();
-                    const byId = new Map((dData.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
-                    videos.forEach(v => { v.durationMs = byId.get(v.videoId) ?? null; });
-                }
-            } catch (e) {
-                console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
-            }
+            const durations = await youtubeFetchDurations(videos.map(v => v.videoId));
+            videos.forEach(v => { v.durationMs = durations.get(v.videoId) ?? null; });
         }
         return videos;
     } catch (e) {
         console.error('[MUSIC VIDEO] YouTube search failed:', e.message);
+        youtubeNoteFailure('search.list threw');
         return [];
     }
 }
@@ -834,6 +1224,24 @@ const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
 // ground truth.
 const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
 const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
+// Simple mode (the default): no audio downloads at all. A video is offered when
+// it comes from the artist (channel, or an "Official Video" naming the artist),
+// names the song, isn't live/lyric/audio-only, and is within this many ms of
+// Spotify's length - which is almost always the same album cut starting at
+// 0:00. The display then keeps it locked to Spotify's position with its own
+// live drift correction. Set env MV_AUDIO_VERIFY=1 to bring back the old
+// audio-comparison path (slower, needs ytdl to work from the host).
+const MV_AUDIO_VERIFY_ENABLED = process.env.MV_AUDIO_VERIFY === '1';
+const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = Number(process.env.MV_MAX_DURATION_DIFF_MS) || 3000;
+// An official video that runs LONGER than the song (cold open / intro) can't
+// be offset-checked without downloading audio, so by default its extra length
+// is assumed to be an intro: the video is offered right away with that offset
+// (video position = song position + extra length). A background audio check
+// then replaces the guess with the measured offset when it can (see
+// mvMaybeUpgradeGuess). Set MV_GUESS_INTRO=0 to disable guessing; the cap is
+// MV_MAX_INTRO_GUESS_MS (default 20s).
+const MV_GUESS_INTRO_ENABLED = process.env.MV_GUESS_INTRO !== '0';
+const MV_MAX_INTRO_GUESS_MS = Number(process.env.MV_MAX_INTRO_GUESS_MS) || 20000;
 const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
 // A small negative measured offset is just noise around a true ~0 (the
 // video's content genuinely starts right at its own front) - the display
@@ -854,12 +1262,16 @@ const MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS = 500;
 // this candidate" or "couldn't confirm anything either way", per their own
 // comments below.
 function extractAudioEnvelope(videoId, maxDurationSec) {
+    return withYtdlGate(() => extractAudioEnvelopeRaw(videoId, maxDurationSec));
+}
+function extractAudioEnvelopeRaw(videoId, maxDurationSec) {
     return new Promise((resolve) => {
         let audioStream;
         try {
             audioStream = ytdl(`https://www.youtube.com/watch?v=${videoId}`, {
                 quality: 'lowestaudio',
-                filter: 'audioonly'
+                filter: 'audioonly',
+                ...ytdlOpts
             });
         } catch (e) {
             console.error(`[MV-MATCH] Could not open audio stream for ${videoId}:`, e.message);
@@ -904,6 +1316,7 @@ function extractAudioEnvelope(videoId, maxDurationSec) {
 
         audioStream.on('error', (e) => {
             console.error(`[MV-MATCH] Audio stream error for ${videoId}:`, e.message);
+            if (/429|too many requests|not a bot|sign in/i.test(String(e.message))) ytdlNoteThrottled();
             try { ff.kill('SIGKILL'); } catch (e2) { /* already gone */ }
             finish(null);
         });
@@ -979,33 +1392,50 @@ function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverl
     };
 }
 
-// --- Item 4: static "album cover" rejection --------------------------------
+// --- Item 4: static "album cover" rejection, + Item 5: content-moderation
+// gate - combined, because item 5 explicitly reuses item 4's sampled
+// frames instead of sampling the video twice -----------------------------
 // Some uploads billed as the "official video" are just a static image (the
 // album cover, usually) with the whole song playing behind it - audio-
 // verified genuinely real, since the audio itself is often the actual
 // studio master, but not a real MUSIC VIDEO in any sense worth putting on a
 // screen at an event. The audio cross-correlation above can't catch this -
-// the audio is fine - so this is a second, independent signal: motion.
-// Frames are sampled evenly across the CANDIDATE'S ENTIRE RUNTIME (not just
-// the front, unlike the audio check's MUSIC_VIDEO_AUDIO_WINDOW_SEC window) -
-// a static cover with a few seconds of real footage stapled onto the front
-// or back would sail past a front-loaded sample.
+// the audio is fine - so item 4 is a second, independent signal: motion.
+// Separately, item 5 is a content-safety check: some sampled frame content
+// simply shouldn't be shown, regardless of how well it syncs. Both checks
+// need frames sampled evenly across the CANDIDATE'S ENTIRE RUNTIME (not
+// just the front, unlike the audio check's MUSIC_VIDEO_AUDIO_WINDOW_SEC
+// window - a static cover, or a brief inappropriate clip, tacked onto the
+// front or back of an otherwise-fine video would sail past a front-loaded
+// sample either way) - so rather than each running its own sampling pass,
+// they share one: grabFramePairAt below grabs a single frame per timestamp
+// and produces BOTH the small JPEG item 5's moderation check needs and the
+// even-smaller downscaled grayscale buffer item 4's motion-diff needs, in
+// one ffmpeg invocation per timestamp (two mapped outputs, not two seeks).
 
 // How many frames to sample across the whole video. Low - this only needs
 // to distinguish "basically nothing ever changes" from "this is a real
-// video", not produce a precise motion curve, and every extra sample is
-// another ffmpeg process spawned per candidate.
-const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 10;
+// video" (item 4), and to give item 5's moderation check reasonable
+// coverage without exploding cost - not to produce a precise motion curve.
+// Every extra sample is another ffmpeg process spawned per candidate.
+const MUSIC_VIDEO_MOTION_SAMPLE_COUNT = 6;
 // Per-frame grab timeout - one stuck/slow sample (a network hiccup on just
-// that one ranged request) shouldn't hang the whole check; grabFrameAt just
-// resolves null for that sample instead, same convention as everything
-// else in this feature.
+// that one ranged request) shouldn't hang the whole check; grabFramePairAt
+// just resolves null for that sample instead, same convention as
+// everything else in this feature.
 const MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS = 8000;
-// Frames are downscaled hard before comparing - cheap to diff, and coarse
-// enough that ordinary video-compression noise between two visually
-// identical frames of a genuinely static image doesn't register as "motion".
+// The grayscale frame used for item 4's motion diff is downscaled hard -
+// cheap to diff, and coarse enough that ordinary video-compression noise
+// between two visually identical frames of a genuinely static image
+// doesn't register as "motion".
 const MUSIC_VIDEO_MOTION_FRAME_WIDTH = 32;
 const MUSIC_VIDEO_MOTION_FRAME_HEIGHT = 18;
+// The JPEG frame handed to item 5's moderation check needs to actually be
+// legible to a classifier (or a human reviewing flagged content later),
+// so it's kept much larger than the motion-diff frame - still small enough
+// to keep bandwidth/API payload size down.
+const MUSIC_VIDEO_MODERATION_FRAME_WIDTH = 160;
+const MUSIC_VIDEO_MODERATION_FRAME_HEIGHT = 90;
 // Average per-pixel grayscale difference (0-255 scale) between consecutive
 // sampled frames, below which a candidate is treated as a static image.
 // START CONSERVATIVE (per the implementation prompt) - this constant has
@@ -1018,33 +1448,41 @@ const MUSIC_VIDEO_MOTION_FRAME_HEIGHT = 18;
 // might reject real videos.
 const MUSIC_VIDEO_MOTION_MIN_AVG_DIFF = 4;
 
-// Grabs one small downscaled grayscale frame from a YouTube video at a
-// given timestamp, by handing ffmpeg the video's own direct CDN URL and
-// letting it seek with `-ss` before `-i` (a ranged HTTP request against
-// that URL, not a full download) rather than piping the whole stream
-// through ytdl the way extractAudioEnvelope does - there's no reason to
-// pull the first N seconds of video just to grab one frame from minute 3.
+// Grabs ONE frame from a YouTube video at a given timestamp and produces
+// both representations items 4 and 5 need from it, in a single ffmpeg
+// invocation rather than seeking to the same timestamp twice: the JPEG
+// (item 5's moderation input) comes out ffmpeg's normal stdout (fd 1), and
+// the downscaled grayscale raw buffer (item 4's motion-diff input) comes
+// out a second, explicitly mapped output on an extra pipe (fd 3) - Node's
+// spawn() is given a 4th stdio slot to receive it. Seeks with `-ss` before
+// `-i` against the video's own direct CDN URL (a ranged HTTP request, not
+// a full download) rather than piping the whole stream through ytdl the
+// way extractAudioEnvelope does - there's no reason to pull minutes of
+// video just to grab one frame.
 // Resolves to null (never throws/rejects) on any failure, same convention
 // as extractAudioEnvelope - a failed sample just means "skip this sample
 // point", not a crash.
-function grabFrameAt(videoUrl, timestampSec) {
+function grabFramePairAt(videoUrl, timestampSec) {
     return new Promise((resolve) => {
         let ff;
         try {
             ff = spawn(ffmpegPath, [
                 '-ss', String(Math.max(0, timestampSec)),
                 '-i', videoUrl,
-                '-frames:v', '1',
+                '-map', '0:v:0', '-frames:v', '1',
+                '-vf', `scale=${MUSIC_VIDEO_MODERATION_FRAME_WIDTH}:${MUSIC_VIDEO_MODERATION_FRAME_HEIGHT}`,
+                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+                '-map', '0:v:0', '-frames:v', '1',
                 '-vf', `scale=${MUSIC_VIDEO_MOTION_FRAME_WIDTH}:${MUSIC_VIDEO_MOTION_FRAME_HEIGHT},format=gray`,
-                '-f', 'rawvideo',
-                'pipe:1'
-            ]);
+                '-f', 'rawvideo', 'pipe:3'
+            ], { stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
         } catch (e) {
             console.error('[MV-MATCH] Could not start ffmpeg for frame grab:', e.message);
             return resolve(null);
         }
 
-        const chunks = [];
+        const jpegChunks = [];
+        const grayChunks = [];
         let settled = false;
         const finish = (result) => {
             if (settled) return;
@@ -1058,52 +1496,106 @@ function grabFrameAt(videoUrl, timestampSec) {
             finish(null);
         }, MUSIC_VIDEO_MOTION_FRAME_TIMEOUT_MS);
 
-        ff.stdout.on('data', (chunk) => chunks.push(chunk));
+        ff.stdout.on('data', (chunk) => jpegChunks.push(chunk));
+        ff.stdio[3].on('data', (chunk) => grayChunks.push(chunk));
         ff.stderr.on('data', () => {}); // ffmpeg's own progress chatter - not needed here
         ff.on('error', (e) => {
             console.error('[MV-MATCH] ffmpeg error during frame grab:', e.message);
             finish(null);
         });
         ff.on('close', () => {
-            const buf = Buffer.concat(chunks);
-            const expectedBytes = MUSIC_VIDEO_MOTION_FRAME_WIDTH * MUSIC_VIDEO_MOTION_FRAME_HEIGHT; // 1 byte/pixel, grayscale
-            if (buf.length < expectedBytes) return finish(null);
-            finish(buf.subarray(0, expectedBytes));
+            const jpeg = Buffer.concat(jpegChunks);
+            const grayBuf = Buffer.concat(grayChunks);
+            const expectedGrayBytes = MUSIC_VIDEO_MOTION_FRAME_WIDTH * MUSIC_VIDEO_MOTION_FRAME_HEIGHT; // 1 byte/pixel, grayscale
+            if (jpeg.length === 0 || grayBuf.length < expectedGrayBytes) return finish(null);
+            finish({ jpeg, gray: grayBuf.subarray(0, expectedGrayBytes) });
         });
     });
 }
 
-// Per-video (not per-track) cache of the motion result - a property of the
-// YOUTUBE VIDEO itself, same reasoning as referenceAudioEnvelopeCache below.
-// Runtime-only, like that cache: rebuilt fresh on restart, which is fine
-// since this is a performance cache, not a safety-critical judgment (unlike
-// item 5's moderation cache, which will need to persist). Value:
-// `undefined` (key absent) = not checked yet, `null` = couldn't determine
-// (info lookup or every frame grab failed), or the numeric average
-// consecutive-frame difference.
-const motionScoreCache = new Map();
+// Pure helper for item 4: average per-pixel grayscale difference between
+// each consecutive pair of already-sampled frames. Low means "looks
+// static", high means "looks like a real video". Returns null if fewer
+// than 2 frames came back (not enough to compare), which callers treat as
+// "couldn't verify this signal" rather than a rejection.
+function averageConsecutiveFrameDiff(grayFrames) {
+    if (grayFrames.length < 2) return null;
+    let totalDiff = 0;
+    for (let i = 1; i < grayFrames.length; i++) {
+        const a = grayFrames[i - 1], b = grayFrames[i];
+        let diff = 0;
+        for (let p = 0; p < a.length; p++) diff += Math.abs(a[p] - b[p]);
+        totalDiff += diff / a.length;
+    }
+    return totalDiff / (grayFrames.length - 1);
+}
 
-// Samples MUSIC_VIDEO_MOTION_SAMPLE_COUNT frames evenly across the whole
-// video and returns the average per-pixel grayscale difference between each
-// consecutive pair - low means "looks static", high means "looks like a
-// real video". Returns null if fewer than 2 frames actually came back
-// (not enough to compare), which callers treat as "couldn't verify this
-// signal" rather than a rejection.
-async function computeMotionScore(videoId, durationMs) {
-    if (!durationMs || durationMs <= 0) return null;
+// --- Item 5: content-moderation gate ---------------------------------------
+// Abstracted behind this one function so the underlying image-moderation
+// provider - AWS Rekognition, Google Cloud Vision SafeSearch, Azure Content
+// Moderator, a self-hosted classifier, whatever ends up chosen - can be
+// swapped without touching any of the calling code below it. No provider
+// is wired up yet (that needs real API credentials/config this codebase
+// doesn't have), so this is currently a stub that reports "not flagged"
+// for everything; replace the body with a real call once a provider is
+// picked, keeping the same {flagged} shape so nothing else has to change.
+//
+// REJECT-ONLY: this filter's only job is to catch what it can - a `false`
+// here means "nothing was detected", NOT "this frame is confirmed safe",
+// and it does not guarantee zero unsafe content ever reaches a screen. See
+// item 8's family-mode allowlist for a second, human-reviewed layer for
+// events that need a stronger guarantee than an automated classifier can
+// give. Newly auto-approved matches (family mode off) should ideally be
+// surfaced for a human to review AFTER THE FACT, not gated on that review
+// before playing at all - there's no admin surface in this codebase for
+// that review queue yet. That's a real feature in its own right, so this
+// is left as a documentation/architecture note for whoever builds it next,
+// not an implementation here.
+async function checkFrameSafety(frameBuffer) {
+    // TODO: wire up a real provider here. Example shape, for AWS Rekognition:
+    //   const res = await rekognitionClient.send(new DetectModerationLabelsCommand({
+    //       Image: { Bytes: frameBuffer }, MinConfidence: 80
+    //   }));
+    //   return { flagged: (res.ModerationLabels || []).length > 0 };
+    return { flagged: false };
+}
+
+// Per-video (not per-track) cache of the combined item 4 + item 5 result -
+// both are properties of the YOUTUBE VIDEO itself, same reasoning as
+// referenceAudioEnvelopeCache below, and combined into one cache (rather
+// than one each) because they now share a single frame-sampling pass - see
+// the comment above grabFramePairAt. Runtime-only, like the other
+// per-video caches on this page: rebuilt fresh on restart, which is fine
+// for the motion score (a performance cache, not a safety-critical
+// judgment) - the moderation half is reproduced fresh on every restart
+// too, which is an intentional trade-off: a persisted moderation verdict
+// that later turns out to be wrong (a classifier bug fixed upstream, a
+// deliberately reconsidered case) would otherwise survive indefinitely
+// with no way to invalidate it, whereas today it's naturally rechecked
+// against whatever the provider currently returns after any restart.
+// Value: undefined = not checked yet, or { motionScore: number|null,
+// moderationFlagged: boolean }.
+const frameVerificationCache = new Map();
+
+function computeFrameVerification(videoId, durationMs) {
+    return withYtdlGate(() => computeFrameVerificationRaw(videoId, durationMs));
+}
+async function computeFrameVerificationRaw(videoId, durationMs) {
+    if (!durationMs || durationMs <= 0) return { motionScore: null, moderationFlagged: false };
     let info;
     try {
-        info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+        info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`, ytdlOpts);
     } catch (e) {
-        console.error(`[MV-MATCH] Could not fetch video info for motion check on ${videoId}:`, e.message);
-        return null;
+        console.error(`[MV-MATCH] Could not fetch video info for frame checks on ${videoId}:`, e.message);
+        if (/429|too many requests|not a bot|sign in/i.test(String(e.message))) ytdlNoteThrottled();
+        return { motionScore: null, moderationFlagged: false, failed: true }; // couldn't RUN the check - not evidence about the video
     }
     // Only pixels matter here - grab the smallest video stream available
     // rather than spending bandwidth on a high-res one just to immediately
-    // downscale it to 32x18.
+    // downscale everything pulled from it.
     const format = ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'videoandaudio' })
         || ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'video' });
-    if (!format || !format.url) return null;
+    if (!format || !format.url) return { motionScore: null, moderationFlagged: false, failed: true };
 
     const durationSec = durationMs / 1000;
     const timestamps = [];
@@ -1114,28 +1606,54 @@ async function computeMotionScore(videoId, durationMs) {
         timestamps.push(durationSec * (i + 0.5) / MUSIC_VIDEO_MOTION_SAMPLE_COUNT);
     }
 
-    const frames = (await Promise.all(timestamps.map(t => grabFrameAt(format.url, t)))).filter(Boolean);
-    if (frames.length < 2) return null;
-
-    let totalDiff = 0;
-    for (let i = 1; i < frames.length; i++) {
-        const a = frames[i - 1], b = frames[i];
-        let diff = 0;
-        for (let p = 0; p < a.length; p++) diff += Math.abs(a[p] - b[p]);
-        totalDiff += diff / a.length;
+    // The one shared sampling pass - see grabFramePairAt's comment for why
+    // this replaces what would otherwise be two separate sampling passes
+    // (one for item 4, one for item 5).
+    // One at a time (was all at once): ten simultaneous ranged requests per
+    // candidate is exactly the burst YouTube answers with 429.
+    const frames = [];
+    for (const t of timestamps) {
+        const f = await grabFramePairAt(format.url, t);
+        if (f) frames.push(f);
     }
-    return totalDiff / (frames.length - 1);
+
+    // Fewer than two frames means the sampling itself failed (ytdl/ffmpeg
+    // errors, timeouts) - there's nothing to diff, and that says nothing
+    // about whether the video is static.
+    if (frames.length < 2) {
+        console.error(`[MV-MATCH] Frame sampling produced ${frames.length} usable frame(s) for ${videoId} - treating the check as failed, not as a rejection.`);
+        ytdlNoteThrottled(30000);
+        return { motionScore: null, moderationFlagged: false, failed: true };
+    }
+
+    const motionScore = averageConsecutiveFrameDiff(frames.map(f => f.gray));
+
+    // Item 5's moderation check, run across every sampled frame IN PARALLEL
+    // (not sequentially, and not sequentially after the motion score above
+    // either - Promise.all here, motion diffing already done synchronously
+    // above it). Any single flagged frame rejects the candidate outright;
+    // scores are never averaged the way the motion score is.
+    let moderationFlagged = false;
+    if (frames.length > 0) {
+        const results = await Promise.all(frames.map(f => checkFrameSafety(f.jpeg).catch(e => {
+            console.error(`[MV-MATCH] Moderation check failed for a frame of ${videoId}:`, e.message);
+            return { flagged: false }; // a check that couldn't RUN is not evidence of anything - never treated as a flag
+        })));
+        moderationFlagged = results.some(r => r && r.flagged);
+    }
+
+    return { motionScore, moderationFlagged };
 }
 
-// Cached wrapper around computeMotionScore - see motionScoreCache above.
-// Every call site (just findAudioVerifiedMusicVideo below, today) can call
-// this freely per candidate without worrying about re-sampling the same
-// video on a replay or a re-verification at a different event.
-async function getMotionScore(videoId, durationMs) {
-    if (motionScoreCache.has(videoId)) return motionScoreCache.get(videoId);
-    const score = await computeMotionScore(videoId, durationMs);
-    motionScoreCache.set(videoId, score);
-    return score;
+// Cached wrapper around computeFrameVerification - see frameVerificationCache
+// above. The only call site today (findAudioVerifiedMusicVideo below) can
+// call this freely per candidate without worrying about re-sampling the
+// same video on a replay or a re-verification at a different event.
+async function getFrameVerification(videoId, durationMs) {
+    if (frameVerificationCache.has(videoId)) return frameVerificationCache.get(videoId);
+    const result = await computeFrameVerification(videoId, durationMs);
+    if (!result.failed) frameVerificationCache.set(videoId, result); // never cache a check that couldn't run
+    return result;
 }
 
 // Per-track cache of "what's the ground-truth audio for this song", global
@@ -1167,8 +1685,48 @@ const verifiedMusicVideoCache = new Map();
 // loadMusicVideoCache/scheduleMusicVideoCacheSave in eventStore.js). Read
 // fresh at write time by the debounce in eventStore, not snapshotted here -
 // see that function's own comment for why.
+// Persisted snapshots are stamped with a schema version. Snapshots written
+// before the version existed (or by older code) may contain `null` entries
+// that were really "the lookup failed" (quota out, ytdl blocked) recorded as
+// "no video exists" - on load those are dropped once so the tracks get
+// re-verified. Matches (non-null) are always kept.
+const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
+const MV_CACHE_SCHEMA_VERSION = 8; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
-    return Object.fromEntries(verifiedMusicVideoCache);
+    return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
+}
+
+// --- Item 8: family-mode safety lists ---------------------------------------
+// Independent of verifiedMusicVideoCache above, which only answers "is this
+// genuinely the same recording" - a technical-match question. These answer
+// "is this appropriate to show a family/school audience", a judgment
+// verifiedMusicVideoCache was never meant to carry and that automated content
+// moderation (item 5) can't fully guarantee on its own - see the Maroon 5
+// "This Love" case: a correctly-matched, official, moderation-passing video
+// that's still not appropriate for that audience. Both are global (not
+// scoped to one event), since a track that's inappropriate at one school
+// event is inappropriate everywhere, and a track a human has already vetted
+// as family-safe shouldn't need re-vetting at every event either.
+//
+// musicVideoDenylist: a hard block, trackId only. Checked ahead of
+// everything else - triggerMusicVideoVerification refuses to even start the
+// verification pipeline for a denylisted track, and the display route below
+// refuses to show one regardless of what verifiedMusicVideoCache says,
+// covering the case where a track was verified and cached BEFORE it was
+// added to the denylist.
+// musicVideoAllowlist: the opposite direction, trackId -> the specific
+// {videoId, introOffsetMs} a human has manually approved for family-mode
+// playback. Only consulted when an event has familyModeEnabled on (see
+// ensureVisualsConfigs) - with family mode on, a track plays its video ONLY
+// if it's here, regardless of what the automated pipeline concluded. This
+// flips the default from "show unless automatically rejected" to "don't
+// show unless a human already approved it", which is the actual point of
+// family mode.
+const musicVideoDenylist = new Set();
+const musicVideoAllowlist = new Map();
+
+function familyListsSnapshot() {
+    return { denylist: [...musicVideoDenylist], allowlist: Object.fromEntries(musicVideoAllowlist) };
 }
 
 // Finds a plain-audio upload of the track itself (not the "official music
@@ -1179,24 +1737,56 @@ function musicVideoCacheSnapshot() {
 // because there's nothing worth watching, but it's exactly what we want as
 // a REFERENCE, since it's the most likely upload to be an untouched rip of
 // the actual master rather than a re-cut video edit.
-async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs) {
-    if (referenceAudioEnvelopeCache.has(trackId)) return referenceAudioEnvelopeCache.get(trackId);
+async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs, diag = {}, allowPaidSearch = true) {
+    if (referenceAudioEnvelopeCache.has(trackId)) {
+        const cached = referenceAudioEnvelopeCache.get(trackId);
+        diag.referenceWhy = cached ? 'cached' : 'cached: no usable reference upload exists for this song';
+        return cached;
+    }
     let result = null;
+    let lookupFailed = false;
+    diag.referenceTried = [];
+    const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} audio`);
-        const eligible = candidates
+        const pickEligible = list => list
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
             .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS)
             .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
-        if (eligible.length > 0) {
-            result = await extractAudioEnvelope(eligible[0].videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+        const query = `${artistNames.join(' ')} ${title} audio`;
+        const candidates = await youtubeFindCandidates(artistNames, query, title, durationMs, true, allowPaidSearch);
+        let eligible = pickEligible(candidates);
+        diag.referenceEligibleFromArtistUploads = eligible.length;
+        if (eligible.length === 0 && !candidates.fromSearch && allowPaidSearch) {
+            // The artist's own channel has no upload of this song at the right
+            // length - look wider (auto-generated "Topic" uploads, VEVO
+            // audio, etc. still carry the artist's name in the channel title).
+            const searched = await youtubeSearchVideos(query);
+            eligible = pickEligible(searched);
+            diag.referenceEligibleFromSearch = eligible.length;
         }
+        // Try a few, not just the first - one broken download shouldn't
+        // decide there is no reference.
+        for (const ref of eligible.slice(0, 3)) {
+            const env = await extractAudioEnvelope(ref.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            diag.referenceTried.push({ title: ref.title, channel: ref.channelTitle, downloaded: !!env });
+            if (env) { result = env; break; }
+        }
+        if (!result && eligible.length > 0) lookupFailed = true; // download/decode failed - a broken ytdl isn't proof there's no reference
     } catch (e) {
         console.error(`[MV-MATCH] Reference audio lookup failed for "${title}":`, e.message);
+        lookupFailed = true;
     }
-    referenceAudioEnvelopeCache.set(trackId, result);
+    if (youtubeFailureCount !== failuresBefore) lookupFailed = true; // the YouTube search/lookups themselves failed
+    diag.referenceWhy = result ? 'ok'
+        : lookupFailed ? 'lookup or download failed (YouTube API error, or ytdl blocked) - will retry'
+        : 'no upload with the song name, from the artist, within 4s of its length';
+    // Only a genuine "no usable reference exists" is remembered. A failure
+    // (quota out, ytdl blocked, network) used to be cached as null for the
+    // life of the process, which silently disabled verification for this
+    // track until a restart.
+    if (!lookupFailed) referenceAudioEnvelopeCache.set(trackId, result);
     return result;
 }
 
@@ -1211,40 +1801,126 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
 //     download failed) - we simply don't know, so callers should leave
 //     whatever they were already showing alone rather than tear it down
 //     over an infrastructure hiccup.
-async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId) {
+async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId, diag = {}, opts = {}) {
     const trackCore = normalizeForMatch(coreSongTitle(trackTitle));
     if (!trackCore) return undefined;
 
-    const ranked = candidates
-        .filter(v => !excludeVideoIds.has(v.videoId))
-        .filter(v => !titleLooksDisqualified(v.title))
-        .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
-        .filter(v => normalizeForMatch(v.title).includes(trackCore))
-        .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS)
+    // Stepwise (instead of one chain) so `diag` can record how many
+    // candidates each rule removed - surfaced as `detail` on /api/music-video
+    // so "why no video for this song" can be answered without guessing.
+    const notExcluded = candidates.filter(v => !excludeVideoIds.has(v.videoId));
+    const notDisqualified = notExcluded.filter(v => !titleLooksDisqualified(v.title));
+    const fromArtist = notDisqualified.filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames));
+    const namesSong = fromArtist.filter(v => normalizeForMatch(v.title).includes(trackCore));
+    const rightLength = namesSong.filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS);
+    const ranked = rightLength
         .sort((a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs))
         .slice(0, MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY);
+    diag.songCore = trackCore;
+    diag.candidatesFound = candidates.length;
+    diag.afterNotLiveLyricAudioTitle = notDisqualified.length;
+    diag.afterChannelIsArtist = fromArtist.length;
+    diag.afterTitleNamesSong = namesSong.length;
+    diag.afterLengthWithin60s = rightLength.length;
+    diag.sampleOfCandidates = candidates.slice(0, 6).map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
+    diag.songDurationSec = Math.round(trackDurationMs / 1000);
+    diag.candidatesNamingTheSong = fromArtist.filter(v => normalizeForMatch(v.title).includes(trackCore)).slice(0, 6)
+        .map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
+    diag.checked = [];
 
-    if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match"
+    if (!MV_AUDIO_VERIFY_ENABLED && !opts.forceAudio) {
+        const artistInTitle = v => artistNames.some(n => { const k = normalizeForMatch(n); return k && normalizeForMatch(v.title).includes(k); });
+        const officialish = notDisqualified
+            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames) || (artistInTitle(v) && /official\s+(music\s+)?video/i.test(v.title)))
+            .filter(v => normalizeForMatch(v.title).includes(trackCore))
+            .filter(v => typeof v.durationMs === 'number');
+        const closeness = (a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs);
+        const simple = officialish.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS).sort(closeness);
+        diag.method = 'simple: title/channel/length match, no audio download';
+        diag.simpleMatches = simple.length;
+        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0 };
+        // Longer than the song by a few seconds: almost certainly a cold open /
+        // intro. Offer it with that offset now; it's refined in the background.
+        if (MV_GUESS_INTRO_ENABLED) {
+            const longer = officialish
+                .filter(v => v.durationMs > trackDurationMs && (v.durationMs - trackDurationMs) <= MV_MAX_INTRO_GUESS_MS)
+                .sort(closeness);
+            diag.guessedIntroCandidates = longer.length;
+            if (longer.length > 0) {
+                diag.method = 'guessed: video is longer than the song, extra length assumed to be an intro';
+                return { videoId: longer[0].videoId, introOffsetMs: longer[0].durationMs - trackDurationMs, confidence: 0, guessed: true };
+            }
+        }
+        return null; // (the caller refuses to cache this if any YouTube lookup failed)
+    }
 
-    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
-    if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
+    if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
+
+    // Set whenever a candidate couldn't be CHECKED (download failed, frame
+    // sampling failed) as opposed to being checked and found wanting. If no
+    // candidate matches and this is set, the honest answer is "unknown", not
+    // "no match" - see the return at the bottom.
+    let sawTransientFailure = false;
+
+    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag, opts.allowPaidSearch !== false);
+    diag.referenceAudioFound = !!refEnvelope;
+    if (!refEnvelope) {
+        // No reference audio to compare against (most songs have no "audio"
+        // upload on the artist's own channel, or that download failed). This
+        // used to mean the song NEVER got a video. Instead, fall back to the
+        // next-best evidence: an official upload from the artist's own channel
+        // that names the song and is within ~2.5s of Spotify's length is
+        // almost always the album cut starting at 0:00, so it's offered with
+        // offset 0. Sync is then held by the display's live drift correction,
+        // and a video that turns out not to track gets reported and dropped
+        // (see /sync-failed) like any other. Still requires that it isn't a
+        // static image / flagged frame when those checks can run.
+        if (ranked[0]) {
+            try { await withYtdlGate(() => ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`, ytdlOpts)); diag.ytdlProbe = 'ok'; }
+            catch (e) { diag.ytdlProbe = 'FAILED: ' + String(e.message).slice(0, 200); }
+        }
+        const tight = ranked.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
+        diag.durationOnlyCandidates = tight.length;
+        for (const c of tight) {
+            const fv = await getFrameVerification(c.videoId, c.durationMs);
+            diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
+            if (!fv.failed && (fv.moderationFlagged || fv.motionScore === null || fv.motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF)) continue;
+            diag.method = 'duration-only (no reference audio)';
+            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0 };
+        }
+        return undefined; // nothing usable yet - stay agnostic, retry later
+    }
 
     for (const candidate of ranked) {
-        // Item 4: the motion check runs alongside the audio download/decode
-        // for this same candidate, not after it - two independent checks on
-        // the same video, neither waiting on the other.
-        const [candidateEnvelope, motionScore] = await Promise.all([
+        // Items 4 & 5: the combined motion + moderation check runs alongside
+        // the audio download/decode for this same candidate, not after it -
+        // independent checks on the same video, none waiting on another.
+        const [candidateEnvelope, frameVerification] = await Promise.all([
             extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
-            getMotionScore(candidate.videoId, candidate.durationMs)
+            getFrameVerification(candidate.videoId, candidate.durationMs)
         ]);
-        if (!candidateEnvelope) continue; // this one failed to download - try the next, not a rejection
-        if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue; // couldn't sample it, or it looks like a static image - try the next
+        const row = { title: candidate.title, audioDownloaded: !!candidateEnvelope, frameCheckFailed: !!frameVerification.failed, motionScore: frameVerification.motionScore, moderationFlagged: frameVerification.moderationFlagged };
+        diag.checked.push(row);
+        if (!candidateEnvelope) { sawTransientFailure = true; continue; } // this one failed to download - try the next, not a rejection
+        if (frameVerification.failed) { sawTransientFailure = true; continue; } // frame checks couldn't run - not a rejection either
+        const { motionScore, moderationFlagged } = frameVerification;
+        // Item 5 first and unconditionally - a moderation flag rejects the
+        // candidate outright regardless of anything else, audio match
+        // included. Item 4 next: no usable frames, or it looks static.
+        if (moderationFlagged) continue;
+        if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue;
         const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+        row.audioConfidence = Math.round(confidence * 1000) / 1000;
+        row.videoLeadMs = videoLeadMs;
         if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
         if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
         return { videoId: candidate.videoId, introOffsetMs: Math.max(0, videoLeadMs), confidence };
     }
-    return null; // every reachable candidate was checked against real audio and none matched
+    // Every candidate that could be checked was checked against real audio
+    // and none matched -> a confirmed miss. But if some couldn't be checked
+    // at all (ytdl blocked, network, timeouts), we don't actually know:
+    // return undefined so nothing gets cached and it's retried later.
+    return sawTransientFailure ? undefined : null;
 }
 
 // --- Item 1: eager (queue-time) verification --------------------------------
@@ -1264,26 +1940,127 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
 // this freely - on every poll, for every track still sitting in a queue -
 // without worrying about re-triggering work or racing itself.
 const verificationInFlight = new Set();
+// Why the last verification of each track ended the way it did (filter
+// counts, per-candidate audio/motion results). In-memory only; shown as
+// `detail` by /api/music-video.
+const verificationDiagCache = new Map();
+
+// Caps how many verification pipelines run at once. Without this, a big
+// backlog hitting all at once (e.g. an existing 15-track queue seen right
+// after a server restart) fires that many simultaneous ytdl audio
+// downloads AND that many simultaneous YouTube Data API calls in the same
+// instant - exactly the traffic pattern YouTube's own bot-detection looks
+// for ("Sign in to confirm you're not a bot" errors were observed in
+// production immediately following a burst like this), and it front-loads
+// a big chunk of the daily quota budget into one moment instead of
+// spreading it out. Extra triggers beyond the cap just wait their turn in
+// a plain FIFO queue - correctness is unaffected (verificationInFlight
+// above already guarantees no duplicate work per track), this only paces
+// how many run at the same instant.
+const MV_VERIFICATION_MAX_CONCURRENT = 3;
+let mvVerificationActiveCount = 0;
+const mvVerificationQueue = [];
+
+function mvVerificationRunNext() {
+    if (mvVerificationActiveCount >= MV_VERIFICATION_MAX_CONCURRENT) return;
+    const job = mvVerificationQueue.shift();
+    if (!job) return;
+    mvVerificationActiveCount++;
+    job().finally(() => {
+        mvVerificationActiveCount--;
+        mvVerificationRunNext();
+    });
+}
+
+function mvVerificationSchedule(job) {
+    mvVerificationQueue.push(job);
+    mvVerificationRunNext();
+}
+
+// Retry pacing for verifications that couldn't reach a conclusion (quota out,
+// ytdl blocked, network trouble). Nothing is cached in that case, so without
+// pacing every 3-second display poll would re-run the whole pipeline. Backs
+// off per track: 45s, 90s, 3min ... capped at 30min. Cleared on success.
+const MV_VERIFICATION_RETRY_BASE_MS = 45000;
+const MV_VERIFICATION_RETRY_MAX_MS = 30 * 60 * 1000;
+const verificationRetryState = new Map(); // trackId -> { attempts, notBefore }
+function mvVerificationNoteInconclusive(trackId) {
+    const prev = verificationRetryState.get(trackId);
+    const attempts = (prev ? prev.attempts : 0) + 1;
+    const delay = Math.min(MV_VERIFICATION_RETRY_MAX_MS, MV_VERIFICATION_RETRY_BASE_MS * Math.pow(2, attempts - 1));
+    verificationRetryState.set(trackId, { attempts, notBefore: Date.now() + delay });
+}
+
+// A video offered with a GUESSED intro offset gets one background attempt per
+// process to measure the real offset from the audio. Never uses paid searches,
+// never runs while YouTube is throttling downloads, and only replaces the
+// guess if a real match is found - otherwise the guess stays.
+const mvUpgradeAttempted = new Set();
+function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
+    const cur = verifiedMusicVideoCache.get(trackId);
+    if (!cur || !cur.guessed || mvUpgradeAttempted.has(trackId)) return;
+    if (Date.now() < ytdlCooldownUntil || !youtubeQuotaAvailable(1)) return;
+    mvUpgradeAttempted.add(trackId);
+    const artistNames = (artistNamesRaw || '').split(',').map(x => x.trim()).filter(Boolean);
+    mvVerificationSchedule(async () => {
+        try {
+            const candidates = await youtubeFindCandidates(artistNames, '', title, durationMs, false, false);
+            const diag = {};
+            const r = await findAudioVerifiedMusicVideo(candidates, artistNames, new Set(), durationMs, title, trackId, diag, { forceAudio: true, allowPaidSearch: false });
+            const now = verifiedMusicVideoCache.get(trackId);
+            if (r && r.videoId && now && now.guessed) {
+                verifiedMusicVideoCache.set(trackId, { ...r, verified: true });
+                events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
+                console.log(`[MV-MATCH] "${title}": guessed offset replaced by measured offset ${r.introOffsetMs}ms.`);
+            }
+        } catch (e) {
+            console.error(`[MV-MATCH] Offset refinement failed for "${title}":`, e.message);
+        }
+    });
+}
+
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
     if (!trackId || !title || !durationMs) return;
+    if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
     if (verifiedMusicVideoCache.has(trackId)) return; // already resolved (a match, or confirmed no-match)
     if (verificationInFlight.has(trackId)) return; // a run for this track is already in progress
+    const retry = verificationRetryState.get(trackId);
+    if (retry && Date.now() < retry.notBefore) return; // last attempt was inconclusive - wait out the backoff
     verificationInFlight.add(trackId);
 
     const artistNames = (artistNamesRaw || '').split(',').map(s => s.trim()).filter(Boolean);
-    (async () => {
+    mvVerificationSchedule(async () => {
         try {
-            const candidates = await youtubeSearchVideos(`${artistNames.join(' ')} ${title} official music video`);
-            const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
-            if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - don't cache, so a later trigger (e.g. once the song actually starts) retries instead of getting stuck
+            const failuresBefore = youtubeFailureCount;
+            const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`, title, durationMs);
+            const diag = {};
+            const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId, diag);
+            verificationDiagCache.set(trackId, diag);
+            if (verificationDiagCache.size > 500) verificationDiagCache.delete(verificationDiagCache.keys().next().value);
+            if (result === undefined) { // couldn't verify either way (no reference audio, downloads failed) - don't cache, retry after backoff
+                mvVerificationNoteInconclusive(trackId);
+                return;
+            }
+            if (result === null && youtubeFailureCount !== failuresBefore) {
+                // "No match" reached only because YouTube lookups failed or were
+                // skipped (quota budget out, HTTP errors) - an empty candidate
+                // list is not evidence that no video exists. Caching this used to
+                // permanently (and persistently) mark the track as having no video.
+                console.warn(`[MV-MATCH] "${title}": no match, but YouTube lookups failed during this run - not caching, will retry.`);
+                mvVerificationNoteInconclusive(trackId);
+                return;
+            }
+            verificationRetryState.delete(trackId);
             verifiedMusicVideoCache.set(trackId, result);
             events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2: debounced Redis persist
+            if (result && result.guessed) mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs);
         } catch (e) {
             console.error(`[MV-MATCH] Eager verification failed for "${title}":`, e.message);
+            mvVerificationNoteInconclusive(trackId);
         } finally {
             verificationInFlight.delete(trackId);
         }
-    })();
+    });
 }
 
 // Per-event runtime state for the feature above - none of this is
@@ -1299,7 +2076,7 @@ const MUSIC_VIDEO_OFFSET_MAX_MS = 5000;
 function ensureVisualsConfigs(event) {
     if (!event.visualsConfigs || typeof event.visualsConfigs !== 'object') event.visualsConfigs = {};
     const v = event.visualsConfigs;
-    for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll']) {
+    for (const key of ['muteVisuals', 'muteAll', 'showQueue', 'musicVideosEnabled', 'musicVideoSubtitlesEnabled', 'pausedByMuteAll', 'familyModeEnabled']) {
         if (typeof v[key] !== 'boolean') v[key] = false;
     }
     // How far ahead (positive) or behind (negative) of the raw Spotify
@@ -3498,6 +4275,63 @@ app.post('/e/:slug/api/admin/visuals/toggle-mute', makeVisualsToggleRoute('muteV
 app.post('/e/:slug/api/admin/visuals/toggle-show-queue', makeVisualsToggleRoute('showQueue'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-videos', makeVisualsToggleRoute('musicVideosEnabled'));
 app.post('/e/:slug/api/admin/visuals/toggle-music-video-subtitles', makeVisualsToggleRoute('musicVideoSubtitlesEnabled'));
+app.post('/e/:slug/api/admin/visuals/toggle-family-mode', makeVisualsToggleRoute('familyModeEnabled'));
+
+// Item 8: family-mode safety lists. Deliberately global (see the comment on
+// musicVideoDenylist/musicVideoAllowlist above) - reachable from any event's
+// admin panel, same as the rest of /e/:slug/api/admin, but the effect isn't
+// scoped to that one event. GET returns both lists so the admin UI can show
+// what's already there; the POST/DELETE pairs add or remove a single track.
+app.get('/e/:slug/api/admin/visuals/family-lists', (req, res) => {
+    res.json({
+        denylist: [...musicVideoDenylist],
+        allowlist: Object.fromEntries(musicVideoAllowlist)
+    });
+});
+
+app.post('/e/:slug/api/admin/visuals/family-denylist', (req, res) => {
+    const { trackId } = req.body || {};
+    if (!trackId || typeof trackId !== 'string') return res.status(400).json({ error: 'trackId is required.' });
+    musicVideoDenylist.add(trackId);
+    // A track being denylisted always wins over a stale allow entry - remove
+    // it there too rather than leaving both lists disagreeing about the same
+    // track, which the display route above would otherwise have to arbitrate.
+    musicVideoAllowlist.delete(trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, denylist: [...musicVideoDenylist] });
+});
+
+app.delete('/e/:slug/api/admin/visuals/family-denylist/:trackId', (req, res) => {
+    musicVideoDenylist.delete(req.params.trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, denylist: [...musicVideoDenylist] });
+});
+
+// Approving a track for family mode requires the specific {videoId,
+// introOffsetMs} that's actually going to play, not just the trackId - a
+// human reviewing this is expected to be looking at verifiedMusicVideoCache's
+// existing entry for the track (or a candidate they've watched themselves)
+// and approving THAT specific video, not just green-lighting the trackId in
+// the abstract for whatever the pipeline finds later.
+app.post('/e/:slug/api/admin/visuals/family-allowlist', (req, res) => {
+    const { trackId, videoId, introOffsetMs } = req.body || {};
+    if (!trackId || typeof trackId !== 'string') return res.status(400).json({ error: 'trackId is required.' });
+    if (!videoId || typeof videoId !== 'string') return res.status(400).json({ error: 'videoId is required.' });
+    if (musicVideoDenylist.has(trackId)) return res.status(400).json({ error: 'This track is denylisted; remove it from the denylist first.' });
+    musicVideoAllowlist.set(trackId, {
+        videoId,
+        introOffsetMs: Number.isFinite(Number(introOffsetMs)) ? Number(introOffsetMs) : 0,
+        approvedAt: Date.now()
+    });
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, allowlist: Object.fromEntries(musicVideoAllowlist) });
+});
+
+app.delete('/e/:slug/api/admin/visuals/family-allowlist/:trackId', (req, res) => {
+    musicVideoAllowlist.delete(req.params.trackId);
+    events.scheduleFamilyListsSave(familyListsSnapshot);
+    res.json({ success: true, allowlist: Object.fromEntries(musicVideoAllowlist) });
+});
 
 // How far ahead/behind of the raw Spotify position the whole video stream
 // targets - see MUSIC_VIDEO_OFFSET_MIN_MS/MAX_MS. Positive moves the video
@@ -3511,6 +4345,114 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     ensureVisualsConfigs(req.event).musicVideoOffsetMs = clamped;
     events.scheduleSave(req.event.slug);
     res.json({ success: true, offsetMs: clamped });
+});
+
+// Step-by-step diagnosis of the music-video pipeline for the song playing
+// right now. Needs the admin password header, e.g.:
+//   curl -H "x-admin-password: YOURPASSWORD" "https://HOST/e/SLUG/api/admin/visuals/music-video-debug?run=1"
+// Without ?run=1 it only reports state (instant). With ?run=1 it actually runs
+// the pipeline (YouTube lookup, ytdl probe, audio download, frame check,
+// correlation) and reports exactly which step fails - can take up to a minute.
+app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
+    const event = req.event;
+    const vcfg = ensureVisualsConfigs(event);
+    const np = event.cachedNowPlaying || {};
+    const runtime = ensureMusicVideoRuntime(event);
+    let nulls = 0, matches = 0;
+    for (const v of verifiedMusicVideoCache.values()) { if (v === null) nulls++; else matches++; }
+    const out = {
+        env: { youtubeApiKeySet: !!YOUTUBE_API_KEY, ffmpegPath: ffmpegPath || null, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
+        gates: { musicVideosEnabled: vcfg.musicVideosEnabled, muteVisuals: vcfg.muteVisuals, muteAll: vcfg.muteAll, showQueue: vcfg.showQueue, familyMode: vcfg.familyModeEnabled, schedulerEnabled: !!event.musicScheduler?.enabled },
+        nowPlaying: { trackId: np.trackId || null, title: np.title || null, artist: np.artist || null, durationMs: np.durationMs || null, isPlaying: !!np.isPlaying },
+        cache: {
+            verifiedMatches: matches, verifiedNoMatch: nulls,
+            thisTrack: np.trackId ? (verifiedMusicVideoCache.has(np.trackId) ? verifiedMusicVideoCache.get(np.trackId) : 'not verified yet') : null,
+            denylisted: np.trackId ? musicVideoDenylist.has(np.trackId) : null,
+            familyModeAllowlisted: np.trackId ? musicVideoAllowlist.has(np.trackId) : null,
+            retryState: np.trackId ? (verificationRetryState.get(np.trackId) || null) : null,
+            inFlight: np.trackId ? verificationInFlight.has(np.trackId) : null,
+            eventRuntimeCache: runtime.cache
+        },
+        verificationQueue: { active: mvVerificationActiveCount, waiting: mvVerificationQueue.length, inFlightTotal: verificationInFlight.size }
+    };
+    if (req.query.run !== '1') return res.json(out);
+    if (!np.trackId || !np.title || !np.artist || !np.durationMs) { out.run = [{ step: 'abort', why: 'no complete now-playing info to test with' }]; return res.json(out); }
+
+    const steps = [];
+    out.run = steps;
+    try {
+        const artistNames = np.artist.split(',').map(x => x.trim()).filter(Boolean);
+        const failuresBefore = youtubeFailureCount;
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`, np.title, np.durationMs);
+        steps.push({ step: '1_youtube_candidates', count: candidates.length, youtubeFailuresDuringLookup: youtubeFailureCount - failuresBefore,
+            sample: candidates.slice(0, 8).map(v => ({ title: v.title, channel: v.channelTitle, durationMs: v.durationMs, id: v.videoId })) });
+
+        const core = normalizeForMatch(coreSongTitle(np.title));
+        const f1 = candidates.filter(v => !titleLooksDisqualified(v.title));
+        const f2 = f1.filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames));
+        const f3 = f2.filter(v => normalizeForMatch(v.title).includes(core));
+        const f4 = f3.filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - np.durationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS);
+        steps.push({ step: '2_filters', songCore: core, songDurationMs: np.durationMs, start: candidates.length,
+            afterNotLiveLyricAudioTitle: f1.length, afterChannelIsTheArtist: f2.length, afterTitleContainsSong: f3.length, afterDurationWithin60s: f4.length });
+
+        const probeId = (f4[0] || candidates[0] || {}).videoId;
+        if (!probeId) { steps.push({ step: 'stop', why: 'no candidate to test further' }); return res.json(out); }
+
+        try {
+            const t0 = Date.now();
+            const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${probeId}`, ytdlOpts);
+            steps.push({ step: '3_ytdl_getInfo', ok: true, ms: Date.now() - t0, formats: (info.formats || []).length });
+        } catch (e) {
+            steps.push({ step: '3_ytdl_getInfo', ok: false, error: e.message, hint: 'ytdl cannot read YouTube from this server (bot-check / outdated library). Every audio + frame check depends on this.' });
+            return res.json(out);
+        }
+
+        const t1 = Date.now();
+        const ref = await getReferenceAudioEnvelope(np.trackId, artistNames, np.title, np.durationMs);
+        steps.push({ step: '4_reference_audio', ok: !!ref, points: ref ? ref.length : 0, ms: Date.now() - t1,
+            hint: ref ? undefined : 'no reference upload found (artist "audio" upload within 4s of song length) or its download failed - videos cannot be verified without it' });
+        if (!ref) return res.json(out);
+
+        const perCandidate = [];
+        for (const c of f4.slice(0, 3)) {
+            const row = { id: c.videoId, title: c.title };
+            const env = await extractAudioEnvelope(c.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            row.audioDownloaded = !!env;
+            const fv = await computeFrameVerification(c.videoId, c.durationMs);
+            row.frames = { failed: !!fv.failed, motionScore: fv.motionScore, minRequired: MUSIC_VIDEO_MOTION_MIN_AVG_DIFF, moderationFlagged: fv.moderationFlagged };
+            if (env) {
+                const { videoLeadMs, confidence } = crossCorrelateEnvelopes(ref, env, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+                row.audioMatch = { confidence: Math.round(confidence * 1000) / 1000, needed: MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE, videoLeadMs };
+            }
+            perCandidate.push(row);
+        }
+        steps.push({ step: '5_candidates_checked', results: perCandidate });
+    } catch (e) {
+        steps.push({ step: 'error', error: e.message });
+    }
+    res.json(out);
+});
+
+// Clears music-video verification state so tracks get re-verified. By default
+// only cached "no match" entries are dropped (matches are kept); send
+// {"all": true} to drop matches too. Also clears the in-memory caches that can
+// hold a stale failure (reference audio, frame checks, artist lookups) and
+// the retry backoff, and makes this event's current song re-check right away.
+app.post('/e/:slug/api/admin/visuals/music-video-cache/clear', (req, res) => {
+    const all = !!(req.body && req.body.all === true);
+    let removed = 0;
+    for (const [trackId, result] of [...verifiedMusicVideoCache.entries()]) {
+        if (all || result === null) { verifiedMusicVideoCache.delete(trackId); removed++; }
+    }
+    referenceAudioEnvelopeCache.clear();
+    frameVerificationCache.clear();
+    artistUploadsListCache.clear();
+    for (const [k, v] of [...artistChannelCache.entries()]) { if (v === null) artistChannelCache.delete(k); }
+    verificationRetryState.clear();
+    const runtime = ensureMusicVideoRuntime(req.event);
+    runtime.cache = { trackId: runtime.cache && runtime.cache.trackId || null, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
+    events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
+    res.json({ success: true, removed, remaining: verifiedMusicVideoCache.size });
 });
 
 // Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
@@ -4152,7 +5094,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
     // ambient poll applies the black-out or the queue board.
-    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json({ ...emptyResponse, override: true });
+    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json({ ...emptyResponse, override: true, reason: 'admin_override_mute_or_show_queue_is_on' });
 
     // Admin -> Settings -> Content -> Music Videos forces a video attempt for
     // every song, ignoring the scheduler. With it off, only an active Music
@@ -4172,19 +5114,19 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
 
     let rule = null;
     if (!forceVideos && !committed) {
-        if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
+        if (!event.musicScheduler?.enabled) return res.json({ ...emptyResponse, reason: 'videos_toggle_off_and_scheduler_disabled' });
         rule = getActiveMusicVideoRule(event);
         if (!rule) {
             // No Music Videos block covers this moment - reset so the NEXT
             // block this event runs into always starts on a video slot, not
             // however far a previous block's pattern happened to have gotten.
             runtime.lastActiveRuleId = undefined;
-            return res.json(emptyResponse);
+            return res.json({ ...emptyResponse, reason: 'no_active_music_video_block_in_scheduler' });
         }
     }
 
     if (!np || !np.trackId || !np.title || !np.artist) {
-        return res.json({ ...emptyResponse, enabled: true });
+        return res.json({ ...emptyResponse, enabled: true, reason: 'no_now_playing_info_from_spotify' });
     }
 
 
@@ -4216,7 +5158,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 videoOffsetMs: vcfg.musicVideoOffsetMs
             });
         }
-        return res.json({ ...emptyResponse, enabled: true });
+        return res.json({ ...emptyResponse, enabled: true, reason: 'spotify_reports_not_playing' });
     }
 
     // A different block became active since the last poll (or this is the
@@ -4244,7 +5186,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     if (!forceVideos && !committed && (runtime.cycleCount % cycleLength) >= videosInARow) {
         // This song lands on a "visuals" slot in the pattern - hand back
         // to Ambient Visuals without spending a YouTube search on it.
-        return res.json({ ...emptyResponse, enabled: true, matched: false });
+        return res.json({ ...emptyResponse, enabled: true, matched: false, reason: 'pattern_says_this_song_is_a_visuals_slot' });
     }
 
     // Check the verified cache fresh once per track (cached across the rest
@@ -4267,6 +5209,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             // everyone, but the local exclude-list check here closes the
             // gap for the moment in between.
             const cached = verifiedMusicVideoCache.get(np.trackId);
+            if (cached && cached.guessed) mvMaybeUpgradeGuess(np.trackId, np.artist, np.title, np.durationMs);
             runtime.cache = {
                 trackId: np.trackId, searchedTrackId: np.trackId,
                 matched: !!cached, videoId: cached ? cached.videoId : null,
@@ -4283,16 +5226,66 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             // an eager run for this track is already in flight; if it
             // resolves before the song ends, the next poll picks it up from
             // the cache branch above.
-            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
+            // searchedTrackId stays null on purpose: this poll has no verified
+            // answer yet, so every following poll must re-check the cache.
+            // (It used to be set to np.trackId here, which made this branch
+            // run once per song - a verification finishing a few seconds after
+            // the song started was then never picked up, even though the
+            // comment above says the next poll would.)
+            runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
             triggerMusicVideoVerification(np.trackId, np.artist, np.title, np.durationMs, excludeVideoIds);
+        }
+
+        // Item 8: the denylist is a hard block regardless of family mode -
+        // covers a track that was verified and cached BEFORE it was added to
+        // the denylist (triggerMusicVideoVerification only stops NEW checks,
+        // it can't retroactively un-cache one that already resolved).
+        // Family mode's allowlist only matters when the event has it on: with
+        // it on, a track's video plays ONLY if a human has already approved
+        // it here, regardless of what the automated pipeline concluded -
+        // deliberately stricter than the normal "show unless rejected"
+        // default, since automated moderation alone isn't a strong enough
+        // guarantee for that audience (see the comment on musicVideoAllowlist
+        // above).
+        if (runtime.cache.matched) {
+            if (musicVideoDenylist.has(np.trackId)) {
+                runtime.cache.matched = false;
+                runtime.cache.videoId = null;
+                runtime.cache.blockedBy = 'denylist';
+            } else if (vcfg.familyModeEnabled && !musicVideoAllowlist.has(np.trackId)) {
+                runtime.cache.matched = false;
+                runtime.cache.videoId = null;
+                runtime.cache.blockedBy = 'family_mode_not_allowlisted';
+            }
         }
     }
 
+    // Plain-English explanation of why there's no video, so "nothing shows"
+    // can be diagnosed by just opening this route in a browser mid-song.
+    let mvReason = 'matched';
+    if (!runtime.cache.matched) {
+        const retry = verificationRetryState.get(np.trackId);
+        if (runtime.cache.blockedBy) mvReason = runtime.cache.blockedBy;
+        else if (verifiedMusicVideoCache.has(np.trackId) && verifiedMusicVideoCache.get(np.trackId) === null) mvReason = 'verified_no_video_passed_all_checks';
+        else if (verificationInFlight.has(np.trackId)) mvReason = 'verification_running_now';
+        else if (retry) mvReason = `verification_inconclusive_retrying (attempt ${retry.attempts}, next try in ${Math.max(0, Math.round((retry.notBefore - Date.now()) / 1000))}s) - check server logs for [MV-MATCH]/[MUSIC VIDEO] errors`;
+        else mvReason = 'verification_waiting_to_start';
+    }
+    // The offset is read fresh from the verified cache on every poll so a
+    // measured offset (see mvMaybeUpgradeGuess) replaces a guessed one while
+    // the video is already playing - the display applies introOffsetMs live.
+    const vcNow = verifiedMusicVideoCache.get(np.trackId);
+    const offsetFromCache = !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
+    const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
+        offsetSource: !runtime.cache.matched ? 'none' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
+        reason: mvReason,
+        detail: runtime.cache.matched ? undefined : verificationDiagCache.get(np.trackId),
+        youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
-        introOffsetMs: runtime.cache.introOffsetMs || 0,
+        introOffsetMs: mvOffsetNow,
         trackId: np.trackId,
         progressMs: np.progressMs,
         durationMs: np.durationMs,
@@ -4375,6 +5368,7 @@ app.get('*', (req, res) => {
 async function shutdown() {
     await events.flushAllSaves();
     await events.flushMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2
+    await events.flushFamilyListsSave(familyListsSnapshot); // item 8
     process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -4397,12 +5391,29 @@ app.listen(PORT, async () => {
     // before the server is actually accepting requests.
     try {
         const persisted = await events.loadMusicVideoCache();
+        const needsNullPurge = persisted[MV_CACHE_SCHEMA_KEY] !== MV_CACHE_SCHEMA_VERSION;
+        let purgedNulls = 0;
         for (const [trackId, result] of Object.entries(persisted)) {
+            if (trackId === MV_CACHE_SCHEMA_KEY) continue;
+            if (needsNullPurge && result === null) { purgedNulls++; continue; }
             verifiedMusicVideoCache.set(trackId, result);
         }
-        console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.`);
+        console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.` +
+            (needsNullPurge ? ` Dropped ${purgedNulls} legacy "no match" entr${purgedNulls === 1 ? 'y' : 'ies'} (may have been recorded during quota/ytdl failures) - they will be re-verified.` : ''));
+        if (needsNullPurge) events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
     } catch (err) {
         console.error('[SERVER] Failed to load persisted music-video cache:', err.message);
+    }
+    // Item 8: seed the denylist/allowlist the same way, before anything else
+    // runs - a track shouldn't be able to slip past a restart-cleared
+    // denylist for even one request.
+    try {
+        const persisted = await events.loadFamilyLists();
+        for (const trackId of persisted.denylist) musicVideoDenylist.add(trackId);
+        for (const [trackId, entry] of Object.entries(persisted.allowlist)) musicVideoAllowlist.set(trackId, entry);
+        console.log(`[SERVER] Loaded family-mode lists from Redis: ${musicVideoDenylist.size} denylisted, ${musicVideoAllowlist.size} allowlisted.`);
+    } catch (err) {
+        console.error('[SERVER] Failed to load persisted family-mode lists:', err.message);
     }
     await getSpotifyToken();
 });
