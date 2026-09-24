@@ -1023,7 +1023,9 @@ async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle, song
         };
         if (!core || cheap.some(usable)) return cheap;
     }
-    return youtubeSearchVideos(fallbackQuery);
+    const searched = await youtubeSearchVideos(fallbackQuery);
+    searched.fromSearch = true;
+    return searched;
 }
 
 // Raw YouTube Data API v3 text search, restricted to embeddable videos.
@@ -1617,7 +1619,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 5; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
+const MV_CACHE_SCHEMA_VERSION = 6; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1663,28 +1665,51 @@ function familyListsSnapshot() {
 // because there's nothing worth watching, but it's exactly what we want as
 // a REFERENCE, since it's the most likely upload to be an untouched rip of
 // the actual master rather than a re-cut video edit.
-async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs) {
-    if (referenceAudioEnvelopeCache.has(trackId)) return referenceAudioEnvelopeCache.get(trackId);
+async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs, diag = {}) {
+    if (referenceAudioEnvelopeCache.has(trackId)) {
+        const cached = referenceAudioEnvelopeCache.get(trackId);
+        diag.referenceWhy = cached ? 'cached' : 'cached: no usable reference upload exists for this song';
+        return cached;
+    }
     let result = null;
     let lookupFailed = false;
+    diag.referenceTried = [];
     const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`, title, durationMs, true);
-        const eligible = candidates
+        const pickEligible = list => list
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
             .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS)
             .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
-        if (eligible.length > 0) {
-            result = await extractAudioEnvelope(eligible[0].videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
-            if (!result) lookupFailed = true; // download/decode failed - a broken ytdl isn't proof there's no reference
+        const query = `${artistNames.join(' ')} ${title} audio`;
+        const candidates = await youtubeFindCandidates(artistNames, query, title, durationMs, true);
+        let eligible = pickEligible(candidates);
+        diag.referenceEligibleFromArtistUploads = eligible.length;
+        if (eligible.length === 0 && !candidates.fromSearch) {
+            // The artist's own channel has no upload of this song at the right
+            // length - look wider (auto-generated "Topic" uploads, VEVO
+            // audio, etc. still carry the artist's name in the channel title).
+            const searched = await youtubeSearchVideos(query);
+            eligible = pickEligible(searched);
+            diag.referenceEligibleFromSearch = eligible.length;
         }
+        // Try a few, not just the first - one broken download shouldn't
+        // decide there is no reference.
+        for (const ref of eligible.slice(0, 3)) {
+            const env = await extractAudioEnvelope(ref.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            diag.referenceTried.push({ title: ref.title, channel: ref.channelTitle, downloaded: !!env });
+            if (env) { result = env; break; }
+        }
+        if (!result && eligible.length > 0) lookupFailed = true; // download/decode failed - a broken ytdl isn't proof there's no reference
     } catch (e) {
         console.error(`[MV-MATCH] Reference audio lookup failed for "${title}":`, e.message);
         lookupFailed = true;
     }
     if (youtubeFailureCount !== failuresBefore) lookupFailed = true; // the YouTube search/lookups themselves failed
+    diag.referenceWhy = result ? 'ok'
+        : lookupFailed ? 'lookup or download failed (YouTube API error, or ytdl blocked) - will retry'
+        : 'no upload with the song name, from the artist, within 4s of its length';
     // Only a genuine "no usable reference exists" is remembered. A failure
     // (quota out, ytdl blocked, network) used to be cached as null for the
     // life of the process, which silently disabled verification for this
@@ -1726,6 +1751,9 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     diag.afterTitleNamesSong = namesSong.length;
     diag.afterLengthWithin60s = rightLength.length;
     diag.sampleOfCandidates = candidates.slice(0, 6).map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
+    diag.songDurationSec = Math.round(trackDurationMs / 1000);
+    diag.candidatesNamingTheSong = fromArtist.filter(v => normalizeForMatch(v.title).includes(trackCore)).slice(0, 6)
+        .map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
     diag.checked = [];
 
     if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
@@ -1736,7 +1764,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     // "no match" - see the return at the bottom.
     let sawTransientFailure = false;
 
-    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
+    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag);
     diag.referenceAudioFound = !!refEnvelope;
     if (!refEnvelope) {
         // No reference audio to compare against (most songs have no "audio"
@@ -1749,7 +1777,12 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         // and a video that turns out not to track gets reported and dropped
         // (see /sync-failed) like any other. Still requires that it isn't a
         // static image / flagged frame when those checks can run.
+        if (ranked[0]) {
+            try { await ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`); diag.ytdlProbe = 'ok'; }
+            catch (e) { diag.ytdlProbe = 'FAILED: ' + String(e.message).slice(0, 200); }
+        }
         const tight = ranked.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
+        diag.durationOnlyCandidates = tight.length;
         for (const c of tight) {
             const fv = await getFrameVerification(c.videoId, c.durationMs);
             diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
