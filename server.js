@@ -734,6 +734,19 @@ function youtubeQuotaAvailable(units) {
     return (youtubeQuotaUsedToday + units) <= (YOUTUBE_DAILY_QUOTA_BUDGET - margin);
 }
 
+// Counts every moment a YouTube lookup FAILED or was SKIPPED (quota budget out,
+// HTTP error, network error, missing key). An empty result that follows any
+// of these is "we couldn't ask", not "there's nothing there" - callers snapshot
+// this before a lookup and compare after, and must never cache or persist a
+// "no match" conclusion if it moved. (Being global, an unrelated failure in a
+// concurrent lookup can also move it - that only errs toward "retry later",
+// never toward wrongly caching a miss.)
+let youtubeFailureCount = 0;
+function youtubeNoteFailure(reason) {
+    youtubeFailureCount++;
+    console.warn(`[MUSIC VIDEO] YouTube lookup failed/skipped (${reason}) - result will not be cached as a miss.`);
+}
+
 function youtubeQuotaRecord(units, callType, detail) {
     youtubeQuotaRolloverIfNeeded();
     youtubeQuotaUsedToday += units;
@@ -762,15 +775,17 @@ async function youtubeFetchWithBackoff(url, maxRetries = 2) {
 // both the search.list path and the new cheap artist-uploads path below can
 // share this exact 1-unit lookup instead of each keeping their own copy.
 async function youtubeFetchDurations(videoIds) {
-    if (videoIds.length === 0 || !youtubeQuotaAvailable(1)) return new Map();
+    if (videoIds.length === 0) return new Map();
+    if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('videos.list skipped, quota budget exhausted'); return new Map(); }
     try {
         const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(',')}&key=${YOUTUBE_API_KEY}`);
         youtubeQuotaRecord(1, 'videos.list', `${videoIds.length} video(s), duration lookup`);
-        if (!res.ok) return new Map();
+        if (!res.ok) { youtubeNoteFailure(`videos.list returned ${res.status}`); return new Map(); }
         const data = await res.json();
         return new Map((data.items || []).map(i => [i.id, parseIsoDurationMs(i.contentDetails?.duration)]));
     } catch (e) {
         console.error('[MUSIC VIDEO] YouTube duration lookup failed:', e.message);
+        youtubeNoteFailure('videos.list threw');
         return new Map();
     }
 }
@@ -802,7 +817,7 @@ async function tryResolveChannelByHandle(artistName) {
     if (!slug) return null;
     const key = normalizeForMatch(artistName);
     for (const handle of [slug, `${slug}vevo`]) {
-        if (!youtubeQuotaAvailable(1)) return null;
+        if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('channels.list skipped, quota budget exhausted'); return null; }
         try {
             const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&forHandle=${encodeURIComponent('@' + handle)}&key=${YOUTUBE_API_KEY}`);
             youtubeQuotaRecord(1, 'channels.list', `handle guess "@${handle}" for "${artistName}"`);
@@ -812,9 +827,12 @@ async function tryResolveChannelByHandle(artistName) {
                 if (item && normalizeForMatch(item.snippet?.title || '').includes(key)) {
                     return item.contentDetails?.relatedPlaylists?.uploads || null;
                 }
+            } else {
+                youtubeNoteFailure(`channels.list returned ${res.status}`);
             }
         } catch (e) {
             console.error(`[MUSIC VIDEO] Handle guess "@${handle}" failed for "${artistName}":`, e.message);
+            youtubeNoteFailure('channels.list threw');
         }
     }
     return null;
@@ -843,11 +861,11 @@ const artistUploadsListCache = new Map(); // uploadsPlaylistId -> { videos, fetc
 const artistUploadsListInFlight = new Map(); // uploadsPlaylistId -> Promise<videos>
 
 async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults) {
-    if (!youtubeQuotaAvailable(1)) return [];
+    if (!youtubeQuotaAvailable(1)) { youtubeNoteFailure('playlistItems.list skipped, quota budget exhausted'); return []; }
     try {
         const res = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=${maxResults}&playlistId=${uploadsPlaylistId}&key=${YOUTUBE_API_KEY}`);
         youtubeQuotaRecord(1, 'playlistItems.list', `uploads for "${artistName}"`);
-        if (!res.ok) return [];
+        if (!res.ok) { youtubeNoteFailure(`playlistItems.list returned ${res.status}`); return []; }
         const data = await res.json();
         const videos = (data.items || [])
             .map(item => ({
@@ -864,6 +882,7 @@ async function fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults)
         return videos;
     } catch (e) {
         console.error(`[MUSIC VIDEO] Artist-uploads lookup failed for "${artistName}":`, e.message);
+        youtubeNoteFailure('playlistItems.list threw');
         return [];
     }
 }
@@ -889,8 +908,15 @@ async function youtubeListArtistUploads(artistNames, maxResults = 25) {
 
         let promise = artistUploadsListInFlight.get(uploadsPlaylistId);
         if (!promise) {
+            const failuresBefore = youtubeFailureCount;
             promise = fetchArtistUploadsList(uploadsPlaylistId, artistName, maxResults).then(videos => {
-                artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
+                // A list fetched during a failure (quota out, HTTP error, or
+                // durations missing) is incomplete - don't let it sit in the
+                // cache for the TTL and keep every track by this artist
+                // looking like it has no usable video.
+                if (youtubeFailureCount === failuresBefore) {
+                    artistUploadsListCache.set(uploadsPlaylistId, { videos, fetchedAt: Date.now() });
+                }
                 return videos;
             });
             artistUploadsListInFlight.set(uploadsPlaylistId, promise);
@@ -910,11 +936,14 @@ async function resolveArtistUploadsPlaylistId(artistName) {
     if (artistChannelInFlight.has(key)) return artistChannelInFlight.get(key);
 
     const promise = (async () => {
+        const failuresBefore = youtubeFailureCount;
         let uploadsPlaylistId = await tryResolveChannelByHandle(artistName);
         try {
+            if (!uploadsPlaylistId && !youtubeQuotaAvailable(100)) youtubeNoteFailure('channel search.list skipped, quota budget exhausted');
             if (!uploadsPlaylistId && youtubeQuotaAvailable(100)) {
                 const searchRes = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=3&q=${encodeURIComponent(artistName + ' official')}&key=${YOUTUBE_API_KEY}`);
                 youtubeQuotaRecord(100, 'search.list', `channel lookup for "${artistName}"`);
+                if (!searchRes.ok) youtubeNoteFailure(`channel search.list returned ${searchRes.status}`);
                 if (searchRes.ok) {
                     const searchData = await searchRes.json();
                     const candidateId = (searchData.items || [])
@@ -926,17 +955,25 @@ async function resolveArtistUploadsPlaylistId(artistName) {
                         if (channelRes.ok) {
                             const channelData = await channelRes.json();
                             uploadsPlaylistId = channelData.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null;
+                        } else {
+                            youtubeNoteFailure(`channels.list returned ${channelRes.status}`);
                         }
                     }
                 }
             }
         } catch (e) {
             console.error(`[MUSIC VIDEO] Channel resolution failed for "${artistName}":`, e.message);
+            youtubeNoteFailure('channel resolution threw');
         }
         // Cache the miss too, not just a hit - an artist with no confidently
         // identifiable channel shouldn't cost a fresh search.list on every
         // single track of theirs that ever gets requested.
-        artistChannelCache.set(key, uploadsPlaylistId);
+        // ...but only a REAL miss. A miss recorded while the quota was out
+        // (or a request failed) would otherwise stick for the life of the
+        // process, long after the quota resets.
+        if (uploadsPlaylistId || youtubeFailureCount === failuresBefore) {
+            artistChannelCache.set(key, uploadsPlaylistId);
+        }
         return uploadsPlaylistId;
     })();
 
@@ -968,10 +1005,12 @@ async function youtubeFindCandidates(artistNames, fallbackQuery) {
 async function youtubeSearchVideos(query, maxResults = 10) {
     if (!YOUTUBE_API_KEY) {
         console.error('[MUSIC VIDEO] YOUTUBE_API_KEY is not set - skipping search.');
+        youtubeNoteFailure('YOUTUBE_API_KEY not set');
         return [];
     }
     if (!youtubeQuotaAvailable(100)) {
         console.warn(`[MUSIC VIDEO] Skipping search.list for "${query}" - daily YouTube quota budget exhausted, falling back to ambient visuals for this track.`);
+        youtubeNoteFailure('search.list skipped, quota budget exhausted');
         return [];
     }
     try {
@@ -981,6 +1020,7 @@ async function youtubeSearchVideos(query, maxResults = 10) {
         if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.error(`[MUSIC VIDEO] YouTube search returned ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
+            youtubeNoteFailure(`search.list returned ${res.status}`);
             return [];
         }
         const data = await res.json();
@@ -1003,6 +1043,7 @@ async function youtubeSearchVideos(query, maxResults = 10) {
         return videos;
     } catch (e) {
         console.error('[MUSIC VIDEO] YouTube search failed:', e.message);
+        youtubeNoteFailure('search.list threw');
         return [];
     }
 }
@@ -1448,14 +1489,14 @@ async function computeFrameVerification(videoId, durationMs) {
         info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
     } catch (e) {
         console.error(`[MV-MATCH] Could not fetch video info for frame checks on ${videoId}:`, e.message);
-        return { motionScore: null, moderationFlagged: false };
+        return { motionScore: null, moderationFlagged: false, failed: true }; // couldn't RUN the check - not evidence about the video
     }
     // Only pixels matter here - grab the smallest video stream available
     // rather than spending bandwidth on a high-res one just to immediately
     // downscale everything pulled from it.
     const format = ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'videoandaudio' })
         || ytdl.chooseFormat(info.formats, { quality: 'lowest', filter: 'video' });
-    if (!format || !format.url) return { motionScore: null, moderationFlagged: false };
+    if (!format || !format.url) return { motionScore: null, moderationFlagged: false, failed: true };
 
     const durationSec = durationMs / 1000;
     const timestamps = [];
@@ -1470,6 +1511,14 @@ async function computeFrameVerification(videoId, durationMs) {
     // this replaces what would otherwise be two separate sampling passes
     // (one for item 4, one for item 5).
     const frames = (await Promise.all(timestamps.map(t => grabFramePairAt(format.url, t)))).filter(Boolean);
+
+    // Fewer than two frames means the sampling itself failed (ytdl/ffmpeg
+    // errors, timeouts) - there's nothing to diff, and that says nothing
+    // about whether the video is static.
+    if (frames.length < 2) {
+        console.error(`[MV-MATCH] Frame sampling produced ${frames.length} usable frame(s) for ${videoId} - treating the check as failed, not as a rejection.`);
+        return { motionScore: null, moderationFlagged: false, failed: true };
+    }
 
     const motionScore = averageConsecutiveFrameDiff(frames.map(f => f.gray));
 
@@ -1497,7 +1546,7 @@ async function computeFrameVerification(videoId, durationMs) {
 async function getFrameVerification(videoId, durationMs) {
     if (frameVerificationCache.has(videoId)) return frameVerificationCache.get(videoId);
     const result = await computeFrameVerification(videoId, durationMs);
-    frameVerificationCache.set(videoId, result);
+    if (!result.failed) frameVerificationCache.set(videoId, result); // never cache a check that couldn't run
     return result;
 }
 
@@ -1530,8 +1579,15 @@ const verifiedMusicVideoCache = new Map();
 // loadMusicVideoCache/scheduleMusicVideoCacheSave in eventStore.js). Read
 // fresh at write time by the debounce in eventStore, not snapshotted here -
 // see that function's own comment for why.
+// Persisted snapshots are stamped with a schema version. Snapshots written
+// before the version existed (or by older code) may contain `null` entries
+// that were really "the lookup failed" (quota out, ytdl blocked) recorded as
+// "no video exists" - on load those are dropped once so the tracks get
+// re-verified. Matches (non-null) are always kept.
+const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
+const MV_CACHE_SCHEMA_VERSION = 2;
 function musicVideoCacheSnapshot() {
-    return Object.fromEntries(verifiedMusicVideoCache);
+    return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
 
 // --- Item 8: family-mode safety lists ---------------------------------------
@@ -1578,6 +1634,8 @@ function familyListsSnapshot() {
 async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs) {
     if (referenceAudioEnvelopeCache.has(trackId)) return referenceAudioEnvelopeCache.get(trackId);
     let result = null;
+    let lookupFailed = false;
+    const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
         const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} audio`);
@@ -1588,11 +1646,18 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
             .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
         if (eligible.length > 0) {
             result = await extractAudioEnvelope(eligible[0].videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            if (!result) lookupFailed = true; // download/decode failed - a broken ytdl isn't proof there's no reference
         }
     } catch (e) {
         console.error(`[MV-MATCH] Reference audio lookup failed for "${title}":`, e.message);
+        lookupFailed = true;
     }
-    referenceAudioEnvelopeCache.set(trackId, result);
+    if (youtubeFailureCount !== failuresBefore) lookupFailed = true; // the YouTube search/lookups themselves failed
+    // Only a genuine "no usable reference exists" is remembered. A failure
+    // (quota out, ytdl blocked, network) used to be cached as null for the
+    // life of the process, which silently disabled verification for this
+    // track until a restart.
+    if (!lookupFailed) referenceAudioEnvelopeCache.set(trackId, result);
     return result;
 }
 
@@ -1620,7 +1685,13 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         .sort((a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs))
         .slice(0, MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY);
 
-    if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match"
+    if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
+
+    // Set whenever a candidate couldn't be CHECKED (download failed, frame
+    // sampling failed) as opposed to being checked and found wanting. If no
+    // candidate matches and this is set, the honest answer is "unknown", not
+    // "no match" - see the return at the bottom.
+    let sawTransientFailure = false;
 
     const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs);
     if (!refEnvelope) return undefined; // couldn't establish ground truth - stay agnostic, don't reject
@@ -1633,7 +1704,8 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
             extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
             getFrameVerification(candidate.videoId, candidate.durationMs)
         ]);
-        if (!candidateEnvelope) continue; // this one failed to download - try the next, not a rejection
+        if (!candidateEnvelope) { sawTransientFailure = true; continue; } // this one failed to download - try the next, not a rejection
+        if (frameVerification.failed) { sawTransientFailure = true; continue; } // frame checks couldn't run - not a rejection either
         const { motionScore, moderationFlagged } = frameVerification;
         // Item 5 first and unconditionally - a moderation flag rejects the
         // candidate outright regardless of anything else, audio match
@@ -1645,7 +1717,11 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
         return { videoId: candidate.videoId, introOffsetMs: Math.max(0, videoLeadMs), confidence };
     }
-    return null; // every reachable candidate was checked against real audio and none matched
+    // Every candidate that could be checked was checked against real audio
+    // and none matched -> a confirmed miss. But if some couldn't be checked
+    // at all (ytdl blocked, network, timeouts), we don't actually know:
+    // return undefined so nothing gets cached and it's retried later.
+    return sawTransientFailure ? undefined : null;
 }
 
 // --- Item 1: eager (queue-time) verification --------------------------------
@@ -1698,23 +1774,54 @@ function mvVerificationSchedule(job) {
     mvVerificationRunNext();
 }
 
+// Retry pacing for verifications that couldn't reach a conclusion (quota out,
+// ytdl blocked, network trouble). Nothing is cached in that case, so without
+// pacing every 3-second display poll would re-run the whole pipeline. Backs
+// off per track: 45s, 90s, 3min ... capped at 30min. Cleared on success.
+const MV_VERIFICATION_RETRY_BASE_MS = 45000;
+const MV_VERIFICATION_RETRY_MAX_MS = 30 * 60 * 1000;
+const verificationRetryState = new Map(); // trackId -> { attempts, notBefore }
+function mvVerificationNoteInconclusive(trackId) {
+    const prev = verificationRetryState.get(trackId);
+    const attempts = (prev ? prev.attempts : 0) + 1;
+    const delay = Math.min(MV_VERIFICATION_RETRY_MAX_MS, MV_VERIFICATION_RETRY_BASE_MS * Math.pow(2, attempts - 1));
+    verificationRetryState.set(trackId, { attempts, notBefore: Date.now() + delay });
+}
+
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
     if (!trackId || !title || !durationMs) return;
     if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
     if (verifiedMusicVideoCache.has(trackId)) return; // already resolved (a match, or confirmed no-match)
     if (verificationInFlight.has(trackId)) return; // a run for this track is already in progress
+    const retry = verificationRetryState.get(trackId);
+    if (retry && Date.now() < retry.notBefore) return; // last attempt was inconclusive - wait out the backoff
     verificationInFlight.add(trackId);
 
     const artistNames = (artistNamesRaw || '').split(',').map(s => s.trim()).filter(Boolean);
     mvVerificationSchedule(async () => {
         try {
+            const failuresBefore = youtubeFailureCount;
             const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${title} official music video`);
             const result = await findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, durationMs, title, trackId);
-            if (result === undefined) return; // couldn't verify either way (no reference audio, downloads failed) - don't cache, so a later trigger (e.g. once the song actually starts) retries instead of getting stuck
+            if (result === undefined) { // couldn't verify either way (no reference audio, downloads failed) - don't cache, retry after backoff
+                mvVerificationNoteInconclusive(trackId);
+                return;
+            }
+            if (result === null && youtubeFailureCount !== failuresBefore) {
+                // "No match" reached only because YouTube lookups failed or were
+                // skipped (quota budget out, HTTP errors) - an empty candidate
+                // list is not evidence that no video exists. Caching this used to
+                // permanently (and persistently) mark the track as having no video.
+                console.warn(`[MV-MATCH] "${title}": no match, but YouTube lookups failed during this run - not caching, will retry.`);
+                mvVerificationNoteInconclusive(trackId);
+                return;
+            }
+            verificationRetryState.delete(trackId);
             verifiedMusicVideoCache.set(trackId, result);
             events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2: debounced Redis persist
         } catch (e) {
             console.error(`[MV-MATCH] Eager verification failed for "${title}":`, e.message);
+            mvVerificationNoteInconclusive(trackId);
         } finally {
             verificationInFlight.delete(trackId);
         }
@@ -4005,6 +4112,28 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     res.json({ success: true, offsetMs: clamped });
 });
 
+// Clears music-video verification state so tracks get re-verified. By default
+// only cached "no match" entries are dropped (matches are kept); send
+// {"all": true} to drop matches too. Also clears the in-memory caches that can
+// hold a stale failure (reference audio, frame checks, artist lookups) and
+// the retry backoff, and makes this event's current song re-check right away.
+app.post('/e/:slug/api/admin/visuals/music-video-cache/clear', (req, res) => {
+    const all = !!(req.body && req.body.all === true);
+    let removed = 0;
+    for (const [trackId, result] of [...verifiedMusicVideoCache.entries()]) {
+        if (all || result === null) { verifiedMusicVideoCache.delete(trackId); removed++; }
+    }
+    referenceAudioEnvelopeCache.clear();
+    frameVerificationCache.clear();
+    artistUploadsListCache.clear();
+    for (const [k, v] of [...artistChannelCache.entries()]) { if (v === null) artistChannelCache.delete(k); }
+    verificationRetryState.clear();
+    const runtime = ensureMusicVideoRuntime(req.event);
+    runtime.cache = { trackId: runtime.cache && runtime.cache.trackId || null, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
+    events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
+    res.json({ success: true, removed, remaining: verifiedMusicVideoCache.size });
+});
+
 // Mute All = Mute Visuals + pause Spotify. Switching it back off resumes
 // playback, but only if this toggle was the thing that paused it.
 app.post('/e/:slug/api/admin/visuals/toggle-mute-all', async (req, res) => {
@@ -4775,7 +4904,13 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             // an eager run for this track is already in flight; if it
             // resolves before the song ends, the next poll picks it up from
             // the cache branch above.
-            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
+            // searchedTrackId stays null on purpose: this poll has no verified
+            // answer yet, so every following poll must re-check the cache.
+            // (It used to be set to np.trackId here, which made this branch
+            // run once per song - a verification finishing a few seconds after
+            // the song started was then never picked up, even though the
+            // comment above says the next poll would.)
+            runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
             triggerMusicVideoVerification(np.trackId, np.artist, np.title, np.durationMs, excludeVideoIds);
         }
 
@@ -4911,10 +5046,16 @@ app.listen(PORT, async () => {
     // before the server is actually accepting requests.
     try {
         const persisted = await events.loadMusicVideoCache();
+        const needsNullPurge = persisted[MV_CACHE_SCHEMA_KEY] !== MV_CACHE_SCHEMA_VERSION;
+        let purgedNulls = 0;
         for (const [trackId, result] of Object.entries(persisted)) {
+            if (trackId === MV_CACHE_SCHEMA_KEY) continue;
+            if (needsNullPurge && result === null) { purgedNulls++; continue; }
             verifiedMusicVideoCache.set(trackId, result);
         }
-        console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.`);
+        console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.` +
+            (needsNullPurge ? ` Dropped ${purgedNulls} legacy "no match" entr${purgedNulls === 1 ? 'y' : 'ies'} (may have been recorded during quota/ytdl failures) - they will be re-verified.` : ''));
+        if (needsNullPurge) events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
     } catch (err) {
         console.error('[SERVER] Failed to load persisted music-video cache:', err.message);
     }
