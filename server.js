@@ -4112,6 +4112,92 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     res.json({ success: true, offsetMs: clamped });
 });
 
+// Step-by-step diagnosis of the music-video pipeline for the song playing
+// right now. Needs the admin password header, e.g.:
+//   curl -H "x-admin-password: YOURPASSWORD" "https://HOST/e/SLUG/api/admin/visuals/music-video-debug?run=1"
+// Without ?run=1 it only reports state (instant). With ?run=1 it actually runs
+// the pipeline (YouTube lookup, ytdl probe, audio download, frame check,
+// correlation) and reports exactly which step fails - can take up to a minute.
+app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
+    const event = req.event;
+    const vcfg = ensureVisualsConfigs(event);
+    const np = event.cachedNowPlaying || {};
+    const runtime = ensureMusicVideoRuntime(event);
+    let nulls = 0, matches = 0;
+    for (const v of verifiedMusicVideoCache.values()) { if (v === null) nulls++; else matches++; }
+    const out = {
+        env: { youtubeApiKeySet: !!YOUTUBE_API_KEY, ffmpegPath: ffmpegPath || null, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
+        gates: { musicVideosEnabled: vcfg.musicVideosEnabled, muteVisuals: vcfg.muteVisuals, muteAll: vcfg.muteAll, showQueue: vcfg.showQueue, familyMode: vcfg.familyModeEnabled, schedulerEnabled: !!event.musicScheduler?.enabled },
+        nowPlaying: { trackId: np.trackId || null, title: np.title || null, artist: np.artist || null, durationMs: np.durationMs || null, isPlaying: !!np.isPlaying },
+        cache: {
+            verifiedMatches: matches, verifiedNoMatch: nulls,
+            thisTrack: np.trackId ? (verifiedMusicVideoCache.has(np.trackId) ? verifiedMusicVideoCache.get(np.trackId) : 'not verified yet') : null,
+            denylisted: np.trackId ? musicVideoDenylist.has(np.trackId) : null,
+            familyModeAllowlisted: np.trackId ? musicVideoAllowlist.has(np.trackId) : null,
+            retryState: np.trackId ? (verificationRetryState.get(np.trackId) || null) : null,
+            inFlight: np.trackId ? verificationInFlight.has(np.trackId) : null,
+            eventRuntimeCache: runtime.cache
+        },
+        verificationQueue: { active: mvVerificationActiveCount, waiting: mvVerificationQueue.length, inFlightTotal: verificationInFlight.size }
+    };
+    if (req.query.run !== '1') return res.json(out);
+    if (!np.trackId || !np.title || !np.artist || !np.durationMs) { out.run = [{ step: 'abort', why: 'no complete now-playing info to test with' }]; return res.json(out); }
+
+    const steps = [];
+    out.run = steps;
+    try {
+        const artistNames = np.artist.split(',').map(x => x.trim()).filter(Boolean);
+        const failuresBefore = youtubeFailureCount;
+        const candidates = await youtubeFindCandidates(artistNames, `${artistNames.join(' ')} ${np.title} official music video`);
+        steps.push({ step: '1_youtube_candidates', count: candidates.length, youtubeFailuresDuringLookup: youtubeFailureCount - failuresBefore,
+            sample: candidates.slice(0, 8).map(v => ({ title: v.title, channel: v.channelTitle, durationMs: v.durationMs, id: v.videoId })) });
+
+        const core = normalizeForMatch(coreSongTitle(np.title));
+        const f1 = candidates.filter(v => !titleLooksDisqualified(v.title));
+        const f2 = f1.filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames));
+        const f3 = f2.filter(v => normalizeForMatch(v.title).includes(core));
+        const f4 = f3.filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - np.durationMs) <= MUSIC_VIDEO_MAX_DURATION_DIFF_MS);
+        steps.push({ step: '2_filters', songCore: core, songDurationMs: np.durationMs, start: candidates.length,
+            afterNotLiveLyricAudioTitle: f1.length, afterChannelIsTheArtist: f2.length, afterTitleContainsSong: f3.length, afterDurationWithin60s: f4.length });
+
+        const probeId = (f4[0] || candidates[0] || {}).videoId;
+        if (!probeId) { steps.push({ step: 'stop', why: 'no candidate to test further' }); return res.json(out); }
+
+        try {
+            const t0 = Date.now();
+            const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${probeId}`);
+            steps.push({ step: '3_ytdl_getInfo', ok: true, ms: Date.now() - t0, formats: (info.formats || []).length });
+        } catch (e) {
+            steps.push({ step: '3_ytdl_getInfo', ok: false, error: e.message, hint: 'ytdl cannot read YouTube from this server (bot-check / outdated library). Every audio + frame check depends on this.' });
+            return res.json(out);
+        }
+
+        const t1 = Date.now();
+        const ref = await getReferenceAudioEnvelope(np.trackId, artistNames, np.title, np.durationMs);
+        steps.push({ step: '4_reference_audio', ok: !!ref, points: ref ? ref.length : 0, ms: Date.now() - t1,
+            hint: ref ? undefined : 'no reference upload found (artist "audio" upload within 4s of song length) or its download failed - videos cannot be verified without it' });
+        if (!ref) return res.json(out);
+
+        const perCandidate = [];
+        for (const c of f4.slice(0, 3)) {
+            const row = { id: c.videoId, title: c.title };
+            const env = await extractAudioEnvelope(c.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            row.audioDownloaded = !!env;
+            const fv = await computeFrameVerification(c.videoId, c.durationMs);
+            row.frames = { failed: !!fv.failed, motionScore: fv.motionScore, minRequired: MUSIC_VIDEO_MOTION_MIN_AVG_DIFF, moderationFlagged: fv.moderationFlagged };
+            if (env) {
+                const { videoLeadMs, confidence } = crossCorrelateEnvelopes(ref, env, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+                row.audioMatch = { confidence: Math.round(confidence * 1000) / 1000, needed: MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE, videoLeadMs };
+            }
+            perCandidate.push(row);
+        }
+        steps.push({ step: '5_candidates_checked', results: perCandidate });
+    } catch (e) {
+        steps.push({ step: 'error', error: e.message });
+    }
+    res.json(out);
+});
+
 // Clears music-video verification state so tracks get re-verified. By default
 // only cached "no match" entries are dropped (matches are kept); send
 // {"all": true} to drop matches too. Also clears the in-memory caches that can
@@ -4773,7 +4859,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
     // ambient poll applies the black-out or the queue board.
-    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json({ ...emptyResponse, override: true });
+    if (vcfg.muteVisuals || vcfg.muteAll || vcfg.showQueue) return res.json({ ...emptyResponse, override: true, reason: 'admin_override_mute_or_show_queue_is_on' });
 
     // Admin -> Settings -> Content -> Music Videos forces a video attempt for
     // every song, ignoring the scheduler. With it off, only an active Music
@@ -4793,19 +4879,19 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
 
     let rule = null;
     if (!forceVideos && !committed) {
-        if (!event.musicScheduler?.enabled) return res.json(emptyResponse);
+        if (!event.musicScheduler?.enabled) return res.json({ ...emptyResponse, reason: 'videos_toggle_off_and_scheduler_disabled' });
         rule = getActiveMusicVideoRule(event);
         if (!rule) {
             // No Music Videos block covers this moment - reset so the NEXT
             // block this event runs into always starts on a video slot, not
             // however far a previous block's pattern happened to have gotten.
             runtime.lastActiveRuleId = undefined;
-            return res.json(emptyResponse);
+            return res.json({ ...emptyResponse, reason: 'no_active_music_video_block_in_scheduler' });
         }
     }
 
     if (!np || !np.trackId || !np.title || !np.artist) {
-        return res.json({ ...emptyResponse, enabled: true });
+        return res.json({ ...emptyResponse, enabled: true, reason: 'no_now_playing_info_from_spotify' });
     }
 
 
@@ -4837,7 +4923,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 videoOffsetMs: vcfg.musicVideoOffsetMs
             });
         }
-        return res.json({ ...emptyResponse, enabled: true });
+        return res.json({ ...emptyResponse, enabled: true, reason: 'spotify_reports_not_playing' });
     }
 
     // A different block became active since the last poll (or this is the
@@ -4865,7 +4951,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     if (!forceVideos && !committed && (runtime.cycleCount % cycleLength) >= videosInARow) {
         // This song lands on a "visuals" slot in the pattern - hand back
         // to Ambient Visuals without spending a YouTube search on it.
-        return res.json({ ...emptyResponse, enabled: true, matched: false });
+        return res.json({ ...emptyResponse, enabled: true, matched: false, reason: 'pattern_says_this_song_is_a_visuals_slot' });
     }
 
     // Check the verified cache fresh once per track (cached across the rest
@@ -4929,14 +5015,29 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             if (musicVideoDenylist.has(np.trackId)) {
                 runtime.cache.matched = false;
                 runtime.cache.videoId = null;
+                runtime.cache.blockedBy = 'denylist';
             } else if (vcfg.familyModeEnabled && !musicVideoAllowlist.has(np.trackId)) {
                 runtime.cache.matched = false;
                 runtime.cache.videoId = null;
+                runtime.cache.blockedBy = 'family_mode_not_allowlisted';
             }
         }
     }
 
+    // Plain-English explanation of why there's no video, so "nothing shows"
+    // can be diagnosed by just opening this route in a browser mid-song.
+    let mvReason = 'matched';
+    if (!runtime.cache.matched) {
+        const retry = verificationRetryState.get(np.trackId);
+        if (runtime.cache.blockedBy) mvReason = runtime.cache.blockedBy;
+        else if (verifiedMusicVideoCache.has(np.trackId) && verifiedMusicVideoCache.get(np.trackId) === null) mvReason = 'verified_no_video_passed_all_checks';
+        else if (verificationInFlight.has(np.trackId)) mvReason = 'verification_running_now';
+        else if (retry) mvReason = `verification_inconclusive_retrying (attempt ${retry.attempts}, next try in ${Math.max(0, Math.round((retry.notBefore - Date.now()) / 1000))}s) - check server logs for [MV-MATCH]/[MUSIC VIDEO] errors`;
+        else mvReason = 'verification_waiting_to_start';
+    }
     res.json({
+        reason: mvReason,
+        youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
