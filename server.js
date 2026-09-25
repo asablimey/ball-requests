@@ -1052,7 +1052,7 @@ async function youtubeFindCandidates(artistNames, fallbackQuery, songTitle, song
         // ("Love Again (Live From Mexico)") satisfied it while the real video
         // was elsewhere, so the paid search below never ran.
         const core = normalizeForMatch(coreSongTitle(songTitle));
-        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : (MV_AUDIO_VERIFY_ENABLED ? MUSIC_VIDEO_MAX_DURATION_DIFF_MS : Math.max(MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS, MV_GUESS_INTRO_ENABLED ? MV_MAX_INTRO_GUESS_MS : 0));
+        const maxDiff = forReference ? MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS : MUSIC_VIDEO_MAX_DURATION_DIFF_MS;
         const usable = v => {
             if (!normalizeForMatch(v.title).includes(core)) return false;
             if (!forReference && titleLooksDisqualified(v.title)) return false;
@@ -1211,11 +1211,13 @@ const MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC = 20;
 // near 1.0 even across different encodes/loudness (tested up to ~1.0 on
 // clean and re-encoded audio); a video that only matches for PART of the
 // window (a different edit partway through) lands roughly mid-range
-// (~0.4-0.5); unrelated audio scores near 0. 0.55 sits cleanly above the
-// "partial match" band, so a video only has to clear it if the correlation
-// found a genuine match across the WHOLE analyzed window, not just a
-// portion of it.
-const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
+// (~0.4-0.5); unrelated audio scores near 0. 0.68 sits well clear of the
+// "partial match" band (raised from 0.55 now that every candidate is
+// checked at three separate points in the track - see
+// MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC below - so there's less need to leave
+// headroom for an otherwise-good match that just has one noisy window).
+// Applied identically at every checkpoint, not just the first.
+const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.68;
 // Reference audio (see getReferenceAudioEnvelope) is expected to be the
 // exact studio master - its own runtime should match Spotify's reported
 // duration almost exactly, unlike a "video" candidate which may
@@ -1224,46 +1226,53 @@ const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
 // ground truth.
 const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
 const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
-// Simple mode (the default): no audio downloads at all. A video is offered when
-// it comes from the artist (channel, or an "Official Video" naming the artist),
-// names the song, isn't live/lyric/audio-only, and is within this many ms of
-// Spotify's length - which is almost always the same album cut starting at
-// 0:00. The display then keeps it locked to Spotify's position with its own
-// live drift correction. Set env MV_AUDIO_VERIFY=1 to bring back the old
-// audio-comparison path (slower, needs ytdl to work from the host).
-const MV_AUDIO_VERIFY_ENABLED = process.env.MV_AUDIO_VERIFY === '1';
-const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = Number(process.env.MV_MAX_DURATION_DIFF_MS) || 3000;
-// An official video that runs LONGER than the song (cold open / intro) can't
-// be offset-checked without downloading audio, so by default its extra length
-// is assumed to be an intro: the video is offered right away with that offset
-// (video position = song position + extra length). A background audio check
-// then replaces the guess with the measured offset when it can (see
-// mvMaybeUpgradeGuess). Set MV_GUESS_INTRO=0 to disable guessing; the cap is
-// MV_MAX_INTRO_GUESS_MS (default 20s).
-const MV_GUESS_INTRO_ENABLED = process.env.MV_GUESS_INTRO !== '0';
-const MV_MAX_INTRO_GUESS_MS = Number(process.env.MV_MAX_INTRO_GUESS_MS) || 20000;
-// Ceiling for even ATTEMPTING to measure where the song starts inside a
-// longer video. Above this, a duration difference this large is more likely
-// a different edit/mislabeled video than a plain intro, so it's left alone
-// rather than downloading many minutes of audio to check.
-const MV_MAX_INTRO_SEARCH_MS = Number(process.env.MV_MAX_INTRO_SEARCH_MS) || 6 * 60 * 1000;
-
-// Finds the exact point a video's audio lines up with the (intro-free)
-// reference audio, instead of assuming the whole extra length is an intro.
-// Downloads only as much of the candidate as needed to reach past the
-// expected song start, and searches a lag window sized to match - the old
-// fixed 20s search could never find an intro longer than 20s no matter what
-// called it.
-async function measureIntroOffset(videoId, refEnvelope, expectedExtraMs) {
-    const windowSec = Math.min(600, Math.ceil(expectedExtraMs / 1000) + MUSIC_VIDEO_AUDIO_WINDOW_SEC + 15); // full ref length as buffer, or the 80% overlap requirement in crossCorrelateEnvelopes always fails at the true lag
-    const lagSec = Math.min(400, Math.ceil(expectedExtraMs / 1000) + 15);
-    const envelope = await extractAudioEnvelope(videoId, windowSec);
-    if (!envelope) return null;
-    const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, envelope, lagSec);
-    if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE || videoLeadMs < 0) return null;
-    return { introOffsetMs: videoLeadMs, confidence };
+// Every candidate is now checked at three points across the track from a
+// SINGLE continuous download (see candidateVerificationSpanSec and
+// verifyCandidateAtAllCheckpoints below) instead of only a front window -
+// there is no more "simple" (title/duration only) or "guessed" (assume the
+// extra runtime is a front intro) acceptance path. A candidate that can't
+// be checked against real audio is never returned as a match - see
+// findAudioVerifiedMusicVideo, which returns undefined (retry later) in
+// that case, same as any other inconclusive download/lookup.
+//
+// Window length for the SECOND and THIRD checkpoints (mid-track, near the
+// end). Deliberately shorter than MUSIC_VIDEO_AUDIO_WINDOW_SEC (100s, still
+// used for the front): by the time either of these runs, the front
+// checkpoint has already locked onto a candidate offset, so these two are
+// just confirming that offset still holds - not searching for it from
+// scratch - and don't need as much material to do that.
+const MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC = 30;
+// How far a LATER checkpoint's measured lag is allowed to drift from the
+// offset the front checkpoint already found, before it counts as
+// "disagreeing". Two genuine encodes of the same recording line up to well
+// under a second at this envelope's 50Hz resolution once an offset is
+// known; a few seconds of slack absorbs encoder/container jitter without
+// being wide enough to let an edit partway through the video (a trimmed
+// bridge, a different outro) "agree" with the front's offset by accident.
+const MUSIC_VIDEO_CHECKPOINT_AGREEMENT_TOLERANCE_SEC = 3;
+// Where the second checkpoint sits, as a fraction of the track's own
+// runtime. 0.65 lands solidly past any intro/bridge without risking the
+// fade-out most tracks start winding down into well before the true end.
+const MUSIC_VIDEO_MID_CHECKPOINT_FRACTION = 0.65;
+// The third checkpoint is placed a fixed distance back from the track's
+// own end (not a fraction of it) so it stays clear of a genuine fade-out
+// or an outro some uploads trim a few seconds short.
+const MUSIC_VIDEO_END_CHECKPOINT_BACK_FROM_END_SEC = 20;
+// Hard ceiling on how much continuous audio is ever downloaded for one
+// candidate, regardless of song length - keeps one unusually long track
+// from turning into an unbounded download. See candidateVerificationSpanSec.
+const MUSIC_VIDEO_CANDIDATE_DOWNLOAD_CAP_SEC = 12 * 60;
+// Base floor for a short download (the old fixed value), plus an allowance
+// per second of audio actually requested - streaming+decode is normally
+// close to or faster than real-time, but this leaves real headroom rather
+// than timing out a slow-but-succeeding multi-minute download. Needed now
+// that requests can run to MUSIC_VIDEO_CANDIDATE_DOWNLOAD_CAP_SEC (12min)
+// instead of always being the ~100s front window.
+const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_BASE_MS = 20000;
+const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_PER_SEC_MS = 700;
+function audioDownloadTimeoutMs(maxDurationSec) {
+    return MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_BASE_MS + Math.round(maxDurationSec * MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_PER_SEC_MS);
 }
-const MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS = 20000;
 // A small negative measured offset is just noise around a true ~0 (the
 // video's content genuinely starts right at its own front) - the display
 // already clamps the applied offset at 0 (see mvTargetSec), so nothing
@@ -1326,7 +1335,7 @@ function extractAudioEnvelopeRaw(videoId, maxDurationSec) {
         const timeout = setTimeout(() => {
             try { ff.kill('SIGKILL'); } catch (e) { /* already gone */ }
             finish(null);
-        }, MUSIC_VIDEO_AUDIO_DOWNLOAD_TIMEOUT_MS);
+        }, audioDownloadTimeoutMs(maxDurationSec));
 
         ff.stdout.on('data', (chunk) => chunks.push(chunk));
         ff.stderr.on('data', () => {}); // ffmpeg's own progress chatter - not needed here
@@ -1411,6 +1420,92 @@ function crossCorrelateEnvelopes(refEnvelope, probeEnvelope, maxLagSec, minOverl
         videoLeadMs: Math.round((-bestLag / MUSIC_VIDEO_ENVELOPE_RATE_HZ) * 1000),
         confidence: bestScore
     };
+}
+
+// --- Multi-checkpoint sync verification -------------------------------
+// Everything below supports checking a candidate at three points across
+// the track (front, ~65% through, near the end) from ONE continuous
+// download instead of three separate ytdl calls - see
+// verifyCandidateAtAllCheckpoints, the only place that ties them together.
+
+// Pulls a window of `windowSec` starting at `startSec` out of an envelope
+// already in memory - no I/O, this is just array slicing. Returns null
+// (not an empty array) when the window would run past what's actually in
+// the envelope or fall below the ~3s floor extractAudioEnvelope itself
+// already enforces on a raw download, so callers can treat "slice failed"
+// and "download failed" the same way (transient, not a rejection).
+function sliceEnvelopeWindow(envelope, startSec, windowSec) {
+    if (!envelope) return null;
+    const startIdx = Math.max(0, Math.round(startSec * MUSIC_VIDEO_ENVELOPE_RATE_HZ));
+    const endIdx = Math.min(envelope.length, startIdx + Math.round(windowSec * MUSIC_VIDEO_ENVELOPE_RATE_HZ));
+    if (endIdx - startIdx < MUSIC_VIDEO_ENVELOPE_RATE_HZ * 3) return null; // <3s of material - not enough to compare
+    return envelope.subarray(startIdx, endIdx);
+}
+
+// How much continuous audio to download so that all three checkpoints -
+// front, mid, and the near-end window - are covered by one stream. The
+// front checkpoint's own lag search (MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC)
+// bounds how far into the candidate's own timeline the song could
+// plausibly start, so the download has to reach at least that far past
+// the reference track's own runtime to have anything to slice for the
+// end checkpoint once that offset is known. `marginSec` gives reference
+// downloads (which aren't expected to carry a front offset - see
+// getReferenceAudioEnvelope) a smaller, cheaper span than candidates.
+function audioVerificationSpanSec(trackDurationSec, marginSec) {
+    return Math.min(MUSIC_VIDEO_CANDIDATE_DOWNLOAD_CAP_SEC, Math.ceil(trackDurationSec + marginSec));
+}
+function candidateVerificationSpanSec(trackDurationSec) {
+    // +10s past the end checkpoint's own window, on top of the front's
+    // offset-search margin, so the end checkpoint always has a full window
+    // to slice even at the maximum plausible offset.
+    return audioVerificationSpanSec(trackDurationSec, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC + MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC + 10);
+}
+
+// Runs the three-checkpoint check against a candidate's already-downloaded
+// envelope. Short-circuits on the first checkpoint that fails - no point
+// slicing/correlating the later ones once the candidate is already
+// rejected. `refEnvelope` must span the reference track's own full runtime
+// (see getReferenceAudioEnvelope) so windows exist at all three fractions,
+// not just the front.
+//
+// Returns:
+//   - {ok: true, introOffsetMs, confidence} - all three checkpoints agreed
+//   - {ok: false, transient: true, checkpoint} - a window couldn't be
+//     sliced/compared at all (download too short) - not a rejection
+//   - {ok: false, checkpoint, confidence} - a checkpoint was checked and
+//     didn't clear the bar, or didn't agree with the front's offset
+function verifyCandidateAtAllCheckpoints(candidateEnvelope, refEnvelope, trackDurationSec) {
+    // Checkpoint 1 (front): the existing full-width lag search - this is
+    // what establishes the candidate's own offset for the other two.
+    const frontRef = sliceEnvelopeWindow(refEnvelope, 0, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+    const frontProbe = sliceEnvelopeWindow(candidateEnvelope, 0, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+    if (!frontRef || !frontProbe) return { ok: false, transient: true, checkpoint: 'front' };
+    const front = crossCorrelateEnvelopes(frontRef, frontProbe, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
+    if (front.confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) return { ok: false, checkpoint: 'front', confidence: front.confidence };
+    if (front.videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) {
+        return { ok: false, checkpoint: 'front', reason: 'trimmed-intro', videoLeadMs: front.videoLeadMs };
+    }
+    const offsetSec = Math.max(0, front.videoLeadMs / 1000);
+
+    // Checkpoints 2 & 3 (mid, near-end): confirm the SAME offset still
+    // holds, rather than re-searching from scratch - a narrow lag window
+    // is both cheaper and stricter here. An edit partway through the video
+    // (a trimmed bridge, a different outro) won't "agree" with the front's
+    // offset even if its own correlation could find some other peak
+    // elsewhere in the search range.
+    const laterCheckpoints = [
+        { name: 'mid', refStartSec: MUSIC_VIDEO_MID_CHECKPOINT_FRACTION * trackDurationSec },
+        { name: 'end', refStartSec: Math.max(0, trackDurationSec - MUSIC_VIDEO_END_CHECKPOINT_BACK_FROM_END_SEC - MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC) }
+    ];
+    for (const cp of laterCheckpoints) {
+        const refWindow = sliceEnvelopeWindow(refEnvelope, cp.refStartSec, MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC);
+        const probeWindow = sliceEnvelopeWindow(candidateEnvelope, offsetSec + cp.refStartSec, MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC);
+        if (!refWindow || !probeWindow) return { ok: false, transient: true, checkpoint: cp.name };
+        const result = crossCorrelateEnvelopes(refWindow, probeWindow, MUSIC_VIDEO_CHECKPOINT_AGREEMENT_TOLERANCE_SEC);
+        if (result.confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) return { ok: false, checkpoint: cp.name, confidence: result.confidence };
+    }
+
+    return { ok: true, introOffsetMs: front.videoLeadMs, confidence: front.confidence };
 }
 
 // --- Item 4: static "album cover" rejection, + Item 5: content-moderation
@@ -1788,9 +1883,16 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
             diag.referenceEligibleFromSearch = eligible.length;
         }
         // Try a few, not just the first - one broken download shouldn't
-        // decide there is no reference.
+        // decide there is no reference. Downloads the reference's full
+        // runtime (not just the front MUSIC_VIDEO_AUDIO_WINDOW_SEC) so a
+        // window exists at all three checkpoints once this is cached - a
+        // reference upload is filtered to within
+        // MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS of the track's own
+        // length, so unlike a candidate it isn't expected to carry a front
+        // offset, and only needs the smaller end-of-track margin.
+        const referenceSpanSec = audioVerificationSpanSec(durationMs / 1000, MUSIC_VIDEO_CHECKPOINT_WINDOW_SEC + 10);
         for (const ref of eligible.slice(0, 3)) {
-            const env = await extractAudioEnvelope(ref.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC);
+            const env = await extractAudioEnvelope(ref.videoId, referenceSpanSec);
             diag.referenceTried.push({ title: ref.title, channel: ref.channelTitle, downloaded: !!env });
             if (env) { result = env; break; }
         }
@@ -1822,7 +1924,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
 //     download failed) - we simply don't know, so callers should leave
 //     whatever they were already showing alone rather than tear it down
 //     over an infrastructure hiccup.
-async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId, diag = {}, opts = {}) {
+async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideoIds, trackDurationMs, trackTitle, trackId, diag = {}) {
     const trackCore = normalizeForMatch(coreSongTitle(trackTitle));
     if (!trackCore) return undefined;
 
@@ -1849,90 +1951,37 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         .map(v => `${v.title} [${v.channelTitle}] ${v.durationMs ? Math.round(v.durationMs / 1000) + 's' : 'no length'}`);
     diag.checked = [];
 
-    if (!MV_AUDIO_VERIFY_ENABLED && !opts.forceAudio) {
-        const artistInTitle = v => artistNames.some(n => { const k = normalizeForMatch(n); return k && normalizeForMatch(v.title).includes(k); });
-        const officialish = notDisqualified
-            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames) || (artistInTitle(v) && /official\s+(music\s+)?video/i.test(v.title)))
-            .filter(v => normalizeForMatch(v.title).includes(trackCore))
-            .filter(v => typeof v.durationMs === 'number');
-        const closeness = (a, b) => Math.abs(a.durationMs - trackDurationMs) - Math.abs(b.durationMs - trackDurationMs);
-        const simple = officialish.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS).sort(closeness);
-        diag.method = 'simple: title/channel/length match, no audio download';
-        diag.simpleMatches = simple.length;
-        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0 };
-        // Longer than the song by a few seconds: almost certainly a cold open /
-        // intro. Offer it with that offset now; it's refined in the background.
-        if (MV_GUESS_INTRO_ENABLED) {
-            const longer = officialish
-                .filter(v => v.durationMs > trackDurationMs && (v.durationMs - trackDurationMs) <= MV_MAX_INTRO_SEARCH_MS)
-                .sort(closeness);
-            diag.longerCandidates = longer.length;
-            if (longer.length > 0) {
-                const best = longer[0];
-                const extraMs = best.durationMs - trackDurationMs;
-                // Try to find exactly where the song starts before assuming
-                // anything - a plain intro, a mid-video edit, and a wrong
-                // candidate all look the same from duration alone.
-                if (Date.now() >= ytdlCooldownUntil) {
-                    const ref = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag, opts.allowPaidSearch !== false);
-                    if (ref) {
-                        const measured = await measureIntroOffset(best.videoId, ref, extraMs);
-                        diag.introMeasurement = { videoId: best.videoId, expectedExtraMs: extraMs, result: measured || 'no confident match in that window' };
-                        if (measured) {
-                            diag.method = 'measured: found where the song starts in the video';
-                            return { videoId: best.videoId, introOffsetMs: measured.introOffsetMs, confidence: measured.confidence, verified: true };
-                        }
-                    }
-                }
-                if (extraMs <= MV_MAX_INTRO_GUESS_MS) {
-                    diag.method = 'guessed: video is longer than the song, extra length assumed to be an intro (measured in the background once possible)';
-                    return { videoId: best.videoId, introOffsetMs: extraMs, confidence: 0, guessed: true };
-                }
-                // A real match may still exist here - we just couldn't measure
-                // it yet (throttled, no reference audio) or it's too long to
-                // guess blindly. Not a rejection, so don't cache it as "no
-                // video" - the next play of this song will try again.
-                diag.method = `intro (~${Math.round(extraMs / 1000)}s) too long to guess safely, and could not be measured yet`;
-                return undefined;
-            }
-        }
-        return null; // (the caller refuses to cache this if any YouTube lookup failed)
-    }
-
+    // Every candidate is now checked against real audio, always - there is
+    // no title/duration-only fallback and no offset guessing left. If
+    // nothing is even worth trying (nothing named the song at the right
+    // length), that's a confirmed no-video-yet, not a reason to fall back
+    // to a weaker check.
     if (ranked.length === 0) return null; // nothing even worth trying - same as "confirmed no match" (the caller refuses to cache this if the candidate lookup itself failed)
 
     // Set whenever a candidate couldn't be CHECKED (download failed, frame
-    // sampling failed) as opposed to being checked and found wanting. If no
-    // candidate matches and this is set, the honest answer is "unknown", not
-    // "no match" - see the return at the bottom.
+    // sampling failed, a window fell short of a checkpoint) as opposed to
+    // being checked and found wanting. If no candidate matches and this is
+    // set, the honest answer is "unknown", not "no match" - see the return
+    // at the bottom.
     let sawTransientFailure = false;
 
-    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag, opts.allowPaidSearch !== false);
+    const trackDurationSec = trackDurationMs / 1000;
+    const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag);
     diag.referenceAudioFound = !!refEnvelope;
     if (!refEnvelope) {
         // No reference audio to compare against (most songs have no "audio"
-        // upload on the artist's own channel, or that download failed). This
-        // used to mean the song NEVER got a video. Instead, fall back to the
-        // next-best evidence: an official upload from the artist's own channel
-        // that names the song and is within ~2.5s of Spotify's length is
-        // almost always the album cut starting at 0:00, so it's offered with
-        // offset 0. Sync is then held by the display's live drift correction,
-        // and a video that turns out not to track gets reported and dropped
-        // (see /sync-failed) like any other. Still requires that it isn't a
-        // static image / flagged frame when those checks can run.
+        // upload on the artist's own channel, or that download failed).
+        // There is no fallback from here - every match has to clear real
+        // audio verification at all three checkpoints, and there's nothing
+        // to verify against. A probe request is still logged for
+        // diagnostics (is ytdl even reachable for this candidate right
+        // now?), but the outcome is always "don't know yet, retry later",
+        // never a match offered on title/duration alone.
         if (ranked[0]) {
             try { await withYtdlGate(() => ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`, ytdlOpts)); diag.ytdlProbe = 'ok'; }
             catch (e) { diag.ytdlProbe = 'FAILED: ' + String(e.message).slice(0, 200); }
         }
-        const tight = ranked.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS);
-        diag.durationOnlyCandidates = tight.length;
-        for (const c of tight) {
-            const fv = await getFrameVerification(c.videoId, c.durationMs);
-            diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
-            if (!fv.failed && (fv.moderationFlagged || fv.motionScore === null || fv.motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF)) continue;
-            diag.method = 'duration-only (no reference audio)';
-            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0 };
-        }
+        diag.method = 'no reference audio available - cannot verify, will retry';
         return undefined; // nothing usable yet - stay agnostic, retry later
     }
 
@@ -1940,8 +1989,11 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         // Items 4 & 5: the combined motion + moderation check runs alongside
         // the audio download/decode for this same candidate, not after it -
         // independent checks on the same video, none waiting on another.
+        // The audio download now pulls ONE continuous stretch covering all
+        // three checkpoints (front, mid, near-end) rather than just the
+        // front MUSIC_VIDEO_AUDIO_WINDOW_SEC - see candidateVerificationSpanSec.
         const [candidateEnvelope, frameVerification] = await Promise.all([
-            extractAudioEnvelope(candidate.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC),
+            extractAudioEnvelope(candidate.videoId, candidateVerificationSpanSec(trackDurationSec)),
             getFrameVerification(candidate.videoId, candidate.durationMs)
         ]);
         const row = { title: candidate.title, audioDownloaded: !!candidateEnvelope, frameCheckFailed: !!frameVerification.failed, motionScore: frameVerification.motionScore, moderationFlagged: frameVerification.moderationFlagged };
@@ -1954,17 +2006,22 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         // included. Item 4 next: no usable frames, or it looks static.
         if (moderationFlagged) continue;
         if (motionScore === null || motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF) continue;
-        const { videoLeadMs, confidence } = crossCorrelateEnvelopes(refEnvelope, candidateEnvelope, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
-        row.audioConfidence = Math.round(confidence * 1000) / 1000;
-        row.videoLeadMs = videoLeadMs;
-        if (confidence < MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE) continue;
-        if (videoLeadMs < -MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) continue; // trimmed-intro case - see constant comment above, no offset can fix this
-        return { videoId: candidate.videoId, introOffsetMs: Math.max(0, videoLeadMs), confidence };
+
+        // Multi-checkpoint sync check: all three points (front, ~65%, near
+        // the end) have to agree, short-circuiting on the first that
+        // doesn't so a video that's clearly wrong isn't checked any further
+        // than necessary.
+        const verification = verifyCandidateAtAllCheckpoints(candidateEnvelope, refEnvelope, trackDurationSec);
+        row.checkpointResult = verification;
+        if (verification.transient) { sawTransientFailure = true; continue; } // a window couldn't be sliced/compared - not a rejection
+        if (!verification.ok) continue; // checked and it didn't match (or didn't agree past the front) - try the next candidate
+        return { videoId: candidate.videoId, introOffsetMs: Math.max(0, verification.introOffsetMs), confidence: verification.confidence };
     }
     // Every candidate that could be checked was checked against real audio
-    // and none matched -> a confirmed miss. But if some couldn't be checked
-    // at all (ytdl blocked, network, timeouts), we don't actually know:
-    // return undefined so nothing gets cached and it's retried later.
+    // at all three checkpoints and none matched -> a confirmed miss. But if
+    // some couldn't be checked at all (ytdl blocked, network, timeouts, a
+    // window came up short), we don't actually know: return undefined so
+    // nothing gets cached and it's retried later.
     return sawTransientFailure ? undefined : null;
 }
 
@@ -2036,34 +2093,6 @@ function mvVerificationNoteInconclusive(trackId) {
     verificationRetryState.set(trackId, { attempts, notBefore: Date.now() + delay });
 }
 
-// A video offered with a GUESSED intro offset gets one background attempt per
-// process to measure the real offset from the audio. Never uses paid searches,
-// never runs while YouTube is throttling downloads, and only replaces the
-// guess if a real match is found - otherwise the guess stays.
-const mvUpgradeAttempted = new Set();
-function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
-    const cur = verifiedMusicVideoCache.get(trackId);
-    if (!cur || !cur.guessed || mvUpgradeAttempted.has(trackId)) return;
-    if (Date.now() < ytdlCooldownUntil || !youtubeQuotaAvailable(1)) return;
-    mvUpgradeAttempted.add(trackId);
-    const artistNames = (artistNamesRaw || '').split(',').map(x => x.trim()).filter(Boolean);
-    mvVerificationSchedule(async () => {
-        try {
-            const ref = await getReferenceAudioEnvelope(trackId, artistNames, title, durationMs, {}, false); // no paid search - background/best-effort
-            if (!ref) return;
-            const measured = await measureIntroOffset(cur.videoId, ref, cur.introOffsetMs); // cur.introOffsetMs is the earlier guess - i.e. the expected extra length
-            const now = verifiedMusicVideoCache.get(trackId);
-            if (measured && now && now.guessed && now.videoId === cur.videoId) {
-                verifiedMusicVideoCache.set(trackId, { videoId: cur.videoId, introOffsetMs: measured.introOffsetMs, confidence: measured.confidence, verified: true });
-                events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
-                console.log(`[MV-MATCH] "${title}": guessed offset (${cur.introOffsetMs}ms) replaced by measured offset ${measured.introOffsetMs}ms.`);
-            }
-        } catch (e) {
-            console.error(`[MV-MATCH] Offset refinement failed for "${title}":`, e.message);
-        }
-    });
-}
-
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
     if (!trackId || !title || !durationMs) return;
     if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
@@ -2098,7 +2127,6 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
             verificationRetryState.delete(trackId);
             verifiedMusicVideoCache.set(trackId, result);
             events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot); // item 2: debounced Redis persist
-            if (result && result.guessed) mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs);
         } catch (e) {
             console.error(`[MV-MATCH] Eager verification failed for "${title}":`, e.message);
             mvVerificationNoteInconclusive(trackId);
@@ -5254,7 +5282,9 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             // everyone, but the local exclude-list check here closes the
             // gap for the moment in between.
             const cached = verifiedMusicVideoCache.get(np.trackId);
-            if (cached && cached.guessed) mvMaybeUpgradeGuess(np.trackId, np.artist, np.title, np.durationMs);
+            // No more "guessed" entries to try to upgrade in the background -
+            // every cache entry already passed all three audio checkpoints
+            // by the time it's set (see findAudioVerifiedMusicVideo).
             runtime.cache = {
                 trackId: np.trackId, searchedTrackId: np.trackId,
                 matched: !!cached, videoId: cached ? cached.videoId : null,
@@ -5316,14 +5346,15 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         else if (retry) mvReason = `verification_inconclusive_retrying (attempt ${retry.attempts}, next try in ${Math.max(0, Math.round((retry.notBefore - Date.now()) / 1000))}s) - check server logs for [MV-MATCH]/[MUSIC VIDEO] errors`;
         else mvReason = 'verification_waiting_to_start';
     }
-    // The offset is read fresh from the verified cache on every poll so a
-    // measured offset (see mvMaybeUpgradeGuess) replaces a guessed one while
-    // the video is already playing - the display applies introOffsetMs live.
+    // The offset is read fresh from the verified cache on every poll - every
+    // cache entry is already a fully audio-verified match (all three
+    // checkpoints) by the time it's cached, so there's no longer a
+    // guessed-vs-measured distinction to track here.
     const vcNow = verifiedMusicVideoCache.get(np.trackId);
     const offsetFromCache = !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
     const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
-        offsetSource: !runtime.cache.matched ? 'none' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
+        offsetSource: runtime.cache.matched ? 'measured from audio (all three checkpoints)' : 'none',
         reason: mvReason,
         detail: runtime.cache.matched ? undefined : verificationDiagCache.get(np.trackId),
         youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
