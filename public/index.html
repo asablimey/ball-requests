@@ -122,6 +122,25 @@
             width: auto;
             flex-shrink: 0;
         }
+        /* Same pattern as .spotify-attribution-inline above, for YouTube
+           attribution - added so the sidebar footer shows required
+           branding for both third-party services this site embeds, not
+           just Spotify. */
+        .youtube-attribution-inline {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            color: #ffffff;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        .youtube-attribution-inline img {
+            height: 18px;
+            width: auto;
+            flex-shrink: 0;
+        }
 
         .site-credit {
             font-size: 0.7rem;
@@ -980,6 +999,10 @@
             <div class="spotify-attribution-inline">
                 <span>Powered by</span>
                 <img src="/assets/spotify-full-logo-white.svg" alt="Spotify">
+            </div>
+            <div class="youtube-attribution-inline">
+                <span>Music videos powered by</span>
+                <img src="/assets/yt_logo_white_digital.png" alt="YouTube">
             </div>
             <div class="site-credit">Made by Sam B | <a onclick="openPrivacyModal()">Privacy</a> | <a onclick="openTermsModal()">Terms</a></div>
         </div>
