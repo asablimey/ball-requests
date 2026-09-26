@@ -329,14 +329,14 @@
            drop it while a video is playing and only show it during
            ambient visuals. Left in place until a direction is chosen. */
         .mv-logo {
-            position: absolute; right: 32px; bottom: calc(28px + var(--cine-bar-h)); z-index: 8;
+            position: absolute; right: 32px; bottom: 28px; z-index: 8;
             height: 34px; width: auto; opacity: 0; pointer-events: none;
             transition: opacity 0.6s ease;
         }
         .mv-logo.is-visible { opacity: 0.55; }
 
         .mv-info-pop {
-            position: absolute; left: 40px; bottom: calc(26px + var(--cine-bar-h)); z-index: 8;
+            position: absolute; left: 40px; bottom: 26px; z-index: 8;
             max-width: 60%; pointer-events: none; opacity: 0;
             transition: opacity 0.6s ease; text-shadow: 0 2px 12px rgba(0,0,0,0.85);
         }
@@ -353,18 +353,32 @@
 
         /* ---------- Cinematic letterbox bars ----------
            Purely decorative black bars over the top/bottom of the picture
-           while a music video is on screen, for a widescreen-film look.
-           They live inside #video-view itself (not a separate fixed
-           element), so they inherit its opacity fade and pointer-events:
-           none automatically - no bars, and nothing to click, whenever
-           #video-view isn't .is-visible (ambient visuals / queue board). */
-        :root { --cine-bar-h: clamp(36px, 8vh, 90px); }
-        .cine-bar {
-            position: absolute; left: 0; right: 0; height: var(--cine-bar-h);
-            background: #000; z-index: 9; pointer-events: none;
+           while a music video is on screen, for a widescreen-film look -
+           and, as a side effect, solid enough to also hide YouTube's own
+           title row (top) and share/watch-later/up-next/logo row (bottom)
+           that the native player chrome shows on hover/pause. The two
+           heights are deliberately different: the bottom chrome is taller
+           (icon row + the "more videos" thumbnail + the YouTube wordmark)
+           than the top one (just the title/channel row), so a single
+           shared height either cropped too much off the top or too little
+           off the bottom. They live inside #video-view itself (not a
+           separate fixed element), so they inherit its opacity fade and
+           pointer-events: none automatically - no bars, and nothing to
+           click, whenever #video-view isn't .is-visible (ambient visuals /
+           queue board). Sits BELOW .mv-logo/.mv-info-pop in z-index on
+           purpose - they were already positioned to sit in this same
+           bottom strip and should read as sitting ON the bar, not be
+           pushed up above it. */
+        :root {
+            --cine-bar-top-h: clamp(46px, 6vh, 80px);
+            --cine-bar-bottom-h: clamp(70px, 12vh, 150px);
         }
-        .cine-bar-top { top: 0; }
-        .cine-bar-bottom { bottom: 0; }
+        .cine-bar {
+            position: absolute; left: 0; right: 0;
+            background: #000; z-index: 7; pointer-events: none;
+        }
+        .cine-bar-top { top: 0; height: var(--cine-bar-top-h); }
+        .cine-bar-bottom { bottom: 0; height: var(--cine-bar-bottom-h); }
     </style>
 </head>
 <body>
