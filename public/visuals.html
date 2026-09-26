@@ -225,7 +225,7 @@
                NOTE: this can only be estimated without a live YouTube
                embed to check the real caption position against - it's a
                starting point, not a measured value. */
-            --mv-caption-reveal: 0px; /* was 70px - only needed room for captions, which are off; raise this again if Subtitles gets toggled on in admin and text looks clipped */
+            --mv-caption-reveal: 70px;
             /* item 10: fills the screen edge to edge - no more side
                letterbox bars. The old version computed width FROM a height
                budget that had already been shrunk to reserve room for
@@ -250,59 +250,24 @@
            of the two constraints binds on a given screen and the other
            overflows, centered by the translate below. */
         .video-cover-fit {
-            /* Changed from min-width/min-height (crop-to-fill, "cover")
-               to max-width/max-height (shrink-to-fit, "contain") - the
-               box now sizes to whichever of the two 16:9 candidates is
-               SMALLER instead of larger, so the full picture is always
-               visible with nothing cropped off. .video-frame's own
-               background: #000 (with overflow: hidden) then shows
-               through as real letterbox/pillarbox bars on whatever
-               edges are left over, instead of the picture being zoomed
-               to fill the screen. */
             position: absolute; top: 50%; left: 50%;
             width: 100vw; height: 56.25vw; /* 16:9 at full viewport width */
-            max-width: 177.78vh; max-height: 100vh; /* 16:9 at full viewport height */
+            min-width: 177.78vh; min-height: 100vh; /* 16:9 at full viewport height */
             transform: translate(-50%, -50%);
-            overflow: hidden; /* clip at this box's own (now smaller) edges, not just video-frame's full-screen ones */
         }
-        /* Rendering the YouTube iframe at a small, FIXED css size and then
-           scaling the whole thing up (via transform) to fill the real
-           16:9 box gets YouTube's own embedded-player UI to size itself
-           like a small player - center play/pause control only, no
-           title/channel row, no share/watch-later/up-next row - while
-           the actual video picture still fills the screen exactly as
-           before (transform changes what's painted, not the layout size
-           YouTube's own responsive breakpoints react to). --yt-scale is
-           computed and kept in sync by observeVideoScale() in the script
-           below, from whatever size .video-cover-fit actually ends up at
-           on this screen, so it isn't tuned to one resolution.
-           NOTE: YouTube doesn't publish its own UI breakpoints, so
-           --yt-base-w below is a working starting point, not a
-           guaranteed threshold - if any chrome still shows on the real
-           display, try shrinking it further. There's a real tradeoff
-           the other direction, too: a very small player width is also
-           one of the signals YouTube's automatic quality selection uses,
-           and there's no reliable way to force a resolution back up from
-           an embed anymore - if the picture looks soft, raise
-           --yt-base-w a bit rather than shrinking it more.
-           Supersedes the old --yt-pad-ratio/--mv-caption-reveal top-crop
-           approach below (both currently 0 / inert) for covering
-           YouTube's own chrome - that mechanism is left in place for the
-           subtitle-reveal case it also handled, but would need rework
-           alongside this if the top-crop side of it is ever turned back
-           on, since this rule no longer sizes off .video-cover-fit's own
-           percentage height. */
-        :root {
-            --yt-base-w: 220px;
-            --yt-base-h: 123.75px; /* 220 * 9/16 */
-            --yt-scale: 1; /* set live by observeVideoScale() */
-        }
+        /* top/height below are expressed against (100% - reveal) rather
+           than .video-cover-fit's raw 100%, because that box is now taller
+           than the pure 16:9 picture by exactly --mv-caption-reveal (see
+           above) - (100% - reveal) recovers "the core picture's own
+           height" to crop the TOP edge against, while the extra revealed
+           strip at the bottom is left alone rather than also being
+           cropped. Unchanged by item 10 - only the containing block
+           (.video-cover-fit, sized above) changed, not this math. */
         .video-frame .yt-player-el, .video-frame .yt-player-el iframe {
-            position: absolute; top: 0; left: 0;
-            width: var(--yt-base-w) !important;
-            height: var(--yt-base-h) !important;
-            transform: scale(var(--yt-scale));
-            transform-origin: top left;
+            position: absolute; left: 0;
+            top: calc(-1 * (100% - var(--mv-caption-reveal)) * var(--yt-pad-ratio));
+            width: 100% !important;
+            height: calc((100% - var(--mv-caption-reveal)) * (1 + 2 * var(--yt-pad-ratio)) + var(--mv-caption-reveal)) !important;
             border: 0;
         }
         /* Covers a slot's iframe any time IT'S the active slot and its video
@@ -354,14 +319,14 @@
            drop it while a video is playing and only show it during
            ambient visuals. Left in place until a direction is chosen. */
         .mv-logo {
-            position: absolute; right: 32px; bottom: 16px; z-index: 8;
+            position: absolute; right: 32px; bottom: 28px; z-index: 8;
             height: 34px; width: auto; opacity: 0; pointer-events: none;
             transition: opacity 0.6s ease;
         }
         .mv-logo.is-visible { opacity: 0.55; }
 
         .mv-info-pop {
-            position: absolute; left: 40px; bottom: 14px; z-index: 8;
+            position: absolute; left: 40px; bottom: 26px; z-index: 8;
             max-width: 60%; pointer-events: none; opacity: 0;
             transition: opacity 0.6s ease; text-shadow: 0 2px 12px rgba(0,0,0,0.85);
         }
@@ -375,36 +340,6 @@
             color: #d8d8d8; font-size: clamp(0.85rem, 1.6vh, 1.05rem); margin-top: 4px;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-
-        /* ---------- Cinematic letterbox bars ----------
-           Purely decorative black bars over the top/bottom of the picture
-           for a widescreen-film look. Now that the iframe itself is
-           rendered small and scaled up (see .video-frame .yt-player-el
-           above) to keep YouTube down to its minimal small-player chrome,
-           these don't need to be sized to hide a title row or an icon
-           row anymore - just a plain cinematic crop, with a little extra
-           margin as a safety net in case any sliver of chrome still
-           shows on a given video. If chrome still peeks through on the
-           real display, that means --yt-base-w above needs to come down
-           further - raising these numbers again is treating the symptom,
-           not the cause. They live inside #video-view itself (not a
-           separate fixed element), so they inherit its opacity fade and
-           pointer-events: none automatically - no bars, and nothing to
-           click, whenever #video-view isn't .is-visible (ambient visuals
-           / queue board). Sits BELOW .mv-logo/.mv-info-pop in z-index on
-           purpose - those are positioned to sit low in this same bottom
-           strip and should read as sitting ON the bar, not pushed up
-           above it. */
-        :root {
-            --cine-bar-top-h: max(46px, 4vh);
-            --cine-bar-bottom-h: max(58px, 5vh);
-        }
-        .cine-bar {
-            position: absolute; left: 0; right: 0;
-            background: #000; z-index: 7; pointer-events: none;
-        }
-        .cine-bar-top { top: 0; height: var(--cine-bar-top-h); }
-        .cine-bar-bottom { bottom: 0; height: var(--cine-bar-bottom-h); }
     </style>
 </head>
 <body>
@@ -456,8 +391,6 @@
             <div class="mv-info-artist" id="mv-info-artist"></div>
         </div>
         <img class="mv-logo" id="mv-logo" src="/assets/crowddj-logo-white.svg" alt="">
-        <div class="cine-bar cine-bar-top"></div>
-        <div class="cine-bar cine-bar-bottom"></div>
     </div>
 
     <div id="mute-overlay"></div>
@@ -1149,36 +1082,6 @@
         }
         loadYouTubeApi();
 
-        // Keeps --yt-scale (see .video-frame .yt-player-el above) equal to
-        // "how big is the real 16:9 box on THIS screen, divided by the
-        // small fixed size the iframe itself is rendered at" - i.e. the
-        // factor that blows the small-player iframe back up to fill the
-        // actual video area. Driven by ResizeObserver rather than a fixed
-        // number so this keeps working if the display's resolution or
-        // window size ever changes (the box's own size already comes from
-        // vw/vh in .video-cover-fit's CSS, so it can genuinely change on
-        // resize, not just on first load). Both player slots are always
-        // the same size (same CSS formula), so observing one is enough;
-        // the scale is shared globally via a :root custom property since
-        // both slots need it applied at once for the handoff hard-cut.
-        function observeVideoScale() {
-            const sample = document.querySelector('.video-cover-fit');
-            if (!sample) return;
-            const baseW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--yt-base-w')) || 220;
-            const apply = () => {
-                const w = sample.getBoundingClientRect().width;
-                if (w > 0) document.documentElement.style.setProperty('--yt-scale', (w / baseW).toFixed(4));
-            };
-            apply();
-            if (window.ResizeObserver) {
-                new ResizeObserver(apply).observe(sample);
-            } else {
-                window.addEventListener('resize', apply);
-            }
-        }
-        observeVideoScale();
-
-
         // If a video was already waiting on this slot (either it's the
         // active slot's video, still loading when the player wasn't ready
         // yet, or a handoff that was preloading into the pending slot),
@@ -1629,12 +1532,6 @@
             if (cur === null) return;
 
             if (!mvClock.isPlaying) {
-                // Re-cover the instant we know playback should stop, rather
-                // than waiting on the async onStateChange(PAUSED) event to
-                // do it - that gap is exactly what let YouTube's native
-                // paused UI (title, pause button, "More Videos", captions)
-                // flash through uncovered.
-                document.getElementById(`video-loading-cover-${activeSlot}`).classList.remove('is-hidden', 'is-hidden-instant');
                 if (state === YT.PlayerState.PLAYING) st.yt.pauseVideo();
                 mvSetRate(activeSlot, 1);
                 return;
