@@ -1833,8 +1833,21 @@
                 document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             });
             if (wasRevealed) {
-                // Force a fresh render rather than assuming whatever ambient
-                // state was current before the video started is still valid.
+                // Switch off the video view THE INSTANT it stops, showing
+                // whatever ambient/queue content is already rendered
+                // underneath (left over from before this video started)
+                // rather than waiting on the network round-trip below. That
+                // wait used to be the actual cause of the black flash back
+                // to ambient/queue: the loading-cover going back up is
+                // instant, but #video-view itself stayed marked is-visible
+                // - and everything underneath stayed hidden - until
+                // pollAmbientVisuals()'s fetch resolved. Deciding here with
+                // the CLIENT's own already-known visualsForceQueue is a
+                // one-poll-stale guess at worst (it's corrected the moment
+                // resetAmbientAndRepoll's fresh fetch lands, same as
+                // before) - far better than guaranteed black in the
+                // meantime.
+                showView(visualsForceQueue ? 'queue' : 'ambient');
                 resetAmbientAndRepoll();
             } else {
                 // Never made it on screen - ambient visuals never stopped.
@@ -1929,7 +1942,11 @@
         setInterval(pollAmbientVisuals, 8000);
         setInterval(pollQueueBoard, 8000);
         setInterval(pollNowPlaying, 4000);
-        setInterval(pollMusicVideo, 3000);
+        // Was 3000ms - the single biggest controllable source of "takes a
+        // while to start" delay between a song landing on a video slot and
+        // the display noticing. Well within publicReadLimiter's budget
+        // (600/min per IP+event) alongside the other polls above.
+        setInterval(pollMusicVideo, 1000);
     </script>
 </body>
 </html>
