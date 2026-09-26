@@ -1552,14 +1552,17 @@ function averageConsecutiveFrameDiff(grayFrames) {
 }
 
 // --- Item 5: content-moderation gate ---------------------------------------
-// Abstracted behind this one function so the underlying image-moderation
-// provider - AWS Rekognition, Google Cloud Vision SafeSearch, Azure Content
-// Moderator, a self-hosted classifier, whatever ends up chosen - can be
-// swapped without touching any of the calling code below it. No provider
-// is wired up yet (that needs real API credentials/config this codebase
-// doesn't have), so this is currently a stub that reports "not flagged"
-// for everything; replace the body with a real call once a provider is
-// picked, keeping the same {flagged} shape so nothing else has to change.
+// Self-hosted NSFWJS (MIT-licensed, TensorFlow.js) - classification runs
+// fully locally on the frames item 4 already sampled, so there's no
+// per-frame API call, no external network dependency at request time, and
+// no per-call cost, matching the "$0 recurring cost" requirement.
+//
+// The model files are deliberately NOT fetched from nsfwjs's own hosted URL
+// at runtime - see scripts/fetch-nsfw-model.js, which downloads them ONCE
+// and the result gets committed into this repo under models/nsfw/. That
+// script needs to be run manually (`node scripts/fetch-nsfw-model.js`)
+// before this will do anything other than log a load failure and fall back
+// to "not flagged" - see the README note added alongside it.
 //
 // REJECT-ONLY: this filter's only job is to catch what it can - a `false`
 // here means "nothing was detected", NOT "this frame is confirmed safe",
@@ -1572,13 +1575,61 @@ function averageConsecutiveFrameDiff(grayFrames) {
 // that review queue yet. That's a real feature in its own right, so this
 // is left as a documentation/architecture note for whoever builds it next,
 // not an implementation here.
+const tf = require('@tensorflow/tfjs-node');
+const nsfwjs = require('nsfwjs');
+
+const NSFW_MODEL_PATH = process.env.NSFW_MODEL_PATH || path.join(__dirname, 'models', 'nsfw', 'model.json');
+// Porn/Hentai are unambiguous rejections at a moderate confidence. "Sexy"
+// (swimwear, suggestive-but-not-explicit) is judged separately and more
+// permissively - plenty of entirely normal music videos would otherwise get
+// flagged - and only rejected at high confidence. Both are conservative
+// first guesses, same convention as MUSIC_VIDEO_MOTION_MIN_AVG_DIFF above:
+// there's no real library of flagged/passed videos to tune against yet.
+const NSFW_PORN_HENTAI_THRESHOLD = 0.6;
+const NSFW_SEXY_THRESHOLD = 0.85;
+
+// Loaded once, lazily, and reused for every frame check - loading the model
+// from disk on every call would be needless repeated I/O and TF graph
+// construction. A failed load is NOT cached as a permanent failure: the
+// next call retries (covers a transient issue, or the model files being
+// added after the process already started polling this function).
+let nsfwModelPromise = null;
+function getNsfwModel() {
+    if (!nsfwModelPromise) {
+        nsfwModelPromise = nsfwjs.load(`file://${NSFW_MODEL_PATH}`).catch(e => {
+            console.error(`[MV-MATCH] Could not load NSFWJS model from ${NSFW_MODEL_PATH}:`, e.message);
+            nsfwModelPromise = null;
+            throw e;
+        });
+    }
+    return nsfwModelPromise;
+}
+
 async function checkFrameSafety(frameBuffer) {
-    // TODO: wire up a real provider here. Example shape, for AWS Rekognition:
-    //   const res = await rekognitionClient.send(new DetectModerationLabelsCommand({
-    //       Image: { Bytes: frameBuffer }, MinConfidence: 80
-    //   }));
-    //   return { flagged: (res.ModerationLabels || []).length > 0 };
-    return { flagged: false };
+    let model;
+    try {
+        model = await getNsfwModel();
+    } catch (e) {
+        // Model missing/unloadable is not evidence about the frame - same
+        // "a check that couldn't run is not a flag" convention used
+        // everywhere else in this feature (see the catch in the caller).
+        return { flagged: false };
+    }
+    let tensor;
+    try {
+        tensor = tf.node.decodeImage(frameBuffer, 3);
+        const predictions = await model.classify(tensor);
+        const scoreOf = name => (predictions.find(p => p.className === name) || {}).probability || 0;
+        const flagged = scoreOf('Porn') >= NSFW_PORN_HENTAI_THRESHOLD
+            || scoreOf('Hentai') >= NSFW_PORN_HENTAI_THRESHOLD
+            || scoreOf('Sexy') >= NSFW_SEXY_THRESHOLD;
+        return { flagged, predictions }; // predictions kept for future admin debugging/threshold tuning, not required by callers
+    } catch (e) {
+        console.error('[MV-MATCH] NSFWJS classification failed:', e.message);
+        return { flagged: false };
+    } finally {
+        if (tensor) tensor.dispose();
+    }
 }
 
 // Per-video (not per-track) cache of the combined item 4 + item 5 result -
@@ -4392,6 +4443,32 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     res.json({ success: true, offsetMs: clamped });
 });
 
+// Item 6 (manual admin fallback): lets an admin directly correct a cached
+// match's introOffsetMs without going through family mode - covers the rare
+// case where verification never found a usable reference audio (an obscure
+// track, or one with no plain-audio upload to compare against) and the
+// video is stuck at a guessed/zero offset that's visibly wrong once you can
+// actually see it playing. Requires videoId as well as trackId, not just
+// trackId - guards against a race where the cached match changed (a
+// re-search found a different video) between when the admin looked at the
+// screen and when they clicked Save. Marking it WITHOUT `guessed: true`
+// (see the shape below) is what keeps mvMaybeUpgradeGuess from silently
+// clobbering a human's correction with a background "improved" guess later.
+app.post('/e/:slug/api/admin/visuals/manual-offset', (req, res) => {
+    const { trackId, videoId, introOffsetMs } = req.body || {};
+    if (!trackId || typeof trackId !== 'string') return res.status(400).json({ error: 'trackId is required.' });
+    if (!videoId || typeof videoId !== 'string') return res.status(400).json({ error: 'videoId is required.' });
+    const parsed = Number(introOffsetMs);
+    if (!Number.isFinite(parsed)) return res.status(400).json({ error: 'introOffsetMs must be a number.' });
+    const clamped = Math.max(MUSIC_VIDEO_OFFSET_MIN_MS, Math.min(MUSIC_VIDEO_OFFSET_MAX_MS, Math.round(parsed)));
+    const current = verifiedMusicVideoCache.get(trackId);
+    if (!current || !current.videoId) return res.status(400).json({ error: 'This track has no cached video match to adjust yet.' });
+    if (current.videoId !== videoId) return res.status(409).json({ error: 'The cached match for this track changed since you loaded this page - refresh and try again.' });
+    verifiedMusicVideoCache.set(trackId, { videoId: current.videoId, introOffsetMs: clamped, confidence: current.confidence, verified: true, manualOverride: true });
+    events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
+    res.json({ success: true, introOffsetMs: clamped });
+});
+
 // Step-by-step diagnosis of the music-video pipeline for the song playing
 // right now. Needs the admin password header, e.g.:
 //   curl -H "x-admin-password: YOURPASSWORD" "https://HOST/e/SLUG/api/admin/visuals/music-video-debug?run=1"
@@ -5459,6 +5536,17 @@ app.listen(PORT, async () => {
         console.log(`[SERVER] Loaded family-mode lists from Redis: ${musicVideoDenylist.size} denylisted, ${musicVideoAllowlist.size} allowlisted.`);
     } catch (err) {
         console.error('[SERVER] Failed to load persisted family-mode lists:', err.message);
+    }
+    // Item 5: warm the NSFWJS model now rather than on the first frame check
+    // of the night, so an event's very first music video isn't the one that
+    // eats a multi-second model-load cold start. A failure here is logged
+    // once and clearly, rather than silently surfacing later as every
+    // checkFrameSafety call quietly reporting "not flagged".
+    try {
+        await getNsfwModel();
+        console.log('[SERVER] NSFWJS moderation model loaded from', NSFW_MODEL_PATH);
+    } catch (e) {
+        console.error('[SERVER] NSFWJS model failed to load - moderation checks will report "not flagged" (i.e. moderation is effectively OFF) until this is fixed. Run `node scripts/fetch-nsfw-model.js` and redeploy. Error:', e.message);
     }
     await getSpotifyToken();
 });
