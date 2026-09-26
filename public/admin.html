@@ -1279,6 +1279,62 @@
                                 on your speakers, so the right value is specific to this venue's setup - it may
                                 take a bit of trial and error the first time.
                             </p>
+                            <div id="mv-current-match-box" style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.04); border-radius: 8px; display: none;">
+                                <div class="settings-section-label" style="margin-bottom: 6px;">Current Song's Video Match</div>
+                                <p id="mv-current-match-summary" class="settings-card-hint" style="margin: 0 0 10px 0;"></p>
+                                <div class="config-dashboard">
+                                    <div class="input-group">
+                                        <label>This video's offset (ms)</label>
+                                        <input type="number" id="input-mv-manual-offset" step="50">
+                                    </div>
+                                    <button class="save-config-btn" onclick="saveManualOffset()">Set Offset</button>
+                                </div>
+                                <div class="control-bar" style="margin-top: 10px;">
+                                    <button class="utility-btn" onclick="nudgeManualOffset(-100)">− 100ms</button>
+                                    <button class="utility-btn" onclick="nudgeManualOffset(100)">+ 100ms</button>
+                                    <button class="utility-btn" onclick="denylistCurrentTrack()">Denylist This Track</button>
+                                    <button class="utility-btn" onclick="allowlistCurrentMatch()">Approve for Family Mode</button>
+                                    <button class="utility-btn" style="background: var(--red-action, #e91429); border-color: var(--red-action, #e91429); color: white;" onclick="blacklistCurrentVideo()">Blacklist This Video</button>
+                                </div>
+                                <p class="settings-card-hint" style="margin-top: 10px; margin-bottom: 0;">
+                                    Adjusts THIS specific song's video only - separate from the whole-stream Video Timing
+                                    Offset above. Use this when one particular video won't sync no matter what the global
+                                    offset is set to. <strong>Blacklist This Video</strong> throws out this match entirely
+                                    and searches for a different candidate next time the song plays, everywhere, not just
+                                    here.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Family Mode &amp; Content Safety</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                Automated checks (audio match confidence, motion detection, and content-safety scanning)
+                                catch most bad matches on their own, but they're not perfect. <strong>Family Mode</strong>
+                                flips the default: with it on, a song's video plays ONLY if a human has already approved
+                                that exact video below - nothing plays automatically no matter what the automated checks
+                                concluded. The denylist below applies regardless of Family Mode and blocks a song's video
+                                everywhere, for every event on this platform.
+                            </p>
+                            <div class="control-bar">
+                                <button id="toggle-family-mode" class="toggle-btn closed-status" onclick="toggleFamilyMode()">Family Mode: OFF</button>
+                            </div>
+
+                            <div class="settings-section-label" style="margin-top: 20px;">Denylist (blocked everywhere)</div>
+                            <div class="input-group">
+                                <label>Search for a song to block</label>
+                                <input type="text" id="denylist-search-input" placeholder="Search for a song or artist" oninput="onDenylistSearchInput()">
+                            </div>
+                            <div id="denylist-search-results"></div>
+                            <div id="denylist-rows" class="family-list-rows"></div>
+
+                            <div class="settings-section-label" style="margin-top: 20px;">Allowlist (approved for Family Mode)</div>
+                            <p class="settings-card-hint" style="margin-top: 0;">
+                                Approves one specific video for one specific song - not just the song in general. Easiest
+                                way to add an entry is the "Approve for Family Mode" button above, while that song's
+                                already-matched video is playing.
+                            </p>
+                            <div id="allowlist-rows" class="family-list-rows"></div>
                         </div>
                     </div>
 
@@ -1415,6 +1471,14 @@
         let visualsShowQueue = false;
         let musicVideosEnabled = false;
         let musicVideoSubtitlesEnabled = false;
+        let familyModeEnabled = false;
+        // The song currently on screen's video match, as last reported by the
+        // public status endpoint - null until the first poll succeeds, or if
+        // nothing has a matched video right now. Used so the nudge/denylist/
+        // allowlist/blacklist buttons know what they're acting on without the
+        // admin ever having to type a track/video ID by hand.
+        let mvCurrentMatch = null;
+        let familyLists = { denylist: [], allowlist: {} };
         let isAuthorized = false; 
 
         // Mirrors GENRE_CATEGORIES in server.js - keep the keys in sync with that file.
@@ -1949,6 +2013,210 @@ async function verifyPassword() {
             updateDashboard();
         }
 
+        // ---- Family Mode / content safety --------------------------------
+
+        async function toggleFamilyMode() {
+            if (!isAuthorized) return;
+            await fetch(eventUrl('/api/admin/visuals/toggle-family-mode'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ enabled: !familyModeEnabled })
+            });
+            updateDashboard();
+        }
+
+        // Polled independently of updateDashboard (which only knows this
+        // event's settings, not the global music-video match state) - reuses
+        // the same public status endpoint the Visuals Display itself polls,
+        // so this always reflects exactly what's about to be (or already is)
+        // on screen.
+        async function pollCurrentMusicVideoMatch() {
+            try {
+                const res = await fetch(eventUrl('/api/music-video/status'));
+                if (!res.ok) return;
+                const data = await res.json();
+                const box = document.getElementById('mv-current-match-box');
+                if (!data.matched || !data.videoId) {
+                    mvCurrentMatch = null;
+                    box.style.display = 'none';
+                    return;
+                }
+                mvCurrentMatch = { trackId: data.trackId, videoId: data.videoId, introOffsetMs: data.introOffsetMs || 0 };
+                box.style.display = 'block';
+                document.getElementById('mv-current-match-summary').innerHTML =
+                    `Video <a href="https://youtube.com/watch?v=${encodeURIComponent(data.videoId)}" target="_blank" rel="noopener">${escapeHtml(data.videoId)}</a>` +
+                    ` &middot; offset source: ${escapeHtml(data.offsetSource || 'unknown')}`;
+                if (document.activeElement !== document.getElementById('input-mv-manual-offset')) {
+                    document.getElementById('input-mv-manual-offset').value = data.introOffsetMs || 0;
+                }
+            } catch (e) { /* transient poll failure - next poll picks it back up */ }
+        }
+
+        async function submitManualOffset(ms) {
+            if (!isAuthorized || !mvCurrentMatch) return;
+            const res = await fetch(eventUrl('/api/admin/visuals/manual-offset'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ trackId: mvCurrentMatch.trackId, videoId: mvCurrentMatch.videoId, introOffsetMs: ms })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) showToast("This video's offset updated.", "success");
+            else showToast(data.error || "Could not update this video's offset.", "error");
+            pollCurrentMusicVideoMatch();
+        }
+
+        function saveManualOffset() {
+            const val = parseInt(document.getElementById('input-mv-manual-offset').value, 10);
+            if (Number.isFinite(val)) submitManualOffset(val);
+        }
+
+        function nudgeManualOffset(deltaMs) {
+            if (!mvCurrentMatch) return;
+            submitManualOffset((mvCurrentMatch.introOffsetMs || 0) + deltaMs);
+        }
+
+        async function blacklistCurrentVideo() {
+            if (!isAuthorized || !mvCurrentMatch) return;
+            if (!confirm("Throw out this video and search for a different match next time this song plays (everywhere, not just this event)?")) return;
+            await fetch(eventUrl('/api/music-video/sync-failed'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ trackId: mvCurrentMatch.trackId, videoId: mvCurrentMatch.videoId, keepCurrent: true })
+            });
+            showToast("Video blacklisted - it'll try a different candidate next time.", "success");
+            pollCurrentMusicVideoMatch();
+        }
+
+        async function denylistCurrentTrack() {
+            if (!isAuthorized || !mvCurrentMatch) return;
+            await submitDenylistAdd(mvCurrentMatch.trackId);
+        }
+
+        async function allowlistCurrentMatch() {
+            if (!isAuthorized || !mvCurrentMatch) return;
+            const res = await fetch(eventUrl('/api/admin/visuals/family-allowlist'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ trackId: mvCurrentMatch.trackId, videoId: mvCurrentMatch.videoId, introOffsetMs: mvCurrentMatch.introOffsetMs || 0 })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) showToast("Approved for Family Mode.", "success");
+            else showToast(data.error || "Could not approve this video.", "error");
+            loadFamilyLists();
+        }
+
+        async function loadFamilyLists() {
+            try {
+                const res = await fetch(eventUrl('/api/admin/visuals/family-lists'), { headers: adminHeaders() });
+                if (!res.ok) return;
+                familyLists = await res.json();
+                renderFamilyLists();
+            } catch (e) { /* transient poll failure - next poll picks it back up */ }
+        }
+
+        function renderFamilyLists() {
+            const denyEl = document.getElementById('denylist-rows');
+            const denylist = familyLists.denylist || [];
+            denyEl.innerHTML = denylist.length === 0
+                ? '<p class="settings-card-hint" style="margin: 8px 0 0 0;">Nothing denylisted.</p>'
+                : denylist.map(trackId => `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+                        <code style="font-size:0.8rem; color:#ddd;">${escapeHtml(trackId)}</code>
+                        <button class="utility-btn" onclick="submitDenylistRemove('${trackId}')">Remove</button>
+                    </div>
+                `).join('');
+
+            const allowEl = document.getElementById('allowlist-rows');
+            const entries = Object.entries(familyLists.allowlist || {});
+            allowEl.innerHTML = entries.length === 0
+                ? '<p class="settings-card-hint" style="margin: 8px 0 0 0;">Nothing approved yet.</p>'
+                : entries.map(([trackId, info]) => `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+                        <div>
+                            <code style="font-size:0.8rem; color:#ddd;">${escapeHtml(trackId)}</code>
+                            <span style="font-size:0.8rem; color:#a7a7a7;"> &rarr; video ${escapeHtml(info.videoId)}, offset ${info.introOffsetMs || 0}ms</span>
+                        </div>
+                        <button class="utility-btn" onclick="submitAllowlistRemove('${trackId}')">Remove</button>
+                    </div>
+                `).join('');
+        }
+
+        // Debounced search for the denylist box - same pattern as the "Add a
+        // Song" panel's search, reusing the same admin search endpoint. The
+        // result rows call submitDenylistAdd directly instead of adding to
+        // the queue.
+        let denylistSearchDebounce = null;
+        function onDenylistSearchInput() {
+            clearTimeout(denylistSearchDebounce);
+            const query = document.getElementById('denylist-search-input').value.trim();
+            const resultsEl = document.getElementById('denylist-search-results');
+            if (!query) { resultsEl.innerHTML = ''; return; }
+            denylistSearchDebounce = setTimeout(() => runDenylistSearch(query), 350);
+        }
+
+        async function runDenylistSearch(query) {
+            const resultsEl = document.getElementById('denylist-search-results');
+            try {
+                const res = await fetch(eventUrl(`/api/admin/search?q=${encodeURIComponent(query)}`), {
+                    headers: adminHeaders()
+                });
+                const data = await res.json();
+                const tracks = data.tracks || [];
+                resultsEl.innerHTML = tracks.length === 0
+                    ? '<p class="empty-placeholder">No results.</p>'
+                    : tracks.map(t => `
+                        <div class="search-result-row">
+                            <img src="${safeImageUrl(t.artwork)}">
+                            <div class="search-result-text">
+                                <div class="search-result-title">${escapeHtml(t.name)}${t.explicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+                                <div class="search-result-artist">${escapeHtml(t.artist)}</div>
+                            </div>
+                            <button class="btn-add-track" style="background: var(--red-action, #e91429);" onclick="addToDenylistFromSearch('${t.id}', this)">Denylist</button>
+                        </div>`).join('');
+            } catch (err) {
+                resultsEl.innerHTML = '<p class="empty-placeholder">Search unavailable right now.</p>';
+            }
+        }
+
+        async function addToDenylistFromSearch(trackId, btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = 'Adding...';
+            await submitDenylistAdd(trackId);
+            document.getElementById('denylist-search-input').value = '';
+            document.getElementById('denylist-search-results').innerHTML = '';
+        }
+
+        async function submitDenylistAdd(trackId) {
+            if (!isAuthorized || !trackId) return;
+            const res = await fetch(eventUrl('/api/admin/visuals/family-denylist'), {
+                method: 'POST',
+                headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ trackId })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) showToast("Added to denylist.", "success");
+            else showToast(data.error || "Could not add to denylist.", "error");
+            loadFamilyLists();
+        }
+
+        async function submitDenylistRemove(trackId) {
+            if (!isAuthorized) return;
+            await fetch(eventUrl(`/api/admin/visuals/family-denylist/${encodeURIComponent(trackId)}`), {
+                method: 'DELETE',
+                headers: adminHeaders()
+            });
+            loadFamilyLists();
+        }
+
+        async function submitAllowlistRemove(trackId) {
+            if (!isAuthorized) return;
+            await fetch(eventUrl(`/api/admin/visuals/family-allowlist/${encodeURIComponent(trackId)}`), {
+                method: 'DELETE',
+                headers: adminHeaders()
+            });
+            loadFamilyLists();
+        }
+
         async function saveKioskConfig() {
             if (!isAuthorized) return;
             const maxVal = document.getElementById('input-kiosk-max-credits').value;
@@ -2288,6 +2556,11 @@ async function verifyPassword() {
                     if (document.activeElement !== document.getElementById('input-music-video-offset')) {
                         document.getElementById('input-music-video-offset').value = data.visuals.musicVideoOffsetMs;
                     }
+
+                    const familyModeBtn = document.getElementById('toggle-family-mode');
+                    familyModeEnabled = !!data.visuals.familyModeEnabled;
+                    familyModeBtn.innerText = familyModeEnabled ? "Family Mode: ON" : "Family Mode: OFF";
+                    familyModeBtn.className = familyModeEnabled ? "toggle-btn open-status" : "toggle-btn closed-status";
                 }
 
                 if (!filtersInitialized) {
@@ -2873,6 +3146,10 @@ async function verifyPassword() {
         };
 
         setInterval(updateDashboard, 3000);
+        setInterval(pollCurrentMusicVideoMatch, 3000);
+        setInterval(loadFamilyLists, 8000);
+        pollCurrentMusicVideoMatch();
+        loadFamilyLists();
     </script>
     <div id="toast-container"></div>
 
