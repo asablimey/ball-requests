@@ -1532,6 +1532,12 @@
             if (cur === null) return;
 
             if (!mvClock.isPlaying) {
+                // Re-cover the instant we know playback should stop, rather
+                // than waiting on the async onStateChange(PAUSED) event to
+                // do it - that gap is exactly what let YouTube's native
+                // paused UI (title, pause button, "More Videos", captions)
+                // flash through uncovered.
+                document.getElementById(`video-loading-cover-${activeSlot}`).classList.remove('is-hidden', 'is-hidden-instant');
                 if (state === YT.PlayerState.PLAYING) st.yt.pauseVideo();
                 mvSetRate(activeSlot, 1);
                 return;
