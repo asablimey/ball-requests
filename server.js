@@ -643,12 +643,26 @@ function normalizeForMatch(str) {
 // Checked against every credited artist (not just the first), since a
 // channel belonging to any one of them - e.g. a featured artist uploading
 // the same official video - is legitimate too.
+//
+// STRICT ON PURPOSE: exact official-channel naming only - "ArtistName",
+// "ArtistNameVEVO", or (rarer) "VEVOArtistName" - never a loose substring.
+// A substring check let through anything that merely MENTIONS the artist
+// in its own channel name - "ArtistName Fan Page", "Best of ArtistName",
+// "ArtistName Music Videos" all satisfied `.includes()` while being
+// nobody's official channel. If a real official channel ever gets missed
+// by this (an unusual naming pattern), that's a false negative - falls
+// back to no video / Ambient Visuals, which is the safe direction to fail
+// in for this feature. A false POSITIVE (a fan channel slipping through)
+// is the actual failure mode this function exists to prevent.
 function channelMatchesAnyArtist(channelTitle, artistNames) {
     const normalizedChannel = normalizeForMatch(channelTitle);
     if (!normalizedChannel) return false;
     return artistNames.some(name => {
         const normalizedName = normalizeForMatch(name);
-        return normalizedName.length > 0 && normalizedChannel.includes(normalizedName);
+        if (!normalizedName) return false;
+        return normalizedChannel === normalizedName ||
+               normalizedChannel === `${normalizedName}vevo` ||
+               normalizedChannel === `vevo${normalizedName}`;
     });
 }
 
@@ -697,7 +711,34 @@ const DISQUALIFYING_TITLE_PATTERNS = [
     /\blive at\b/i,
     /\blive performance\b/i,
     /\bunplugged\b/i,
-    /\bacoustic session\b/i
+    /\bacoustic session\b/i,
+    // Item 6: not the artist's OWN official upload, even when it names the
+    // right song and might otherwise pass the channel check - a fan could
+    // title their upload plainly, or re-upload it to a channel whose name
+    // happens to satisfy channelMatchesAnyArtist. Title-level backstop for
+    // exactly the "fan video" / "alternate video" category this feature is
+    // meant to exclude.
+    /\bfan\s*-?\s*made\b/i,
+    /\bfan\s*-?\s*video\b/i,
+    /\bfan\s*-?\s*edit\b/i,
+    /\bfan\s*-?\s*film\b/i,
+    /\bunofficial\b/i,
+    /\balternate\b/i,
+    /\balternative version\b/i,
+    /\btribute\b/i,
+    /\bparody\b/i,
+    /\breaction\b/i,
+    /\bcover\b/i,
+    /\bremix\b/i,
+    /\bmashup\b/i,
+    /\bkaraoke\b/i,
+    /\binstrumental\b/i,
+    /\bcompilation\b/i,
+    /\bslowed\b/i,
+    /\bsped ?up\b/i,
+    /\bnightcore\b/i,
+    /\b8-?bit\b/i,
+    /\bfull album\b/i
 ];
 function titleLooksDisqualified(title) {
     return DISQUALIFYING_TITLE_PATTERNS.some(re => re.test(title || ''));
