@@ -1535,6 +1535,14 @@
             const absMs = Math.abs(driftMs);
             const settling = Date.now() - mvLastCorrectionAt < (mvFlaggedBad ? MV_FLAGGED_SETTLE_MS : MV_SETTLE_MS);
 
+            // TEMP DIAGNOSTIC LOGGING - purely observational, does not affect
+            // any sync decision below. Safe to remove once the drift pattern
+            // is understood. Watch this in the browser console during a
+            // video: is the number roughly flat (a bad fixed intro-offset
+            // for THIS video) or does it climb over time (the live
+            // correction loop not keeping up)?
+            console.log(`[MV-SYNC] track=${currentVideoTrackId} video=${currentVideoId} pos=${cur.toFixed(2)}s target=${mvTargetSec().toFixed(2)}s drift=${driftMs.toFixed(0)}ms settling=${settling}`);
+
             if (!settling && absMs > MV_BIG_DRIFT_MS) {
                 mvConsecutiveBigDrifts++;
                 if (mvConsecutiveBigDrifts >= MV_MAX_BIG_DRIFT_CHECKS) {
@@ -1728,6 +1736,8 @@
 
         function startMusicVideo(videoId, trackId) {
             musicVideoActive = true;
+            // TEMP DIAGNOSTIC LOGGING - see the matching note in mvCheck().
+            console.log(`[MV-SYNC] === starting video=${videoId} for track=${trackId} (intro offset=${mvIntroOffsetMs}ms, lead=${mvVideoLeadMs}ms) ===`);
 
             if (mvRevealed) {
                 // A video is already up on screen for the previous song -
