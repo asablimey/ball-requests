@@ -225,7 +225,7 @@
                NOTE: this can only be estimated without a live YouTube
                embed to check the real caption position against - it's a
                starting point, not a measured value. */
-            --mv-caption-reveal: 70px;
+            --mv-caption-reveal: 0px; /* was 70px - only needed room for captions, which are off; raise this again if Subtitles gets toggled on in admin and text looks clipped */
             /* item 10: fills the screen edge to edge - no more side
                letterbox bars. The old version computed width FROM a height
                budget that had already been shrunk to reserve room for
@@ -250,10 +250,20 @@
            of the two constraints binds on a given screen and the other
            overflows, centered by the translate below. */
         .video-cover-fit {
+            /* Changed from min-width/min-height (crop-to-fill, "cover")
+               to max-width/max-height (shrink-to-fit, "contain") - the
+               box now sizes to whichever of the two 16:9 candidates is
+               SMALLER instead of larger, so the full picture is always
+               visible with nothing cropped off. .video-frame's own
+               background: #000 (with overflow: hidden) then shows
+               through as real letterbox/pillarbox bars on whatever
+               edges are left over, instead of the picture being zoomed
+               to fill the screen. */
             position: absolute; top: 50%; left: 50%;
             width: 100vw; height: 56.25vw; /* 16:9 at full viewport width */
-            min-width: 177.78vh; min-height: 100vh; /* 16:9 at full viewport height */
+            max-width: 177.78vh; max-height: 100vh; /* 16:9 at full viewport height */
             transform: translate(-50%, -50%);
+            overflow: hidden; /* clip at this box's own (now smaller) edges, not just video-frame's full-screen ones */
         }
         /* top/height below are expressed against (100% - reveal) rather
            than .video-cover-fit's raw 100%, because that box is now taller
