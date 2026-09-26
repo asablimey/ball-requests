@@ -2128,22 +2128,49 @@ function mvVerificationNoteInconclusive(trackId) {
     verificationRetryState.set(trackId, { attempts, notBefore: Date.now() + delay });
 }
 
-// A video offered with a GUESSED intro offset gets one background attempt per
-// process to measure the real offset from the audio. Never uses paid searches,
-// never runs while YouTube is throttling downloads, and only replaces the
-// guess if a real match is found - otherwise the guess stays.
+// A video offered with a GUESSED intro offset needs a real audio-measured
+// offset before it's ever eligible to play for guests (see the /api/music-video
+// route below). This schedules that measurement in the background and, on
+// success, replaces the guess with the measured offset.
+//
+// mvUpgradeAttempted is now "a genuine measurement attempt actually ran to
+// completion for this trackId" - set only once getReferenceAudioEnvelope AND
+// measureIntroOffset have both actually resolved, regardless of whether a
+// confident match came back. An infrastructure-level bail-out (no reference
+// audio yet, ytdl cooldown, quota exhausted, a network/download error) is NOT
+// a completed attempt, so it must not set this - otherwise a transient hiccup
+// would permanently strand the guess for the rest of the process's lifetime.
+// Those bail-outs instead back off and retry via mvUpgradeRetryState, same
+// {attempts, notBefore} pattern verificationRetryState uses for the main
+// verification path above. mvUpgradeInFlight (mirroring verificationInFlight)
+// stops repeated polls of a still-guessed track from queueing duplicate
+// upgrade jobs while one is already scheduled/running.
 const mvUpgradeAttempted = new Set();
+const mvUpgradeInFlight = new Set();
+const mvUpgradeRetryState = new Map(); // trackId -> { attempts, notBefore }
+function mvUpgradeNoteInconclusive(trackId) {
+    const prev = mvUpgradeRetryState.get(trackId);
+    const attempts = (prev ? prev.attempts : 0) + 1;
+    const delay = Math.min(MV_VERIFICATION_RETRY_MAX_MS, MV_VERIFICATION_RETRY_BASE_MS * Math.pow(2, attempts - 1));
+    mvUpgradeRetryState.set(trackId, { attempts, notBefore: Date.now() + delay });
+}
 function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
     const cur = verifiedMusicVideoCache.get(trackId);
-    if (!cur || !cur.guessed || mvUpgradeAttempted.has(trackId)) return;
-    if (Date.now() < ytdlCooldownUntil || !youtubeQuotaAvailable(1)) return;
-    mvUpgradeAttempted.add(trackId);
+    if (!cur || !cur.guessed || mvUpgradeAttempted.has(trackId) || mvUpgradeInFlight.has(trackId)) return;
+    if (Date.now() < ytdlCooldownUntil || !youtubeQuotaAvailable(1)) return; // not a completed attempt either way - just try again next call, nothing to note
+    const retry = mvUpgradeRetryState.get(trackId);
+    if (retry && Date.now() < retry.notBefore) return; // last attempt was inconclusive - wait out the backoff
+    mvUpgradeInFlight.add(trackId);
     const artistNames = (artistNamesRaw || '').split(',').map(x => x.trim()).filter(Boolean);
     mvVerificationSchedule(async () => {
         try {
             const ref = await getReferenceAudioEnvelope(trackId, artistNames, title, durationMs, {}, false); // no paid search - background/best-effort
-            if (!ref) return;
+            if (!ref) { mvUpgradeNoteInconclusive(trackId); return; } // no reference audio yet - infrastructure bail-out, not a completed attempt
             const measured = await measureIntroOffset(cur.videoId, ref, cur.introOffsetMs); // cur.introOffsetMs is the earlier guess - i.e. the expected extra length
+            // A genuine measurement attempt just ran to completion - whether or
+            // not it found a confident match, there's nothing left to retry.
+            mvUpgradeAttempted.add(trackId);
+            mvUpgradeRetryState.delete(trackId);
             const now = verifiedMusicVideoCache.get(trackId);
             if (measured && now && now.guessed && now.videoId === cur.videoId) {
                 verifiedMusicVideoCache.set(trackId, { videoId: cur.videoId, introOffsetMs: measured.introOffsetMs, confidence: measured.confidence, verified: true });
@@ -2152,6 +2179,9 @@ function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
             }
         } catch (e) {
             console.error(`[MV-MATCH] Offset refinement failed for "${title}":`, e.message);
+            mvUpgradeNoteInconclusive(trackId); // download/network error mid-attempt - infrastructure bail-out, not a completed attempt
+        } finally {
+            mvUpgradeInFlight.delete(trackId);
         }
     });
 }
@@ -4488,7 +4518,7 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
 // match's introOffsetMs without going through family mode - covers the rare
 // case where verification never found a usable reference audio (an obscure
 // track, or one with no plain-audio upload to compare against) and the
-// video is stuck at a guessed/zero offset that's visibly wrong once you can
+// video is stuck at a zero offset that's visibly wrong once you can
 // actually see it playing. Requires videoId as well as trackId, not just
 // trackId - guards against a race where the cached match changed (a
 // re-search found a different video) between when the admin looked at the
@@ -5359,36 +5389,50 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
 
-        if (verifiedMusicVideoCache.has(np.trackId) && !(verifiedMusicVideoCache.get(np.trackId) && excludeVideoIds.has(verifiedMusicVideoCache.get(np.trackId).videoId))) {
+        const hasCachedEntry = verifiedMusicVideoCache.has(np.trackId);
+        const cachedEntry = hasCachedEntry ? verifiedMusicVideoCache.get(np.trackId) : undefined;
+        const cachedIsUsable = hasCachedEntry && !(cachedEntry && excludeVideoIds.has(cachedEntry.videoId));
+
+        if (cachedIsUsable && cachedEntry && cachedEntry.guessed) {
+            // A guess exists for this track but hasn't been upgraded to a real,
+            // audio-measured offset yet. A guess is never eligible to reach the
+            // display - only the measured offset is (see mvMaybeUpgradeGuess) -
+            // so this is treated the same as "no verified answer yet" below:
+            // fall back to ambient for THIS play-through and keep trying to
+            // upgrade the guess in the background, without blocking or
+            // delaying this fallback. searchedTrackId stays null so every
+            // following poll re-checks the cache; the moment the background
+            // upgrade lands a measured offset, the next poll picks it up from
+            // the branch below.
+            runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
+            mvMaybeUpgradeGuess(np.trackId, np.artist, np.title, np.durationMs);
+        } else if (cachedIsUsable) {
             // Some other event (or an earlier play of this song at THIS
             // event, or - per item 1 - this same play, started well before
             // the song actually began) already did the real work of
-            // checking this song's audio - reuse that answer outright. No
-            // placeholder, no guessing, no wait: either a confirmed match or
-            // a confirmed "nothing syncs", both instant.
+            // checking this song's audio and reached a confirmed answer - a
+            // real, measured match, or a confirmed "nothing syncs" - reuse
+            // that outright. No placeholder, no guessing, no wait.
             // Skipped when the cached video is one THIS event just
             // blacklisted via /sync-failed - see that handler, which also
             // clears this global cache entry so it gets re-verified for
             // everyone, but the local exclude-list check here closes the
             // gap for the moment in between.
-            const cached = verifiedMusicVideoCache.get(np.trackId);
-            if (cached && cached.guessed) mvMaybeUpgradeGuess(np.trackId, np.artist, np.title, np.durationMs);
             runtime.cache = {
                 trackId: np.trackId, searchedTrackId: np.trackId,
-                matched: !!cached, videoId: cached ? cached.videoId : null,
-                introOffsetMs: cached ? cached.introOffsetMs : 0
+                matched: !!cachedEntry, videoId: cachedEntry ? cachedEntry.videoId : null,
+                introOffsetMs: cachedEntry ? cachedEntry.introOffsetMs : 0
             };
         } else {
             // No verified answer yet - either this track skipped straight to
             // playing without ever sitting in a queue we saw (an admin
             // force-play via Spotify directly, say), or item 1's eager check
-            // simply hasn't finished yet. Either way, an unverified guess is
-            // no longer eligible to display (see item 6's reveal-gating) -
-            // fall back to ambient visuals for THIS play and (re)start
-            // verification now. triggerMusicVideoVerification is a no-op if
-            // an eager run for this track is already in flight; if it
-            // resolves before the song ends, the next poll picks it up from
-            // the cache branch above.
+            // simply hasn't finished yet. Fall back to ambient visuals for
+            // THIS play and (re)start verification now.
+            // triggerMusicVideoVerification is a no-op if an eager run for
+            // this track is already in flight; if it resolves before the
+            // song ends, the next poll picks it up from the cache branch
+            // above.
             // searchedTrackId stays null on purpose: this poll has no verified
             // answer yet, so every following poll must re-check the cache.
             // (It used to be set to np.trackId here, which made this branch
@@ -5428,8 +5472,18 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     let mvReason = 'matched';
     if (!runtime.cache.matched) {
         const retry = verificationRetryState.get(np.trackId);
+        const cachedNow = verifiedMusicVideoCache.has(np.trackId) ? verifiedMusicVideoCache.get(np.trackId) : undefined;
         if (runtime.cache.blockedBy) mvReason = runtime.cache.blockedBy;
-        else if (verifiedMusicVideoCache.has(np.trackId) && verifiedMusicVideoCache.get(np.trackId) === null) mvReason = 'verified_no_video_passed_all_checks';
+        else if (cachedNow === null) mvReason = 'verified_no_video_passed_all_checks';
+        else if (cachedNow && cachedNow.guessed) {
+            // A match exists but only as a guess - never shown live (see the
+            // cache branches above) until mvMaybeUpgradeGuess lands a real,
+            // audio-measured offset.
+            const upgradeRetry = mvUpgradeRetryState.get(np.trackId);
+            mvReason = mvUpgradeInFlight.has(np.trackId) ? 'guessed_match_measuring_now'
+                : upgradeRetry ? `guessed_match_awaiting_measurement_retrying (attempt ${upgradeRetry.attempts}, next try in ${Math.max(0, Math.round((upgradeRetry.notBefore - Date.now()) / 1000))}s)`
+                : 'guessed_match_awaiting_measurement';
+        }
         else if (verificationInFlight.has(np.trackId)) mvReason = 'verification_running_now';
         else if (retry) mvReason = `verification_inconclusive_retrying (attempt ${retry.attempts}, next try in ${Math.max(0, Math.round((retry.notBefore - Date.now()) / 1000))}s) - check server logs for [MV-MATCH]/[MUSIC VIDEO] errors`;
         else mvReason = 'verification_waiting_to_start';
