@@ -1014,12 +1014,28 @@
         let mvSampleCount = 0;
         const MV_SAMPLE_INTERVAL_MS = 50;
         const MV_CHECK_EVERY_N_SAMPLES = 16; // decisions every ~800 ms - infrequent on purpose, see below
-        const MV_NUDGE_START_MS = 300;    // start speed-nudging beyond this drift - widened so small/normal
-        const MV_NUDGE_STOP_MS = 150;     // jitter never triggers a visible nudge; the fixed lead below
+        const MV_NUDGE_START_MS = 60;     // start speed-nudging beyond this drift - tightened from 300ms;
+                                           // this is where the correction loop is allowed to settle now
+        const MV_NUDGE_STOP_MS = 25;      // stop nudging once drift is back under this - tightened from
+                                           // 150ms, which was letting videos settle at a perceptible
+                                           // (though "close enough" by the old definition) residual offset
         const MV_SEEK_THRESHOLD_MS = 900; // does the actual work now, this is just a safety net for real drift
+        // The tolerance required before a video is ever REVEALED to a guest,
+        // or handed off to at a song change, or shown again after a
+        // corrective hard-seek mid-play (see checkSlotConfirmedInSync,
+        // shared by revealReadyCheck/pendingCheck/activeCorrectionCheck).
+        // This used to reuse the much looser MV_SEEK_THRESHOLD_MS (900ms),
+        // which meant a video could first appear to a guest already
+        // carrying far more drift than it would ever be allowed to hold
+        // once on screen. Now matched to the same tight residual the
+        // steady-state nudge loop targets (MV_NUDGE_STOP_MS), so nothing is
+        // ever shown until it's already as in-sync as it'll be held to for
+        // the rest of its runtime.
+        const MV_CONFIRM_TOLERANCE_MS = MV_NUDGE_STOP_MS;
         const MV_POST_REVEAL_SEEK_THRESHOLD_MS = 1800; // item 7 - once a video is genuinely ON SCREEN,
                                                          // don't reach for a hard seek until drift is well
                                                          // past the pre-reveal/handoff tolerance above. Rate-
+
                                                          // nudging (invisible) absorbs everything under this;
                                                          // a hard seek this wide should be rare for a genuine
                                                          // same-master video once the initial lock is good.
@@ -1479,6 +1495,24 @@
             try { st.yt.setPlaybackRate(rate); st.currentRate = rate; } catch (e) { /* rate not available - seeks still work */ }
         }
 
+        // How far off 1x to nudge the playback rate, scaled to how far off
+        // target the video currently is. The old code always nudged at a
+        // flat 0.75x/1.25x regardless of drift size - fine for the old
+        // 150ms stop point, but at the new, much tighter MV_NUDGE_STOP_MS a
+        // flat correction speed overshoots past 0 drift almost every check
+        // and just oscillates back and forth around the target instead of
+        // settling into it. Scaling the nudge down as drift shrinks lets it
+        // actually converge: a big drift still gets corrected at the old
+        // fast ceiling, but the closer it gets to the target, the gentler
+        // (and more precise) each correction becomes.
+        const MV_NUDGE_MAX_DEV = 0.25; // fastest correction (same ceiling as the old flat 0.75x/1.25x)
+        const MV_NUDGE_MIN_DEV = 0.03; // gentlest correction, used right at the edge of the target
+        function mvNudgeDeviationFor(absMs) {
+            const range = MV_NUDGE_START_MS - MV_NUDGE_STOP_MS;
+            const t = range > 0 ? Math.min(1, Math.max(0, (absMs - MV_NUDGE_STOP_MS) / range)) : 1;
+            return MV_NUDGE_MIN_DEV + t * (MV_NUDGE_MAX_DEV - MV_NUDGE_MIN_DEV);
+        }
+
         // Seeks a little PAST the target by however long seeks have been
         // taking to resume, so the video lands on the right frame instead of
         // arriving that late.
@@ -1579,7 +1613,8 @@
                     mvSeekTo(activeSlot, mvTargetSec());
                 }
             } else if (absMs > MV_NUDGE_START_MS || (st.currentRate !== 1 && absMs > MV_NUDGE_STOP_MS)) {
-                mvSetRate(activeSlot, driftMs < 0 ? 1.25 : 0.75);
+                const dev = mvNudgeDeviationFor(absMs);
+                mvSetRate(activeSlot, driftMs < 0 ? 1 + dev : 1 - dev);
             } else {
                 mvSetRate(activeSlot, 1);
             }
@@ -1618,7 +1653,7 @@
             if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') return { confirmed: false, readySince: null };
 
             const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
-            if (driftMs > MV_SEEK_THRESHOLD_MS) {
+            if (driftMs > MV_CONFIRM_TOLERANCE_MS) {
                 // Nudge it back into position and wait for the next check -
                 // no more than once a second so this doesn't fight itself.
                 if (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000) {
@@ -1833,21 +1868,8 @@
                 document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             });
             if (wasRevealed) {
-                // Switch off the video view THE INSTANT it stops, showing
-                // whatever ambient/queue content is already rendered
-                // underneath (left over from before this video started)
-                // rather than waiting on the network round-trip below. That
-                // wait used to be the actual cause of the black flash back
-                // to ambient/queue: the loading-cover going back up is
-                // instant, but #video-view itself stayed marked is-visible
-                // - and everything underneath stayed hidden - until
-                // pollAmbientVisuals()'s fetch resolved. Deciding here with
-                // the CLIENT's own already-known visualsForceQueue is a
-                // one-poll-stale guess at worst (it's corrected the moment
-                // resetAmbientAndRepoll's fresh fetch lands, same as
-                // before) - far better than guaranteed black in the
-                // meantime.
-                showView(visualsForceQueue ? 'queue' : 'ambient');
+                // Force a fresh render rather than assuming whatever ambient
+                // state was current before the video started is still valid.
                 resetAmbientAndRepoll();
             } else {
                 // Never made it on screen - ambient visuals never stopped.
@@ -1942,11 +1964,7 @@
         setInterval(pollAmbientVisuals, 8000);
         setInterval(pollQueueBoard, 8000);
         setInterval(pollNowPlaying, 4000);
-        // Was 3000ms - the single biggest controllable source of "takes a
-        // while to start" delay between a song landing on a video slot and
-        // the display noticing. Well within publicReadLimiter's budget
-        // (600/min per IP+event) alongside the other polls above.
-        setInterval(pollMusicVideo, 1000);
+        setInterval(pollMusicVideo, 3000);
     </script>
 </body>
 </html>
