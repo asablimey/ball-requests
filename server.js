@@ -666,6 +666,29 @@ function channelMatchesAnyArtist(channelTitle, artistNames) {
     });
 }
 
+// YouTube auto-generates a "<Artist Name> - Topic" channel, via Content ID,
+// for essentially every commercially distributed track - a plain upload of
+// the exact studio master with no video, which is exactly the ground-truth
+// reference audio getReferenceAudioEnvelope needs. channelMatchesAnyArtist
+// above is intentionally an EXACT match (see its own comment) and will never
+// match "<Artist Name> - Topic", so without this, the reference search was
+// blind to the single most universal, reliable audio source that exists for
+// almost every song - which is why most tracks had no reference audio to
+// verify against and fell back to an unverified guess. Kept as its own
+// function rather than folded into channelMatchesAnyArtist: a Topic channel
+// is always legitimate (auto-generated, never a fan upload) so it's safe to
+// recognize here, but this is specifically for the reference-audio lookup,
+// not for loosening the stricter check used to pick the actual VIDEO shown
+// to guests.
+function channelIsArtistTopicChannel(channelTitle, artistNames) {
+    const normalizedChannel = normalizeForMatch(channelTitle);
+    if (!normalizedChannel) return false;
+    return artistNames.some(name => {
+        const normalizedName = normalizeForMatch(name);
+        return !!normalizedName && normalizedChannel === `${normalizedName}topic`;
+    });
+}
+
 // \baudio\b (a word boundary, not a plain substring) so this never
 // wrongly rejects a title that happens to contain "audio" as part of an
 // unrelated word - it's still meant to catch "Official Audio", "(Audio)",
@@ -1265,14 +1288,22 @@ const MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE = 0.55;
 // ground truth.
 const MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS = 4000;
 const MUSIC_VIDEO_MAX_CANDIDATES_TO_VERIFY = 5;
-// Simple mode (the default): no audio downloads at all. A video is offered when
-// it comes from the artist (channel, or an "Official Video" naming the artist),
-// names the song, isn't live/lyric/audio-only, and is within this many ms of
-// Spotify's length - which is almost always the same album cut starting at
-// 0:00. The display then keeps it locked to Spotify's position with its own
-// live drift correction. Set env MV_AUDIO_VERIFY=1 to bring back the old
-// audio-comparison path (slower, needs ytdl to work from the host).
-const MV_AUDIO_VERIFY_ENABLED = process.env.MV_AUDIO_VERIFY === '1';
+// Audio verification is now ON by default. It used to be opt-in
+// (MV_AUDIO_VERIFY=1) because most songs had no reference audio to check
+// against - channelMatchesAnyArtist only recognized an exact "ArtistName" or
+// "ArtistNameVEVO" channel, so it was blind to YouTube's auto-generated
+// "<Artist> - Topic" channels, which exist for nearly every commercially
+// distributed track and are exactly the plain, no-video studio-master upload
+// this needs as ground truth. With channelIsArtistTopicChannel now
+// recognizing those, a real reference is findable for the large majority of
+// songs, so there's no longer a good reason to skip verification and just
+// assume introOffsetMs: 0 - that assumption was the direct cause of videos
+// playing consistently ahead of or behind the audio (ahead for a trimmed
+// edit missing the song's true start, behind for a video with a real front
+// intro), forever, with nothing to ever correct it. Set MV_AUDIO_VERIFY=0 to
+// go back to the old no-download shortcut if ytdl load/quota becomes a
+// problem; there is no per-venue/admin toggle for this on purpose.
+const MV_AUDIO_VERIFY_ENABLED = process.env.MV_AUDIO_VERIFY !== '0';
 const MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS = Number(process.env.MV_MAX_DURATION_DIFF_MS) || 3000;
 // An official video that runs LONGER than the song (cold open / intro) can't
 // be offset-checked without downloading audio, so by default its extra length
@@ -1863,7 +1894,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
         const pickEligible = list => list
-            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
+            .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames) || channelIsArtistTopicChannel(v.channelTitle, artistNames))
             .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
             .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS)
             .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
@@ -1951,7 +1982,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         const simple = officialish.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS).sort(closeness);
         diag.method = 'simple: title/channel/length match, no audio download';
         diag.simpleMatches = simple.length;
-        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0 };
+        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0, guessed: true };
         // Longer than the song by a few seconds: almost certainly a cold open /
         // intro. Offer it with that offset now; it's refined in the background.
         if (MV_GUESS_INTRO_ENABLED) {
@@ -2002,15 +2033,20 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
     const refEnvelope = await getReferenceAudioEnvelope(trackId, artistNames, trackTitle, trackDurationMs, diag, opts.allowPaidSearch !== false);
     diag.referenceAudioFound = !!refEnvelope;
     if (!refEnvelope) {
-        // No reference audio to compare against (most songs have no "audio"
-        // upload on the artist's own channel, or that download failed). This
-        // used to mean the song NEVER got a video. Instead, fall back to the
-        // next-best evidence: an official upload from the artist's own channel
-        // that names the song and is within ~2.5s of Spotify's length is
-        // almost always the album cut starting at 0:00, so it's offered with
-        // offset 0. Sync is then held by the display's live drift correction,
-        // and a video that turns out not to track gets reported and dropped
-        // (see /sync-failed) like any other. Still requires that it isn't a
+        // No reference audio to compare against (most songs have no
+        // recognized reference upload, or that lookup/download failed).
+        // This USED to mean offering the best-guess candidate with
+        // introOffsetMs: 0 as a final, permanently-trusted result, on the
+        // theory that the display's own live drift correction would keep it
+        // in sync. That reasoning was wrong: the drift loop only holds a
+        // video to whatever target it's given - if the target itself
+        // (introOffsetMs) is wrong, the loop converges precisely to the
+        // wrong point and stays there, which is exactly why videos were
+        // playing consistently ahead of or behind the audio with no
+        // correction ever fixing it. So this is now offered as a GUESS
+        // (guessed: true, below) that goes through the same
+        // never-shown-to-a-guest-until-measured gate as any other guess,
+        // rather than being trusted outright. Still requires that it isn't a
         // static image / flagged frame when those checks can run.
         if (ranked[0]) {
             try { await withYtdlGate(() => ytdl.getInfo(`https://www.youtube.com/watch?v=${ranked[0].videoId}`, ytdlOpts)); diag.ytdlProbe = 'ok'; }
@@ -2022,8 +2058,8 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
             const fv = await getFrameVerification(c.videoId, c.durationMs);
             diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
             if (!fv.failed && (fv.moderationFlagged || fv.motionScore === null || fv.motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF)) continue;
-            diag.method = 'duration-only (no reference audio)';
-            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0 };
+            diag.method = 'duration-only (no reference audio) - guessed, pending background verification';
+            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0, guessed: true };
         }
         return undefined; // nothing usable yet - stay agnostic, retry later
     }
