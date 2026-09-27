@@ -1804,15 +1804,7 @@ const verifiedMusicVideoCache = new Map();
 // "no video exists" - on load those are dropped once so the tracks get
 // re-verified. Matches (non-null) are always kept.
 const MV_CACHE_SCHEMA_KEY = '__schemaVersion';
-const MV_CACHE_SCHEMA_VERSION = 10; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
-// 10: findAudioVerifiedMusicVideo used to hand out a permanently-trusted
-// introOffsetMs:0/confidence:0 from two return sites (the "simple" match and
-// the "duration-only, no reference audio" match) without ever setting
-// guessed:true - see loadMusicVideoCache-equivalent below, which
-// reinterprets exactly that old shape as guessed rather than dropping it,
-// so the (still probably correct) video choice is kept and just re-earns
-// its offset via the normal measure-in-background path instead of a fresh
-// full re-search.
+const MV_CACHE_SCHEMA_VERSION = 9; // 4: earlier "no match" entries came from candidate lists truncated by the cheap-uploads path (first page only / live versions counted as a hit) - purge once
 function musicVideoCacheSnapshot() {
     return { ...Object.fromEntries(verifiedMusicVideoCache), [MV_CACHE_SCHEMA_KEY]: MV_CACHE_SCHEMA_VERSION };
 }
@@ -1870,23 +1862,20 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     const failuresBefore = youtubeFailureCount;
     try {
         const trackCore = normalizeForMatch(coreSongTitle(title));
-        const namesTheSong = v => !trackCore || normalizeForMatch(v.title).includes(trackCore); // same song, not just a similarly-timed one by the same artist
-        const withinRefTolerance = v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS;
         const pickEligible = list => list
             .filter(v => channelMatchesAnyArtist(v.channelTitle, artistNames))
-            .filter(namesTheSong)
-            .filter(withinRefTolerance)
+            .filter(v => !trackCore || normalizeForMatch(v.title).includes(trackCore)) // same song, not just a similarly-timed one by the same artist
+            .filter(v => typeof v.durationMs === 'number' && Math.abs(v.durationMs - durationMs) <= MUSIC_VIDEO_REFERENCE_MAX_DURATION_DIFF_MS)
             .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs));
         const query = `${artistNames.join(' ')} ${title} audio`;
         const candidates = await youtubeFindCandidates(artistNames, query, title, durationMs, true, allowPaidSearch);
         let eligible = pickEligible(candidates);
         diag.referenceEligibleFromArtistUploads = eligible.length;
-        let searched = null;
         if (eligible.length === 0 && !candidates.fromSearch && allowPaidSearch) {
             // The artist's own channel has no upload of this song at the right
             // length - look wider (auto-generated "Topic" uploads, VEVO
             // audio, etc. still carry the artist's name in the channel title).
-            searched = await youtubeSearchVideos(query);
+            const searched = await youtubeSearchVideos(query);
             eligible = pickEligible(searched);
             diag.referenceEligibleFromSearch = eligible.length;
         }
@@ -1898,54 +1887,6 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
             if (env) { result = env; break; }
         }
         if (!result && eligible.length > 0) lookupFailed = true; // download/decode failed - a broken ytdl isn't proof there's no reference
-
-        // Most songs have no dedicated artist "audio" upload at all - the
-        // branch above found nothing to even try. Giving up here used to mean
-        // every video for this song stayed an unmeasured guess forever (see
-        // the guessed gating in findAudioVerifiedMusicVideo/
-        // mvMaybeUpgradeGuess) - so instead, fall back to checking two OTHER
-        // independent uploads of the song against EACH OTHER, using the exact
-        // same cross-correlation as everything else. Deliberately not
-        // restricted to channelMatchesAnyArtist like pickEligible above -
-        // that's the point, since it's exactly the uploads that check doesn't
-        // recognize (a "Topic" auto-upload, a lyric video, a fan repost of
-        // the official audio) that make up most of what's actually out
-        // there. If two different uploads agree with each other at ~zero lag
-        // and high confidence, that's real evidence both carry the song from
-        // its actual start, even with no single canonical track to anchor
-        // to. If only one upload of the song exists anywhere, there's
-        // nothing to cross-check it against - correctly stays unverified.
-        if (!result && !lookupFailed) {
-            const peerPool = [...candidates, ...(searched || [])]
-                .filter((v, i, arr) => v.videoId && arr.findIndex(x => x.videoId === v.videoId) === i)
-                .filter(namesTheSong)
-                .filter(withinRefTolerance)
-                .sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs))
-                .slice(0, 4);
-            diag.referencePeerPoolSize = peerPool.length;
-            if (peerPool.length >= 2) {
-                const envelopeCache = new Map();
-                const envelopeFor = async v => {
-                    if (!envelopeCache.has(v.videoId)) envelopeCache.set(v.videoId, await extractAudioEnvelope(v.videoId, MUSIC_VIDEO_AUDIO_WINDOW_SEC));
-                    return envelopeCache.get(v.videoId);
-                };
-                outer:
-                for (let i = 0; i < peerPool.length; i++) {
-                    const envA = await envelopeFor(peerPool[i]);
-                    if (!envA) continue;
-                    for (let j = i + 1; j < peerPool.length; j++) {
-                        const envB = await envelopeFor(peerPool[j]);
-                        if (!envB) continue;
-                        const { videoLeadMs, confidence } = crossCorrelateEnvelopes(envA, envB, MUSIC_VIDEO_MAX_OFFSET_SEARCH_SEC);
-                        diag.referenceTried.push({ title: `${peerPool[i].title} <-> ${peerPool[j].title}`, peerCrossCheck: true, confidence: Math.round(confidence * 1000) / 1000, videoLeadMs });
-                        if (confidence >= MUSIC_VIDEO_MATCH_ACCEPT_CONFIDENCE && Math.abs(videoLeadMs) <= MUSIC_VIDEO_NEGATIVE_OFFSET_NOISE_TOLERANCE_MS) {
-                            result = envA; // two independent uploads agree on where the song starts - trustworthy enough to anchor to
-                            break outer;
-                        }
-                    }
-                }
-            }
-        }
     } catch (e) {
         console.error(`[MV-MATCH] Reference audio lookup failed for "${title}":`, e.message);
         lookupFailed = true;
@@ -1953,7 +1894,7 @@ async function getReferenceAudioEnvelope(trackId, artistNames, title, durationMs
     if (youtubeFailureCount !== failuresBefore) lookupFailed = true; // the YouTube search/lookups themselves failed
     diag.referenceWhy = result ? 'ok'
         : lookupFailed ? 'lookup or download failed (YouTube API error, or ytdl blocked) - will retry'
-        : 'no upload with the song name, from the artist, within 4s of its length, and no two independent uploads of it agreed with each other either';
+        : 'no upload with the song name, from the artist, within 4s of its length';
     // Only a genuine "no usable reference exists" is remembered. A failure
     // (quota out, ytdl blocked, network) used to be cached as null for the
     // life of the process, which silently disabled verification for this
@@ -2010,14 +1951,7 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
         const simple = officialish.filter(v => Math.abs(v.durationMs - trackDurationMs) <= MUSIC_VIDEO_DURATION_ONLY_MAX_DIFF_MS).sort(closeness);
         diag.method = 'simple: title/channel/length match, no audio download';
         diag.simpleMatches = simple.length;
-        // Matching length is NOT the same as a confirmed offset of 0 - a
-        // trimmed edit that starts a few seconds into the song still passes
-        // this check while genuinely needing a small negative-side
-        // correction the display can't apply. Route this through the same
-        // guessed -> never-shown-until-measured pipeline as the "longer than
-        // the song" guess below, instead of caching it as a permanently
-        // trusted, unverified 0.
-        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0, guessed: true };
+        if (simple.length > 0) return { videoId: simple[0].videoId, introOffsetMs: 0, confidence: 0 };
         // Longer than the song by a few seconds: almost certainly a cold open /
         // intro. Offer it with that offset now; it's refined in the background.
         if (MV_GUESS_INTRO_ENABLED) {
@@ -2088,12 +2022,8 @@ async function findAudioVerifiedMusicVideo(candidates, artistNames, excludeVideo
             const fv = await getFrameVerification(c.videoId, c.durationMs);
             diag.checked.push({ title: c.title, method: 'duration-only', frameCheckFailed: !!fv.failed, motionScore: fv.motionScore, moderationFlagged: fv.moderationFlagged });
             if (!fv.failed && (fv.moderationFlagged || fv.motionScore === null || fv.motionScore < MUSIC_VIDEO_MOTION_MIN_AVG_DIFF)) continue;
-            diag.method = 'duration-only (no reference audio) - guessed, not audio-verified';
-            // Same reasoning as the "simple" case above: no reference audio
-            // means this 0 was never actually checked against real audio -
-            // guessed, not confirmed, so it goes through the same
-            // never-shown-until-measured gating everything else does.
-            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0, guessed: true };
+            diag.method = 'duration-only (no reference audio)';
+            return { videoId: c.videoId, introOffsetMs: 0, confidence: 0 };
         }
         return undefined; // nothing usable yet - stay agnostic, retry later
     }
@@ -5565,7 +5495,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const offsetFromCache = !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
     const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
-        offsetSource: !runtime.cache.matched ? 'none' : (offsetFromCache && vcNow.guessed) ? 'guessed (not yet audio-verified)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
+        offsetSource: !runtime.cache.matched ? 'none' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
         reason: mvReason,
         detail: runtime.cache.matched ? undefined : verificationDiagCache.get(np.trackId),
         youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
@@ -5679,31 +5609,14 @@ app.listen(PORT, async () => {
     try {
         const persisted = await events.loadMusicVideoCache();
         const needsNullPurge = persisted[MV_CACHE_SCHEMA_KEY] !== MV_CACHE_SCHEMA_VERSION;
-        let purgedNulls = 0, reinterpretedAsGuessed = 0;
+        let purgedNulls = 0;
         for (const [trackId, result] of Object.entries(persisted)) {
             if (trackId === MV_CACHE_SCHEMA_KEY) continue;
             if (needsNullPurge && result === null) { purgedNulls++; continue; }
-            // Schema 10: an entry with exactly this shape - offset 0,
-            // confidence 0, never marked guessed/verified, never a manual
-            // admin override - can only have come from one of the two old
-            // unflagged "assume 0" return sites findAudioVerifiedMusicVideo
-            // used to have. It was never actually checked against real
-            // audio. Reinterpret it as guessed (keeping the video choice,
-            // which is still probably right) rather than trusting it or
-            // throwing it away outright - the normal guessed pipeline will
-            // measure and either confirm or replace the offset in the
-            // background before it's shown live again.
-            if (needsNullPurge && result && result.introOffsetMs === 0 && result.confidence === 0 &&
-                !result.guessed && !result.verified && !result.manualOverride) {
-                verifiedMusicVideoCache.set(trackId, { ...result, guessed: true });
-                reinterpretedAsGuessed++;
-                continue;
-            }
             verifiedMusicVideoCache.set(trackId, result);
         }
         console.log(`[SERVER] Loaded ${verifiedMusicVideoCache.size} cached music-video verification(s) from Redis.` +
-            (needsNullPurge ? ` Dropped ${purgedNulls} legacy "no match" entr${purgedNulls === 1 ? 'y' : 'ies'} (may have been recorded during quota/ytdl failures) - they will be re-verified.` +
-                ` Reinterpreted ${reinterpretedAsGuessed} legacy untested offset-0 entr${reinterpretedAsGuessed === 1 ? 'y' : 'ies'} as guessed - they'll be re-measured in the background before showing again.` : ''));
+            (needsNullPurge ? ` Dropped ${purgedNulls} legacy "no match" entr${purgedNulls === 1 ? 'y' : 'ies'} (may have been recorded during quota/ytdl failures) - they will be re-verified.` : ''));
         if (needsNullPurge) events.scheduleMusicVideoCacheSave(musicVideoCacheSnapshot);
     } catch (err) {
         console.error('[SERVER] Failed to load persisted music-video cache:', err.message);
