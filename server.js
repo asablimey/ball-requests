@@ -13,8 +13,27 @@ const events = require('./eventStore');
 // also work, but doing it here means it's not a step anyone deploying
 // this can forget.
 process.env.YTDL_NO_UPDATE = '1';
-const ytdl = require('@distube/ytdl-core');
-const ffmpegPath = require('ffmpeg-static');
+// Heavy Full-mode dependencies (music-video matching: ytdl, ffmpeg, TensorFlow,
+// nsfwjs) are loaded on first use instead of at startup. A Basic install
+// (see PACKAGE-BASIC.txt) simply doesn't have them, and never touches them.
+function lazyRequire(name) {
+    let mod;
+    return () => {
+        if (!mod) {
+            try { mod = require(name); }
+            catch (e) {
+                throw new Error(`"${name}" isn't installed - this is a Basic install. Run the full "npm install" (package.json, not package.basic.json) to use Full-mode features.`);
+            }
+        }
+        return mod;
+    };
+}
+const getYtdl = lazyRequire('@distube/ytdl-core');
+const getFfmpegPath = lazyRequire('ffmpeg-static');
+const ytdl = new Proxy(function () {}, {
+    apply: (_t, _this, args) => getYtdl()(...args),
+    get: (_t, prop) => getYtdl()[prop]
+});
 
 // --- ytdl access: throttling + optional proxy/cookies -------------------------
 // YouTube answers bursts of audio/frame downloads with HTTP 429 (seen in the
@@ -1373,7 +1392,7 @@ function extractAudioEnvelopeRaw(videoId, maxDurationSec) {
 
         let ff;
         try {
-            ff = spawn(ffmpegPath, [
+            ff = spawn(getFfmpegPath(), [
                 '-i', 'pipe:0',
                 '-t', String(maxDurationSec),
                 '-ac', '1',
@@ -1559,7 +1578,7 @@ function grabFramePairAt(videoUrl, timestampSec) {
     return new Promise((resolve) => {
         let ff;
         try {
-            ff = spawn(ffmpegPath, [
+            ff = spawn(getFfmpegPath(), [
                 '-ss', String(Math.max(0, timestampSec)),
                 '-i', videoUrl,
                 '-map', '0:v:0', '-frames:v', '1',
@@ -1647,8 +1666,10 @@ function averageConsecutiveFrameDiff(grayFrames) {
 // that review queue yet. That's a real feature in its own right, so this
 // is left as a documentation/architecture note for whoever builds it next,
 // not an implementation here.
-const tf = require('@tensorflow/tfjs-node');
-const nsfwjs = require('nsfwjs');
+const getTf = lazyRequire('@tensorflow/tfjs-node');
+const getNsfwjs = lazyRequire('nsfwjs');
+const tf = new Proxy({}, { get: (_t, prop) => getTf()[prop] });
+const nsfwjs = new Proxy({}, { get: (_t, prop) => getNsfwjs()[prop] });
 
 const NSFW_MODEL_PATH = process.env.NSFW_MODEL_PATH || path.join(__dirname, 'models', 'nsfw', 'model.json');
 // Porn/Hentai are unambiguous rejections at a moderate confidence. "Sexy"
@@ -3142,6 +3163,60 @@ app.param('slug', async (req, res, next, slug) => {
     }
 });
 
+
+// =====================================================================
+// Basic / Full site mode + themes
+// =====================================================================
+// 'basic': guests can only search and request; the DJ can see the queue and
+// play it. Everything else (kiosk, visuals, scheduler, blocklists, stats,
+// filters, music videos...) is refused HERE, server-side, so it can't be
+// reached by hand-typing a URL. 'full' is the normal site. Saved settings
+// aren't erased when switching to Basic - they're just not reachable, and
+// come straight back on switching to Full.
+const THEME_VALUES = ['auto', 'light', 'dark'];
+function isBasicMode(event) { return !!(event && event.systemConfigs && event.systemConfigs.siteMode === 'basic'); }
+function getThemes(event) {
+    const t = (event.systemConfigs && event.systemConfigs.themes) || {};
+    const pick = k => (THEME_VALUES.includes(t[k]) ? t[k] : 'auto');
+    return { admin: pick('admin'), kiosk: pick('kiosk'), visuals: pick('visuals') };
+}
+
+// Paths (relative to /e/:slug) still available in Basic mode.
+const BASIC_ALLOWED_PUBLIC = /^\/(?:$|data$|api\/(?:public-config|site-config|search|request|set-username|now-playing)$)/;
+const BASIC_ALLOWED_ADMIN = /^\/(?:data|config|toggle|toggle-explicit|toggle-location-lock|toggle-spotify-auto-queue|action|reorder|site-mode|theme|spotify-login-ticket|spotify-disconnect|playback\/(?:play|pause|next|previous|volume|seek))$/;
+const BASIC_ALLOWED_PAGES = /^\/(?:admin(?:\/spotify-login)?)?\/?$/;
+
+function basicBlockedPage(res) {
+    res.status(403).type('html').send('<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not available</title><style>body{background:#121212;color:#fff;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px;text-align:center}p{color:#a7a7a7;max-width:360px;line-height:1.5}</style></head><body><div><h2>Not available in Basic mode</h2><p>This page is turned off while the event is in Basic mode. The DJ can switch to Full mode from Admin &rarr; Settings.</p></div></body></html>');
+}
+
+app.use('/e/:slug', async (req, res, next) => {
+    try {
+        const event = req.event || await events.getEvent(req.params.slug);
+        if (!event) return next(); // unknown slug - app.param answers 404
+        if (!isBasicMode(event)) return next();
+        const p = req.path;
+        if (p.startsWith('/api/admin/')) {
+            if (BASIC_ALLOWED_ADMIN.test(p.slice('/api/admin'.length))) return next();
+            return res.status(403).json({ error: 'Not available in Basic mode.', basicMode: true });
+        }
+        if (p.startsWith('/api/')) {
+            if (BASIC_ALLOWED_PUBLIC.test(p)) return next();
+            return res.status(403).json({ error: 'Not available in Basic mode.', basicMode: true });
+        }
+        if (p === '/data' || p === '/') return next();
+        if (BASIC_ALLOWED_PAGES.test(p)) return next(); // '/' and '/admin'
+        return basicBlockedPage(res); // kiosk, visuals, admin/scheduler, kiosk-data...
+    } catch (err) { next(err); }
+});
+
+// Public: mode + themes, so every page can pick its look and layout before
+// (or as) it paints. No secrets in here.
+app.get('/e/:slug/api/site-config', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ siteMode: isBasicMode(req.event) ? 'basic' : 'full', themes: getThemes(req.event) });
+});
+
 app.get('/e/:slug', voterIdentityMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -3730,6 +3805,7 @@ app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) 
         queueCapEnabled: event.systemConfigs.queueCapEnabled,
         maxQueueLength: event.systemConfigs.maxQueueLength,
         queueFull: isQueueFull(event),
+        siteMode: isBasicMode(event) ? 'basic' : 'full',
         genreFilter: event.systemConfigs.genreFilter || [],
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
@@ -3768,6 +3844,8 @@ app.get('/e/:slug/kiosk-data', publicReadLimiter, voterIdentityMiddleware, (req,
 app.get('/e/:slug/api/admin/data', (req, res) => {
     const event = req.event;
     res.json({
+        siteMode: isBasicMode(event) ? 'basic' : 'full',
+        themes: getThemes(event),
         maxCredits: event.systemConfigs.maxCredits,
         countdownLength: event.systemConfigs.countdownLength,
         requestsAllowed: event.systemConfigs.requestsAllowed,
@@ -4399,6 +4477,27 @@ app.post('/e/:slug/api/admin/playback/seek', async (req, res) => {
     if (!Number.isInteger(positionMs) || positionMs < 0) return res.status(400).json({ error: 'positionMs must be a non-negative integer.' });
     const result = await spotifyPlayerCommand(req.event, 'PUT', '/seek', `?position_ms=${positionMs}`);
     res.status(result.success ? 200 : 400).json(result);
+});
+
+app.post('/e/:slug/api/admin/site-mode', (req, res) => {
+    const { mode } = req.body || {};
+    if (mode !== 'basic' && mode !== 'full') return res.status(400).json({ error: 'mode must be "basic" or "full".' });
+    req.event.systemConfigs.siteMode = mode;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, siteMode: mode });
+});
+
+// Which screen ('admin' | 'kiosk' | 'visuals') gets which look.
+app.post('/e/:slug/api/admin/theme', (req, res) => {
+    const { screen, theme } = req.body || {};
+    if (!['admin', 'kiosk', 'visuals'].includes(screen) || !THEME_VALUES.includes(theme)) {
+        return res.status(400).json({ error: 'Invalid screen or theme.' });
+    }
+    const sc = req.event.systemConfigs;
+    if (!sc.themes || typeof sc.themes !== 'object') sc.themes = { admin: 'auto', kiosk: 'auto', visuals: 'auto' };
+    sc.themes[screen] = theme;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, themes: getThemes(req.event) });
 });
 
 app.post('/e/:slug/api/admin/toggle', (req, res) => {
@@ -5238,7 +5337,7 @@ async function syncAllLoadedEvents() {
         // Spotify call unless a switch/volume change is actually due), so
         // it just runs every process tick for every loaded event rather
         // than needing its own throttle.
-        await Promise.allSettled(loaded.map(event => tickMusicScheduler(event).catch(err => {
+        await Promise.allSettled(loaded.filter(event => !isBasicMode(event)).map(event => tickMusicScheduler(event).catch(err => {
             console.error(`[SCHEDULER] (${event.slug}) Tick failed:`, err.message);
         })));
     } finally {
@@ -5673,7 +5772,11 @@ app.listen(PORT, async () => {
     // eats a multi-second model-load cold start. A failure here is logged
     // once and clearly, rather than silently surfacing later as every
     // checkFrameSafety call quietly reporting "not flagged".
-    try {
+    let fullInstall = true;
+    try { require.resolve('nsfwjs'); require.resolve('@tensorflow/tfjs-node'); } catch (e) { fullInstall = false; }
+    if (!fullInstall) {
+        console.log('[SERVER] Basic install detected (music-video packages not present) - skipping moderation model and music-video features. Events in Full mode need the full package.json.');
+    } else try {
         await getNsfwModel();
         console.log('[SERVER] NSFWJS moderation model loaded from', NSFW_MODEL_PATH);
     } catch (e) {
