@@ -172,6 +172,13 @@ function blankEventState(slug, eventName, adminPasswordHash, venue) {
             locationRadiusMeters: 300,
             guestSpotifyConnectEnabled: false,
             spotifyAutoQueueEnabled: true,
+            // 'full' = everything; 'basic' = guests search + request, DJ sees
+            // the queue and plays it. Enforced server-side (see siteModeGate
+            // in server.js), not just hidden in the UI.
+            siteMode: 'full',
+            // Light/dark/auto per DJ-facing screen. Guest pages keep their
+            // own choice in the guest's browser (sidebar), not here.
+            themes: { admin: 'auto', kiosk: 'auto', visuals: 'auto' },
             // Whatever's actually live right now - manual switch or
             // scheduled one, updated the moment either actually takes
             // effect. Purely a "what's playing" readout; not the thing to
@@ -552,6 +559,15 @@ function ensureSchedulerDefaults(event) {
     // being an empty string on every pre-existing event.
     if (event.systemConfigs && typeof event.systemConfigs.fallbackPlaylistUri !== 'string') {
         event.systemConfigs.fallbackPlaylistUri = event.systemConfigs.lastSwitchedPlaylist || '';
+    }
+    // Events saved before Basic/Full mode and themes existed.
+    if (event.systemConfigs) {
+        const sc = event.systemConfigs;
+        if (sc.siteMode !== 'basic' && sc.siteMode !== 'full') sc.siteMode = 'full';
+        if (!sc.themes || typeof sc.themes !== 'object') sc.themes = {};
+        for (const k of ['admin', 'kiosk', 'visuals']) {
+            if (!['auto', 'light', 'dark'].includes(sc.themes[k])) sc.themes[k] = 'auto';
+        }
     }
     return event;
 }
