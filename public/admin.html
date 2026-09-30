@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="/theme.js"></script>
+    <script>CrowdTheme.use("crowddj_theme_admin_" + (location.pathname.split("/")[2] || ""));</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
@@ -18,12 +20,58 @@
             --card-bg: #242424;
             --blue-action: #007aff;
             --red-action: #e91429;
+        
+            --text: #ffffff;
+            --text-muted: #a7a7a7;
+            --border: #282828;
+            --border-strong: #333333;
+            --hover-bg: #2c2c2c;
+            --overlay-soft: rgba(255,255,255,0.08);
+            --stage-bg: #000000;
+            --inset-bg: #1c1c1c;
+            --text-soft: #cccccc;
         }
+
+        /* ---- Light theme (html[data-theme="light"], set by theme.js) ---- */
+        html[data-theme="light"] {
+            --spotify-green: #16a34a;
+            --spotify-black: #f3f4f6;
+            --panel-bg: #ffffff;
+            --card-bg: #eceff3;
+            --red-action: #d1122a;
+            --text: #111318;
+            --text-muted: #5b6472;
+            --border: #dfe3e8;
+            --border-strong: #c8ced6;
+            --hover-bg: #e3e7ec;
+            --overlay-soft: rgba(0,0,0,0.06);
+            --stage-bg: #f3f4f6;
+            --inset-bg: #ffffff;
+            --text-soft: #374151;
+        }
+
+        /* ---- Segmented controls (theme + mode pickers) ---- */
+        .theme-seg { display: inline-flex; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+        .theme-seg button { background: none; border: none; color: var(--text-muted); padding: 10px 18px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+        .theme-seg button.is-active { background: var(--text); color: var(--panel-bg); }
+        .mode-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+        /* ---- Basic mode: only queue, playback and a few essentials ---- */
+        body.basic-mode .full-only,
+        body.basic-mode #sidebar-nav-history,
+        body.basic-mode #sidebar-nav-stats,
+        body.basic-mode #sidebar-nav-blocked,
+        body.basic-mode #sidebar-nav-scheduler,
+        body.basic-mode #settings-nav-kiosk,
+        body.basic-mode #settings-nav-content,
+        body.basic-mode #toggle-radio-edits,
+        body.basic-mode #toggle-guest-spotify { display: none !important; }
+
 
         html { overflow-x: hidden; }
         body { 
             background-color: var(--spotify-black); 
-            color: white; 
+            color: var(--text); 
             font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
             padding: 20px; 
             margin: 0; 
@@ -56,7 +104,7 @@
 
         .lock-container {
             background-color: var(--panel-bg);
-            border: 1px solid #282828;
+            border: 1px solid var(--border);
             padding: 40px;
             border-radius: 16px;
             text-align: center;
@@ -68,7 +116,7 @@
 
         .lock-container h2 {
             margin-top: 0;
-            color: white;
+            color: var(--text);
             font-size: 1.6rem;
             margin-bottom: 20px;
         }
@@ -76,9 +124,9 @@
         .lock-input {
             width: 100%;
             background-color: var(--card-bg);
-            border: 1px solid #333;
+            border: 1px solid var(--border-strong);
             padding: 12px;
-            color: white;
+            color: var(--text);
             border-radius: 8px;
             font-size: 1rem;
             box-sizing: border-box;
@@ -106,7 +154,7 @@
             display: flex; 
             justify-content: space-between; 
             align-items: center; 
-            border-bottom: 1px solid #282828; 
+            border-bottom: 1px solid var(--border); 
             padding-bottom: 14px; 
             margin-bottom: 14px; 
             flex-wrap: wrap;
@@ -128,12 +176,12 @@
         }
 
         .input-group { display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; max-width: 100%; }
-        .input-group label { font-size: 0.85rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; }
+        .input-group label { font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; }
         .input-group input { 
             background-color: var(--card-bg); 
-            border: 1px solid #333; 
+            border: 1px solid var(--border-strong); 
             padding: 10px 14px; 
-            color: white; 
+            color: var(--text); 
             border-radius: 6px; 
             font-size: 1rem; 
             width: 140px;
@@ -144,32 +192,32 @@
         .join-row { display: flex; gap: 10px; }
         .join-row input[type="text"] {
             background-color: var(--card-bg);
-            border: 1px solid #333;
+            border: 1px solid var(--border-strong);
             padding: 10px 14px;
-            color: white;
+            color: var(--text);
             border-radius: 6px;
             font-size: 0.95rem;
             flex: 1;
             min-width: 0;
             box-sizing: border-box;
         }
-        .settings-card-hint { color: #a7a7a7; font-size: 0.82rem; line-height: 1.4; }
+        .settings-card-hint { color: var(--text-muted); font-size: 0.82rem; line-height: 1.4; }
         .search-result-row {
             display: flex; align-items: center; gap: 12px;
-            padding: 8px 0; border-bottom: 1px solid #282828;
+            padding: 8px 0; border-bottom: 1px solid var(--border);
         }
         .search-result-row:last-child { border-bottom: none; }
         .search-result-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
         .search-result-text { flex: 1; min-width: 0; }
         .search-result-title { font-weight: 700; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .search-result-artist { font-size: 0.8rem; color: #a7a7a7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .search-result-artist { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .btn-add-track { background-color: var(--spotify-green); color: white; border: none; border-radius: 8px; padding: 8px 14px; font-size: 0.8rem; font-weight: 700; cursor: pointer; flex-shrink: 0; }
         .btn-add-track:hover { filter: brightness(1.1); }
         .btn-add-track:disabled { opacity: 0.6; cursor: default; }
 
         .save-config-btn {
-            background-color: white;
-            color: black;
+            background-color: var(--text);
+            color: var(--panel-bg);
             border: none;
             padding: 11px 22px;
             border-radius: 6px;
@@ -188,7 +236,7 @@
            in this file: card-bg against the panel's darker background). */
         .settings-card {
             background: var(--card-bg);
-            border: 1px solid #2c2c2c;
+            border: 1px solid var(--hover-bg);
             border-radius: 12px;
             padding: 16px;
             margin-bottom: 14px;
@@ -229,7 +277,7 @@
             padding: 10px 14px;
             border-radius: 8px;
             cursor: pointer;
-            color: #a7a7a7;
+            color: var(--text-muted);
             font-size: 0.95rem;
             font-weight: 600;
             background: transparent;
@@ -239,7 +287,7 @@
             box-sizing: border-box;
             transition: background-color 0.15s ease, color 0.15s ease;
         }
-        .settings-nav-item:hover { background: var(--card-bg); color: white; }
+        .settings-nav-item:hover { background: var(--card-bg); color: var(--text); }
         .settings-nav-item.active-nav { background: var(--spotify-green); color: white; }
         .settings-nav-item.danger-nav { color: #e97b7b; }
         .settings-nav-item.danger-nav:hover { background: var(--card-bg); color: #e97b7b; }
@@ -283,7 +331,7 @@
         .fullscreen-icon-btn {
             background: none;
             border: none;
-            color: #a7a7a7;
+            color: var(--text-muted);
             cursor: pointer;
             padding: 8px;
             display: flex;
@@ -291,14 +339,14 @@
             justify-content: center;
             transition: color 0.2s ease, transform 0.1s ease;
         }
-        .fullscreen-icon-btn:hover { color: white; }
+        .fullscreen-icon-btn:hover { color: var(--text); }
         .fullscreen-icon-btn:active { transform: scale(0.95); }
         .fullscreen-icon-btn svg { width: 24px; height: 24px; fill: currentColor; }
 
         .hints-icon-btn {
             background: none;
             border: none;
-            color: #a7a7a7;
+            color: var(--text-muted);
             cursor: pointer;
             padding: 8px;
             display: flex;
@@ -306,7 +354,7 @@
             justify-content: center;
             transition: color 0.2s ease, transform 0.1s ease;
         }
-        .hints-icon-btn:hover { color: white; }
+        .hints-icon-btn:hover { color: var(--text); }
         .hints-icon-btn:active { transform: scale(0.95); }
         .hints-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
         .hints-icon-btn.hints-on { color: var(--spotify-green); }
@@ -319,14 +367,14 @@
             height: 40px;
             border-radius: 10px;
             background-color: var(--card-bg);
-            border: 1px solid #333;
+            border: 1px solid var(--border-strong);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             padding: 0;
         }
-        .menu-btn svg { width: 18px; height: 18px; fill: white; }
+        .menu-btn svg { width: 18px; height: 18px; fill: var(--text); }
         .menu-btn:hover { border-color: var(--spotify-green); }
 
         .sidebar-backdrop {
@@ -338,7 +386,7 @@
             position: fixed; top: 0; left: 0; bottom: 0;
             width: min(280px, 84vw);
             background: var(--panel-bg);
-            border-right: 1px solid #282828;
+            border-right: 1px solid var(--border);
             z-index: 951;
             transform: translateX(-100%);
             transition: transform 0.25s ease;
@@ -348,35 +396,35 @@
         }
         .sidebar-panel.is-visible { transform: translateX(0); }
         .sidebar-account-footer {
-            margin-top: auto; padding: 16px 20px; border-top: 1px solid #282828;
+            margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--border);
             display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem; flex-shrink: 0;
         }
-        .sidebar-account-status { color: #a7a7a7; }
-        .sidebar-account-status strong { color: white; }
-        .sidebar-account-link { color: var(--spotify-green, #1DB954); text-decoration: none; font-weight: 600; }
+        .sidebar-account-status { color: var(--text-muted); }
+        .sidebar-account-status strong { color: var(--text); }
+        .sidebar-account-link { color: var(--spotify-green, var(--spotify-green)); text-decoration: none; font-weight: 600; }
         .sidebar-account-link:hover { text-decoration: underline; }
         .sidebar-account-logout {
-            background: var(--card-bg, #242424); border: 1px solid #333; color: white;
+            background: var(--card-bg, var(--card-bg)); border: 1px solid var(--border-strong); color: var(--text);
             border-radius: 6px; padding: 8px; font-size: 0.82rem; font-weight: 700; cursor: pointer;
         }
         .sidebar-account-logout:hover { border-color: #555; }
         .sidebar-header {
             display: flex; align-items: center; justify-content: space-between;
-            padding: 20px; border-bottom: 1px solid #282828; flex-shrink: 0;
+            padding: 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
         .sidebar-header h3 { margin: 0; font-size: 1.1rem; }
-        .sidebar-close-btn { background: none; border: none; color: #a7a7a7; font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
-        .sidebar-close-btn:hover { color: white; }
+        .sidebar-close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
+        .sidebar-close-btn:hover { color: var(--text); }
         .sidebar-nav-item {
             display: flex; align-items: center;
             padding: 16px 20px; cursor: pointer; border: none;
-            background: none; color: #a7a7a7; font-size: 1rem; font-weight: 700;
+            background: none; color: var(--text-muted); font-size: 1rem; font-weight: 700;
             font-family: inherit; text-align: left; width: 100%;
-            border-bottom: 1px solid #232323;
+            border-bottom: 1px solid var(--border);
         }
-        .sidebar-nav-item:hover { background-color: var(--card-bg); color: white; }
+        .sidebar-nav-item:hover { background-color: var(--card-bg); color: var(--text); }
         .sidebar-nav-item.active-tab {
-            color: white;
+            color: var(--text);
             background-color: rgba(29, 185, 84, 0.15);
             border-left: 3px solid var(--spotify-green);
             padding-left: 17px;
@@ -391,8 +439,8 @@
         }
 
         .utility-btn {
-            padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid #333;
-            background-color: #222; color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
+            padding: 12px 24px; font-weight: 700; border-radius: 50px; border: 1px solid var(--border-strong);
+            background-color: var(--card-bg); color: #ff3b30; cursor: pointer; font-size: 0.9rem; transition: all 0.2s ease;
         }
         .utility-btn:hover { background-color: var(--red-action); color: white; border-color: transparent; }
 
@@ -406,7 +454,7 @@
             background: var(--card-bg); box-shadow: 0 8px 24px rgba(0,0,0,0.4);
         }
         .playback-title { font-size: 1.4rem; font-weight: 800; margin: 0; }
-        .playback-artist { font-size: 1rem; color: #a7a7a7; margin: 4px 0 0 0; }
+        .playback-artist { font-size: 1rem; color: var(--text-muted); margin: 4px 0 0 0; }
         .playback-device { font-size: 0.8rem; color: #666; margin: 6px 0 0 0; }
 
         .playback-progress-wrap { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 10px; }
@@ -415,25 +463,25 @@
 
         .playback-transport { display: flex; align-items: center; justify-content: center; gap: 18px; }
         .playback-icon-btn {
-            background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 50%;
+            background: var(--card-bg); border: 1px solid var(--border-strong); color: var(--text); border-radius: 50%;
             width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;
             cursor: pointer; transition: all 0.15s ease;
         }
         .playback-icon-btn:hover { border-color: var(--spotify-green); }
         .playback-icon-btn:active { transform: scale(0.93); }
         .playback-icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
-        .playback-icon-btn.playback-play-pause { width: 60px; height: 60px; background-color: white; color: black; }
+        .playback-icon-btn.playback-play-pause { width: 60px; height: 60px; background-color: var(--text); color: var(--panel-bg); }
         .playback-icon-btn.playback-play-pause:hover { background-color: var(--spotify-green); color: white; }
         .playback-icon-btn.playback-play-pause svg { width: 26px; height: 26px; }
         .playback-icon-btn.toggled-on { background-color: var(--spotify-green); border-color: var(--spotify-green); }
 
         .playback-volume-row { width: 100%; max-width: 460px; display: flex; align-items: center; gap: 12px; }
-        .playback-volume-row svg { width: 20px; height: 20px; fill: #a7a7a7; flex-shrink: 0; }
+        .playback-volume-row svg { width: 20px; height: 20px; fill: var(--text-muted); flex-shrink: 0; }
         .playback-volume-row input[type="range"] { flex: 1; }
 
         input[type="range"] {
             -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
-            background: #333; outline: none; cursor: pointer;
+            background: var(--border-strong); outline: none; cursor: pointer;
         }
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
@@ -445,12 +493,12 @@
 
         .playback-repeat-row { display: flex; gap: 8px; }
 
-        .playback-disconnected { color: #a7a7a7; padding: 40px 20px; }
+        .playback-disconnected { color: var(--text-muted); padding: 40px 20px; }
         .playback-disconnected a { color: var(--spotify-green); }
 
         .playback-upcoming { width: 100%; max-width: 460px; text-align: left; margin-top: 8px; }
-        .playback-upcoming h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; color: #a7a7a7; margin: 0 0 10px 0; }
-        .playback-upcoming-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #232323; }
+        .playback-upcoming h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin: 0 0 10px 0; }
+        .playback-upcoming-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); }
         .playback-upcoming-row img { width: 34px; height: 34px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
         .playback-upcoming-row .text-block { min-width: 0; }
         .playback-upcoming-row .up-title { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -477,16 +525,16 @@
             background: var(--panel-bg); 
             padding: 20px; 
             border-radius: 16px; 
-            border: 1px solid #222; 
+            border: 1px solid var(--border); 
             box-sizing: border-box;
         }
 
-        .panel h2 { border-bottom: 1px solid #282828; padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
+        .panel h2 { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-top: 0; margin-bottom: 20px; font-size: 1.4rem; color: var(--spotify-green); font-weight: 700; }
 
         .settings-section-label {
             font-size: 0.85rem;
             text-transform: uppercase;
-            color: #a7a7a7;
+            color: var(--text-muted);
             font-weight: 700;
             letter-spacing: 0.5px;
             margin-bottom: 12px;
@@ -500,7 +548,7 @@
             background: var(--card-bg); 
             margin-bottom: 8px; 
             border-radius: 10px; 
-            border: 1px solid #2c2c2c; 
+            border: 1px solid var(--hover-bg); 
             gap: 15px;
             box-sizing: border-box;
             width: 100%;
@@ -559,7 +607,7 @@
         }
         
         .song-artist { 
-            color: #a7a7a7; 
+            color: var(--text-muted); 
             margin: 4px 0 0 0; 
             font-size: 0.9rem; 
             white-space: nowrap;
@@ -577,7 +625,7 @@
         }
         .length-text {
             font-size: 0.85rem;
-            color: #a7a7a7;
+            color: var(--text-muted);
             font-weight: 600;
             white-space: nowrap;
         }
@@ -626,7 +674,7 @@
             font-size: 0.8rem;
             font-weight: 700;
             margin-top: 4px;
-            color: #a7a7a7;
+            color: var(--text-muted);
         }
         .node-up .vote-display-count { color: var(--spotify-green); }
         .node-down .vote-display-count { color: var(--red-action); }
@@ -640,14 +688,14 @@
             justify-content: flex-end;
         }
         
-        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: white; font-size: 0.85rem; white-space: nowrap; }
+        .btn { padding: 10px 14px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 0.85rem; white-space: nowrap; }
         .btn:hover { filter: brightness(1.1); }
         .btn-played { background-color: var(--spotify-green); }
-        .btn-remove { background-color: #3e3e3e; }
+        .btn-remove { background-color: var(--border-strong); }
         .btn-remove:hover { background-color: var(--red-action); }
         .btn-block { background-color: transparent; border: 1px solid var(--red-action); color: var(--red-action); padding: 8px 12px; font-size: 0.78rem; }
         .btn-block:hover { background-color: var(--red-action); color: white; }
-        .btn-unblock { background-color: transparent; border: 1px solid #444; color: #ccc; padding: 8px 12px; font-size: 0.78rem; }
+        .btn-unblock { background-color: transparent; border: 1px solid var(--border-strong); color: var(--text-soft); padding: 8px 12px; font-size: 0.78rem; }
         .btn-unblock:hover { border-color: var(--spotify-green); color: var(--spotify-green); }
 
         /* Drag handle that replaces the old "Top" button - borderless, sits
@@ -663,27 +711,27 @@
             touch-action: none;
             flex-shrink: 0;
         }
-        .drag-handle:hover { color: #ccc; }
+        .drag-handle:hover { color: var(--text-soft); }
         .drag-handle svg { width: 20px; height: 20px; pointer-events: none; }
         .song-row.dragging { opacity: 0.5; }
         .song-row.drag-over-top { border-top: 2px solid var(--spotify-green); }
         .song-row.drag-over-bottom { border-bottom: 2px solid var(--spotify-green); }
 
-        .history-row { opacity: 0.45; background: #1c1c1c; border-color: #222; }
+        .history-row { opacity: 0.45; background: var(--inset-bg); border-color: var(--border); }
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 40px 0; margin: 0; }
 
-        .neutral-status { background-color: #3e3e3e; color: white; }
+        .neutral-status { background-color: var(--border-strong); color: var(--text); }
 
         .filter-panel {
             box-sizing: border-box;
         }
-        .filter-hint { color: #a7a7a7; font-size: 0.85rem; margin: 0 0 14px 0; }
-        .filter-group-label { font-size: 0.8rem; text-transform: uppercase; color: #a7a7a7; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
+        .filter-hint { color: var(--text-muted); font-size: 0.85rem; margin: 0 0 14px 0; }
+        .filter-group-label { font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
         .filter-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
         .filter-chip {
             background-color: var(--card-bg);
-            border: 1px solid #333;
-            color: #ccc;
+            border: 1px solid var(--border-strong);
+            color: var(--text-soft);
             padding: 8px 16px;
             border-radius: 50px;
             font-size: 0.85rem;
@@ -698,19 +746,19 @@
             color: white;
             border-color: var(--spotify-green);
         }
-        .queue-cap-status-text { width: 100%; color: #a7a7a7; font-size: 0.85rem; margin-top: 6px; }
+        .queue-cap-status-text { width: 100%; color: var(--text-muted); font-size: 0.85rem; margin-top: 6px; }
 
         .stat-grid { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
         .stat-card {
             flex: 1; min-width: 140px;
-            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
+            background: var(--card-bg); border: 1px solid var(--hover-bg); border-radius: 12px;
             padding: 20px; text-align: center;
         }
         .stat-number { font-size: 2.2rem; font-weight: 800; color: var(--spotify-green); }
-        .stat-label { color: #a7a7a7; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+        .stat-label { color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
 
         .stat-box {
-            background: var(--card-bg); border: 1px solid #2c2c2c; border-radius: 12px;
+            background: var(--card-bg); border: 1px solid var(--hover-bg); border-radius: 12px;
             margin-bottom: 14px; overflow: hidden;
         }
         .stat-box summary {
@@ -718,21 +766,21 @@
             list-style: none; display: flex; align-items: center; justify-content: space-between;
         }
         .stat-box summary::-webkit-details-marker { display: none; }
-        .stat-box summary::after { content: '▾'; color: #a7a7a7; transition: transform 0.15s ease; }
+        .stat-box summary::after { content: '▾'; color: var(--text-muted); transition: transform 0.15s ease; }
         .stat-box[open] summary::after { transform: rotate(180deg); }
         .stat-box summary:hover { background: rgba(255,255,255,0.03); }
         .stat-box-body { padding: 0 16px 16px; max-height: 420px; overflow-y: auto; }
 
         .stat-row {
             display: flex; align-items: center; gap: 14px; padding: 10px 8px;
-            border-bottom: 1px solid #262626;
+            border-bottom: 1px solid var(--border);
         }
         .stat-row:last-child { border-bottom: none; }
         .stat-row img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
         .stat-row-text { flex: 1; min-width: 0; }
         .stat-row-title { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stat-row-artist { color: #a7a7a7; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .stat-count { font-weight: 700; font-size: 0.9rem; color: #a7a7a7; flex-shrink: 0; }
+        .stat-row-artist { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .stat-count { font-weight: 700; font-size: 0.9rem; color: var(--text-muted); flex-shrink: 0; }
         .stat-count.up { color: var(--spotify-green); }
         .stat-count.down { color: var(--red-action); }
 
@@ -757,7 +805,7 @@
                 -webkit-overflow-scrolling: touch;
                 padding-bottom: 10px;
                 margin-bottom: 16px;
-                border-bottom: 1px solid #282828;
+                border-bottom: 1px solid var(--border);
             }
             .settings-nav-item { flex-shrink: 0; white-space: nowrap; }
         }
@@ -770,13 +818,13 @@
             pointer-events: none;
         }
         .toast {
-            background: #242424; color: white; border: 1px solid #333;
-            border-left: 4px solid var(--spotify-green, #1DB954);
+            background: var(--card-bg); color: var(--text); border: 1px solid var(--border-strong);
+            border-left: 4px solid var(--spotify-green, var(--spotify-green));
             border-radius: 8px; padding: 12px 18px; font-size: 0.9rem; font-weight: 600;
             max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
             opacity: 0; transform: translateY(-12px); transition: opacity 0.25s ease, transform 0.25s ease;
         }
-        .toast-error { border-left-color: #e91429; }
+        .toast-error { border-left-color: var(--red-action); }
         .toast-visible { opacity: 1; transform: translateY(0); }
     
         /* --- Now Playing bar (live from Spotify) --- */
@@ -785,7 +833,7 @@
             left: 0; right: 0; bottom: 0;
             height: 60px;
             background-color: var(--panel-bg);
-            border-top: 1px solid #282828;
+            border-top: 1px solid var(--border);
             display: none;
             align-items: center;
             gap: 10px;
@@ -799,7 +847,7 @@
             position: absolute;
             top: 0; left: 0; right: 0;
             height: 2px;
-            background-color: rgba(255,255,255,0.08);
+            background-color: var(--overlay-soft);
         }
         .now-playing-progress-fill {
             height: 100%;
@@ -824,7 +872,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .now-playing-artist {
-            margin: 2px 0 0 0; font-size: 0.75rem; color: #a7a7a7;
+            margin: 2px 0 0 0; font-size: 0.75rem; color: var(--text-muted);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .now-playing-live-dot {
@@ -960,7 +1008,7 @@
         <div class="panel">
             <h2>Current Queue</h2>
 
-            <div class="settings-card" style="margin-bottom: 20px;">
+            <div class="settings-card full-only" style="margin-bottom: 20px;">
                 <div class="settings-section-label">Add a Song</div>
                 <p class="settings-card-hint" style="margin-top: 0;">Drop a track straight into the queue - skips credits, filters, and the queue cap. Good for a verbal request or seeding the queue before doors open.</p>
                 <div class="join-row" style="margin-bottom: 10px;">
@@ -1013,6 +1061,31 @@
                 <div class="settings-content">
                     <div id="settings-category-general" class="settings-category-panel active-category">
                         <div class="settings-card">
+                            <div class="settings-section-label">Site Mode</div>
+                            <div class="mode-row">
+                                <div class="theme-seg" id="site-mode-seg" role="group" aria-label="Site mode">
+                                    <button type="button" data-mode="basic" onclick="setSiteMode('basic')">Basic</button>
+                                    <button type="button" data-mode="full" onclick="setSiteMode('full')">Full</button>
+                                </div>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 14px; margin-bottom: 0;">
+                                <strong>Basic</strong> is just search and request: guests search Spotify and send a song, and you see the queue and play it.
+                                Kiosk, visuals, the music scheduler, blocklists, stats, filters and music videos are switched off, on the server too.
+                                <strong>Full</strong> turns everything back on exactly as you left it - nothing is deleted when you switch.
+                            </p>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="settings-section-label">Admin Appearance</div>
+                            <div class="theme-seg" id="theme-seg-admin" role="group" aria-label="Admin appearance">
+                                <button type="button" data-mode="auto" onclick="setScreenTheme('admin','auto')">Auto</button>
+                                <button type="button" data-mode="light" onclick="setScreenTheme('admin','light')">Light</button>
+                                <button type="button" data-mode="dark" onclick="setScreenTheme('admin','dark')">Dark</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 14px; margin-bottom: 0;">Auto follows this device's own light/dark setting.</p>
+                        </div>
+
+                        <div class="settings-card">
                             <div class="settings-section-label">Guest QR Code</div>
                             <div class="qr-card-body">
                                 <div id="guest-qr-code" class="qr-code-box"></div>
@@ -1064,14 +1137,14 @@
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Export</div>
                             <div class="control-bar">
                                 <button class="save-config-btn" onclick="exportStatsCSV()">Export Night's Stats (CSV)</button>
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Duplicate as Template</div>
                             <p class="settings-card-hint" style="margin-top: 0;">Carries over your credit/countdown/filter/kiosk rules to a brand-new event - not the name, password, venue, or tonight's queue and history.</p>
                             <div class="control-bar">
@@ -1091,7 +1164,7 @@
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Queue Length Cap</div>
                             <div class="config-dashboard">
                                 <button id="toggle-queue-cap" class="toggle-btn neutral-status" onclick="toggleQueueCap()">Queue Cap: OFF</button>
@@ -1104,7 +1177,7 @@
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Decade Filters (Theme Nights)</div>
                             <div class="filter-panel">
                                 <p class="filter-hint">Pick any decades to restrict guests to only those. Leave everything unchecked to allow anything.</p>
@@ -1114,7 +1187,7 @@
                             </div>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Blocked Guests</div>
                             <p class="settings-card-hint" style="margin-top: 0;">Block a guest's device from the Stats tab's "Recent Requests" list. A blocked guest can't request or vote for the rest of this event.</p>
                             <div id="blocked-guests-list" class="stat-box-body"></div>
@@ -1132,7 +1205,7 @@
                             </p>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Check-In Distance</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
                                 How close (in meters) a guest's phone has to be to the pinned venue location for Location Lock to let them request a song. Loosen this for a venue that spans a big building or parking lot; tighten it for a small room.
@@ -1161,7 +1234,7 @@
                             </p>
                         </div>
 
-                        <div class="settings-card">
+                        <div class="settings-card full-only">
                             <div class="settings-section-label">Fallback Playlist</div>
                             <div class="config-dashboard">
                                 <div class="input-group" style="width: 100%; max-width: 460px;">
@@ -1183,6 +1256,16 @@
                     </div>
 
                     <div id="settings-category-kiosk" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Kiosk Appearance</div>
+                            <div class="theme-seg" id="theme-seg-kiosk" role="group" aria-label="Kiosk Appearance">
+                                <button type="button" data-mode="auto" onclick="setScreenTheme('kiosk','auto')">Auto</button>
+                                <button type="button" data-mode="light" onclick="setScreenTheme('kiosk','light')">Light</button>
+                                <button type="button" data-mode="dark" onclick="setScreenTheme('kiosk','dark')">Dark</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 14px; margin-bottom: 0;">Applies to the kiosk page within a few seconds. Auto follows the kiosk device's own light/dark setting.</p>
+                        </div>
+
                         <div class="settings-card">
                             <div class="settings-section-label">Kiosk Page (kiosk.html)</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
@@ -1214,6 +1297,16 @@
                     </div>
 
                     <div id="settings-category-content" class="settings-category-panel">
+                        <div class="settings-card">
+                            <div class="settings-section-label">Visuals Appearance</div>
+                            <div class="theme-seg" id="theme-seg-visuals" role="group" aria-label="Visuals Appearance">
+                                <button type="button" data-mode="auto" onclick="setScreenTheme('visuals','auto')">Auto</button>
+                                <button type="button" data-mode="light" onclick="setScreenTheme('visuals','light')">Light</button>
+                                <button type="button" data-mode="dark" onclick="setScreenTheme('visuals','dark')">Dark</button>
+                            </div>
+                            <p class="settings-card-hint" style="margin-top: 14px; margin-bottom: 0;">Applies to the visuals display within a few seconds. Auto follows the display device's own light/dark setting.</p>
+                        </div>
+
                         <div class="settings-card">
                             <div class="settings-section-label">Visuals Display (visuals.html)</div>
                             <p class="settings-card-hint" style="margin-top: 0;">
@@ -2031,6 +2124,7 @@ async function verifyPassword() {
         // so this always reflects exactly what's about to be (or already is)
         // on screen.
         async function pollCurrentMusicVideoMatch() {
+            if (adminBasicMode) return;
             try {
                 const res = await fetch(eventUrl('/api/music-video/status'));
                 if (!res.ok) return;
@@ -2106,6 +2200,7 @@ async function verifyPassword() {
         }
 
         async function loadFamilyLists() {
+            if (adminBasicMode) return;
             try {
                 const res = await fetch(eventUrl('/api/admin/visuals/family-lists'), { headers: adminHeaders() });
                 if (!res.ok) return;
@@ -2417,6 +2512,57 @@ async function verifyPassword() {
             handleEl.addEventListener('pointercancel', onUp);
         }
 
+        // ---- Site mode (Basic / Full) + themes ----
+        let adminBasicMode = false;
+        let lastThemes = { admin: 'auto', kiosk: 'auto', visuals: 'auto' };
+        function markSeg(id, mode) {
+            document.querySelectorAll('#' + id + ' button').forEach(b => b.classList.toggle('is-active', b.dataset.mode === mode));
+        }
+        function applyThemesFromData(themes) {
+            if (!themes) return;
+            lastThemes = themes;
+            CrowdTheme.set(themes.admin || 'auto');
+            ['admin', 'kiosk', 'visuals'].forEach(k => markSeg('theme-seg-' + k, themes[k] || 'auto'));
+        }
+        function applyAdminMode(mode) {
+            const basic = mode === 'basic';
+            markSeg('site-mode-seg', basic ? 'basic' : 'full');
+            if (basic === adminBasicMode && document.body.classList.contains('basic-mode') === basic) return;
+            adminBasicMode = basic;
+            document.body.classList.toggle('basic-mode', basic);
+            if (basic) {
+                const hiddenTabs = ['history', 'stats', 'blocked'];
+                const activeTab = TAB_NAMES.find(n => document.getElementById('tab-panel-' + n).classList.contains('active-content'));
+                if (hiddenTabs.includes(activeTab)) switchTab('queue');
+                const active = SETTINGS_CATEGORIES.find(n => document.getElementById('settings-category-' + n).classList.contains('active-category'));
+                if (active === 'kiosk' || active === 'content') switchSettingsCategory('general');
+            }
+        }
+        async function setSiteMode(mode) {
+            if (mode === 'basic' && !adminBasicMode &&
+                !confirm('Switch to Basic mode?\n\nGuests will only be able to search and request. Kiosk, visuals, the scheduler, blocklists, stats and music videos are switched off until you go back to Full. Nothing is deleted.')) return;
+            try {
+                const res = await fetch(eventUrl('/api/admin/site-mode'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ mode })
+                });
+                if (!res.ok) { showToast('Could not change the mode.', 'error'); return; }
+                applyAdminMode(mode);
+                showToast(mode === 'basic' ? 'Basic mode on.' : 'Full mode on.', 'success');
+            } catch (e) { showToast('Could not reach the server.', 'error'); }
+        }
+        async function setScreenTheme(screen, mode) {
+            try {
+                const res = await fetch(eventUrl('/api/admin/theme'), {
+                    method: 'POST', headers: adminHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ screen, theme: mode })
+                });
+                if (!res.ok) { showToast('Could not change the appearance.', 'error'); return; }
+                lastThemes[screen] = mode;
+                applyThemesFromData(lastThemes);
+            } catch (e) { showToast('Could not reach the server.', 'error'); }
+        }
+
         async function updateDashboard() {
             if (!isAuthorized) return; 
             
@@ -2424,6 +2570,8 @@ async function verifyPassword() {
                 const res = await fetch(eventUrl('/api/admin/data'), { headers: adminHeaders() });
                 if (!res.ok) return;
                 const data = await res.json();
+                applyAdminMode(data.siteMode);
+                applyThemesFromData(data.themes);
                 
                 if(document.activeElement !== document.getElementById('input-event-name')) {
                     document.getElementById('input-event-name').value = data.eventName || '';
@@ -2748,7 +2896,7 @@ async function verifyPassword() {
         }
 
         async function loadStats() {
-            if (!isAuthorized) return;
+            if (!isAuthorized || adminBasicMode) return;
             try {
                 const res = await fetch(eventUrl('/api/admin/stats'), { headers: adminHeaders() });
                 if (!res.ok) return;
