@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="/theme.js"></script>
+    <script>CrowdTheme.use("crowddj_theme_guest");</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
@@ -16,12 +18,57 @@
             --panel-bg: #181818;
             --card-bg: #242424;
             --red-action: #e91429;
+        
+            --text: #ffffff;
+            --text-muted: #a7a7a7;
+            --border: #282828;
+            --border-strong: #333333;
+            --hover-bg: #2c2c2c;
+            --overlay-soft: rgba(255,255,255,0.08);
+            --stage-bg: #000000;
+            --inset-bg: #1c1c1c;
+            --text-soft: #cccccc;
         }
+
+        /* ---- Light theme (html[data-theme="light"], set by theme.js) ---- */
+        html[data-theme="light"] {
+            --spotify-green: #16a34a;
+            --spotify-black: #f3f4f6;
+            --panel-bg: #ffffff;
+            --card-bg: #eceff3;
+            --red-action: #d1122a;
+            --text: #111318;
+            --text-muted: #5b6472;
+            --border: #dfe3e8;
+            --border-strong: #c8ced6;
+            --hover-bg: #e3e7ec;
+            --overlay-soft: rgba(0,0,0,0.06);
+            --stage-bg: #f3f4f6;
+            --inset-bg: #ffffff;
+            --text-soft: #374151;
+        }
+
+        /* ---- Theme picker (sidebar) ---- */
+        .theme-picker { padding: 14px 20px 6px; }
+        .theme-picker-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 700; margin-bottom: 8px; }
+        .theme-seg { display: flex; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+        .theme-seg button { flex: 1; background: none; border: none; color: var(--text-muted); padding: 9px 4px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+        .theme-seg button.is-active { background: var(--text); color: var(--panel-bg); }
+
+        /* ---- Basic mode: guests only search + request ---- */
+        body.basic-mode #connect-spotify-btn,
+        body.basic-mode #sidebar-spotify-item,
+        body.basic-mode #sidebar-playlist-item,
+        body.basic-mode #sidebar-myrequests-item,
+        body.basic-mode #inline-playlists-btn,
+        body.basic-mode .youtube-attribution-inline,
+        body.basic-mode #list-title { display: none !important; }
+
 
         html { overflow-x: hidden; }
         body {
             background-color: var(--spotify-black);
-            color: white;
+            color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
             padding: 16px;
@@ -46,7 +93,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #282828;
+            border-bottom: 1px solid var(--border);
             padding-bottom: 12px;
             margin-bottom: 16px;
             flex-wrap: nowrap;
@@ -90,7 +137,7 @@
             margin: 2px 0 0;
             font-size: 0.8rem;
             font-weight: 500;
-            color: #a7a7a7;
+            color: var(--text-muted);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -113,7 +160,7 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            color: #ffffff;
+            color: var(--text);
             font-size: 0.8rem;
             font-weight: 600;
         }
@@ -131,7 +178,7 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            color: #ffffff;
+            color: var(--text);
             font-size: 0.8rem;
             font-weight: 600;
             margin-top: 8px;
@@ -179,7 +226,7 @@
             padding: 10px 16px;
             border-radius: 50px;
             font-weight: 700;
-            border: 1px solid #282828;
+            border: 1px solid var(--border);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -191,7 +238,7 @@
             text-align: center;
         }
 
-        .credits-display { color: white; }
+        .credits-display { color: var(--text); }
 
         .connect-spotify-btn {
             background-color: black;
@@ -205,7 +252,7 @@
             transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
         .connect-spotify-btn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
-        .connect-spotify-btn:hover { background-color: #0a0a0a; }
+        .connect-spotify-btn:hover { background-color: var(--inset-bg); }
         .connect-spotify-btn.is-connected {
             color: white;
             background-color: var(--spotify-green);
@@ -229,8 +276,8 @@
            nowrap+hidden overflow as a safety net means the box never moves,
            regardless of what's inside it. */
         .credit-badge {
-            background-color: #1c1c1c;
-            border: 1px solid #2c2c2c;
+            background-color: var(--inset-bg);
+            border: 1px solid var(--hover-bg);
             border-radius: 11px;
             display: flex;
             flex-direction: column;
@@ -248,14 +295,14 @@
             font-size: 1.15rem;
             font-weight: 400;
             line-height: 1;
-            color: white;
+            color: var(--text);
             white-space: nowrap;
         }
         .credit-badge-label {
             font-size: 0.46rem;
             font-weight: 700;
             letter-spacing: 0.1px;
-            color: #a7a7a7;
+            color: var(--text-muted);
             line-height: 1;
             white-space: nowrap;
         }
@@ -325,9 +372,9 @@
         .search-box {
             width: 100%;
             background-color: var(--panel-bg);
-            border: 1px solid #333;
+            border: 1px solid var(--border-strong);
             padding: 14px 20px;
-            color: white;
+            color: var(--text);
             border-radius: 50px;
             font-size: 1rem;
             box-sizing: border-box;
@@ -340,8 +387,8 @@
 
         /* Disabled search state styling */
         .search-box:disabled {
-            background-color: #111;
-            border-color: #222;
+            background-color: var(--inset-bg);
+            border-color: var(--border);
             color: #555;
             cursor: not-allowed;
             opacity: 0.6;
@@ -405,7 +452,7 @@
         .my-request-text { flex: 1; min-width: 0; }
         .my-request-text p { margin: 0; }
         .my-request-title { font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .my-request-artist { color: #a7a7a7; font-size: 0.8rem; margin-top: 2px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .my-request-artist { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         .status-pill {
             font-size: 0.75rem;
@@ -416,7 +463,7 @@
             flex-shrink: 0;
         }
         .status-queued { background-color: rgba(29, 185, 84, 0.15); color: var(--spotify-green); }
-        .status-played { background-color: rgba(167, 167, 167, 0.15); color: #a7a7a7; }
+        .status-played { background-color: rgba(167, 167, 167, 0.15); color: var(--text-muted); }
         .status-removed { background-color: rgba(233, 20, 41, 0.15); color: var(--red-action); }
 
         .song-row {
@@ -427,7 +474,7 @@
             background: var(--card-bg);
             margin-bottom: 8px;
             border-radius: 8px;
-            border: 1px solid #2c2c2c;
+            border: 1px solid var(--hover-bg);
             gap: 16px;
             box-sizing: border-box;
             width: 100%;
@@ -486,7 +533,7 @@
         }
 
         .song-artist {
-            color: #a7a7a7;
+            color: var(--text-muted);
             margin: 4px 0 0 0;
             font-size: 0.85rem;
             white-space: nowrap;
@@ -537,7 +584,7 @@
             font-size: 0.8rem;
             font-weight: 700;
             margin-top: 4px;
-            color: #a7a7a7;
+            color: var(--text-muted);
             text-align: center;
         }
         .user-voted-up .vote-count { color: var(--spotify-green); }
@@ -555,7 +602,7 @@
             transition: transform 0.1s ease;
         }
         .btn-request:active { transform: scale(0.95); }
-        .btn-request:disabled { background-color: #3e3e3e; cursor: default; }
+        .btn-request:disabled { background-color: var(--border-strong); cursor: default; }
 
         .empty-placeholder { color: #666; font-style: italic; text-align: center; padding: 20px 0; }
 
@@ -579,7 +626,7 @@
         .modal-box {
             background: var(--panel-bg);
             border-radius: 16px;
-            border: 1px solid #282828;
+            border: 1px solid var(--border);
             width: 100%;
             max-width: 480px;
             max-height: 80vh;
@@ -593,18 +640,18 @@
             align-items: center;
             gap: 10px;
             padding: 18px 20px;
-            border-bottom: 1px solid #282828;
+            border-bottom: 1px solid var(--border);
             flex-shrink: 0;
         }
         .modal-back-btn {
-            background: none; border: none; color: #a7a7a7; cursor: pointer; padding: 4px;
+            background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px;
             display: none; align-items: center; justify-content: center;
         }
         .modal-back-btn.is-visible { display: flex; }
         .modal-back-btn svg { width: 20px; height: 20px; fill: currentColor; }
         .modal-title { font-weight: 800; font-size: 1.1rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .modal-close-btn { background: none; border: none; color: #a7a7a7; cursor: pointer; font-size: 1.3rem; padding: 4px 8px; line-height: 1; }
-        .modal-close-btn:hover { color: white; }
+        .modal-close-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.3rem; padding: 4px 8px; line-height: 1; }
+        .modal-close-btn:hover { color: var(--text); }
 
         .modal-body { overflow-y: auto; padding: 16px 20px; }
 
@@ -617,7 +664,7 @@
         .privacy-body h4:first-of-type { margin-top: 0; }
         .privacy-body p, .privacy-body li {
             font-size: 0.85rem;
-            color: #d0d0d0;
+            color: var(--text-soft);
             line-height: 1.5;
         }
         .privacy-body ul { margin: 6px 0; padding-left: 20px; }
@@ -640,17 +687,17 @@
             transition: background-color 0.15s ease;
         }
         .playlist-row:hover { background-color: var(--card-bg); }
-        .playlist-row img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: #333; }
+        .playlist-row img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: var(--border-strong); }
         .playlist-row .pl-name { font-weight: 700; font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .playlist-row .pl-count { font-size: 0.8rem; color: #a7a7a7; margin: 2px 0 0 0; }
+        .playlist-row .pl-count { font-size: 0.8rem; color: var(--text-muted); margin: 2px 0 0 0; }
 
-        .modal-loading, .modal-empty { color: #a7a7a7; text-align: center; padding: 30px 10px; font-style: italic; }
+        .modal-loading, .modal-empty { color: var(--text-muted); text-align: center; padding: 30px 10px; font-style: italic; }
 
         /* USERNAME PROMPT MODAL */
         .username-modal-box {
             background: var(--panel-bg);
             border-radius: 16px;
-            border: 1px solid #282828;
+            border: 1px solid var(--border);
             width: 100%;
             max-width: 380px;
             padding: 24px;
@@ -658,13 +705,13 @@
             text-align: center;
         }
         .username-modal-box h3 { margin: 0 0 8px 0; font-size: 1.2rem; }
-        .username-modal-box p { margin: 0 0 16px 0; color: #a7a7a7; font-size: 0.9rem; }
+        .username-modal-box p { margin: 0 0 16px 0; color: var(--text-muted); font-size: 0.9rem; }
         .username-input {
             width: 100%;
             background-color: var(--card-bg);
-            border: 1px solid #333;
+            border: 1px solid var(--border-strong);
             padding: 12px 16px;
-            color: white;
+            color: var(--text);
             border-radius: 50px;
             font-size: 1rem;
             box-sizing: border-box;
@@ -699,13 +746,13 @@
             pointer-events: none;
         }
         .toast {
-            background: #242424; color: white; border: 1px solid #333;
-            border-left: 4px solid var(--spotify-green, #1DB954);
+            background: var(--card-bg); color: var(--text); border: 1px solid var(--border-strong);
+            border-left: 4px solid var(--spotify-green, var(--spotify-green));
             border-radius: 8px; padding: 12px 18px; font-size: 0.9rem; font-weight: 600;
             max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
             opacity: 0; transform: translateY(-12px); transition: opacity 0.25s ease, transform 0.25s ease;
         }
-        .toast-error { border-left-color: #e91429; }
+        .toast-error { border-left-color: var(--red-action); }
         .toast-visible { opacity: 1; transform: translateY(0); }
     
         /* --- Now Playing bar (live from Spotify) --- */
@@ -714,7 +761,7 @@
             left: 0; right: 0; bottom: 0;
             height: 60px;
             background-color: var(--panel-bg);
-            border-top: 1px solid #282828;
+            border-top: 1px solid var(--border);
             display: none;
             align-items: center;
             gap: 10px;
@@ -728,7 +775,7 @@
             position: absolute;
             top: 0; left: 0; right: 0;
             height: 2px;
-            background-color: rgba(255,255,255,0.08);
+            background-color: var(--overlay-soft);
         }
         .now-playing-progress-fill {
             height: 100%;
@@ -753,7 +800,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .now-playing-artist {
-            margin: 2px 0 0 0; font-size: 0.75rem; color: #a7a7a7;
+            margin: 2px 0 0 0; font-size: 0.75rem; color: var(--text-muted);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .now-playing-live-dot {
@@ -782,15 +829,15 @@
             width: 40px;
             height: 40px;
             border-radius: 10px;
-            background-color: #1c1c1c;
-            border: 1px solid #2c2c2c;
+            background-color: var(--inset-bg);
+            border: 1px solid var(--hover-bg);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             padding: 0;
         }
-        .menu-btn svg { width: 16px; height: 16px; fill: white; }
+        .menu-btn svg { width: 16px; height: 16px; fill: var(--text); }
         .menu-btn:hover { border-color: var(--spotify-green); }
 
         /* --- Sidebar (left-hand side) --- */
@@ -803,7 +850,7 @@
             position: fixed; top: 0; left: 0; bottom: 0;
             width: min(320px, 84vw);
             background: var(--panel-bg);
-            border-right: 1px solid #282828;
+            border-right: 1px solid var(--border);
             z-index: 951;
             transform: translateX(-100%);
             transition: transform 0.25s ease;
@@ -814,25 +861,25 @@
         .sidebar-panel.is-visible { transform: translateX(0); }
         .sidebar-header {
             display: flex; align-items: center; justify-content: space-between;
-            padding: 20px; border-bottom: 1px solid #282828;
+            padding: 20px; border-bottom: 1px solid var(--border);
         }
         .sidebar-header h3 { margin: 0; font-size: 1.1rem; }
-        .sidebar-close-btn { background: none; border: none; color: #a7a7a7; font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
-        .sidebar-close-btn:hover { color: white; }
+        .sidebar-close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.3rem; cursor: pointer; padding: 4px 8px; }
+        .sidebar-close-btn:hover { color: var(--text); }
         .sidebar-current-venue {
-            padding: 14px 20px; border-bottom: 1px solid #282828;
-            font-size: 0.8rem; color: #a7a7a7;
+            padding: 14px 20px; border-bottom: 1px solid var(--border);
+            font-size: 0.8rem; color: var(--text-muted);
         }
-        .sidebar-current-venue strong { display: block; color: white; font-size: 0.95rem; margin-top: 2px; }
+        .sidebar-current-venue strong { display: block; color: var(--text); font-size: 0.95rem; margin-top: 2px; }
         .sidebar-item {
             display: flex; align-items: center; gap: 14px;
             padding: 16px 20px; cursor: pointer; border: none;
-            background: none; color: white; font-size: 0.95rem;
+            background: none; color: var(--text); font-size: 0.95rem;
             font-family: inherit; text-align: left; width: 100%;
-            border-bottom: 1px solid #232323;
+            border-bottom: 1px solid var(--border);
         }
         .sidebar-item:hover { background-color: var(--card-bg); }
-        .sidebar-item svg { width: 20px; height: 20px; fill: #a7a7a7; flex-shrink: 0; }
+        .sidebar-item svg { width: 20px; height: 20px; fill: var(--text-muted); flex-shrink: 0; }
         .sidebar-item span { flex: 1; }
         /* Hidden until fetchSystemState confirms the admin has Guest Spotify
            Connect turned on for the current venue (defaults off) - also
@@ -848,7 +895,7 @@
         .sidebar-footer {
             margin-top: auto;
             padding: 18px 20px;
-            border-top: 1px solid #282828;
+            border-top: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -864,15 +911,15 @@
         .venue-screen.is-visible { display: flex; }
         .venue-screen-header {
             display: flex; align-items: center; gap: 12px;
-            padding: 18px 20px; border-bottom: 1px solid #282828; flex-shrink: 0;
+            padding: 18px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
         }
         .venue-screen-header h3 { margin: 0; font-size: 1.15rem; flex: 1; }
-        .venue-screen-back { background: none; border: none; color: #a7a7a7; cursor: pointer; padding: 4px; display: flex; }
+        .venue-screen-back { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; display: flex; }
         .venue-screen-back svg { width: 22px; height: 22px; fill: currentColor; }
-        .venue-tabs { display: flex; border-bottom: 1px solid #282828; flex-shrink: 0; }
+        .venue-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
         .venue-tab {
             flex: 1; text-align: center; padding: 14px; background: none; border: none;
-            color: #a7a7a7; font-weight: 700; font-family: inherit; font-size: 0.95rem;
+            color: var(--text-muted); font-weight: 700; font-family: inherit; font-size: 0.95rem;
             cursor: pointer; border-bottom: 2px solid transparent;
         }
         .venue-tab.is-active { color: var(--spotify-green); border-bottom-color: var(--spotify-green); }
@@ -881,10 +928,10 @@
 
         .venue-list-item {
             display: flex; align-items: center; justify-content: space-between;
-            gap: 12px; padding: 16px 20px; border-bottom: 1px solid #232323;
+            gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border);
         }
         .venue-list-item-name { font-weight: 700; font-size: 1rem; }
-        .venue-list-item-sub { color: #a7a7a7; font-size: 0.8rem; margin-top: 2px; }
+        .venue-list-item-sub { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; }
         .venue-list-item-distance { color: var(--spotify-green); font-size: 0.75rem; font-weight: 700; margin-top: 4px; }
         .venue-select-btn {
             background-color: var(--spotify-green); color: white; border: none;
@@ -896,8 +943,8 @@
         #venue-map { width: 100%; height: 100%; }
         #venue-map .leaflet-container { background: var(--spotify-black); font-family: inherit; }
         .leaflet-control-attribution a { color: rgba(255,255,255,0.7) !important; }
-        #venue-map .leaflet-control-zoom a { background: var(--card-bg) !important; color: white !important; border-color: #333 !important; }
-        #venue-map .leaflet-control-zoom a:hover { background: #2f2f2f !important; }
+        #venue-map .leaflet-control-zoom a { background: var(--card-bg) !important; color: var(--text) !important; border-color: var(--border-strong) !important; }
+        #venue-map .leaflet-control-zoom a:hover { background: var(--hover-bg) !important; }
 
         /* "Zoom to my location" - sits top-right over the map, out of the
            way of Leaflet's own zoom/attribution controls in the bottom
@@ -909,9 +956,9 @@
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; padding: 0;
         }
-        .venue-map-locate-btn:hover { background: #f2f2f2; }
+        .venue-map-locate-btn:hover { background: var(--hover-bg); }
         .venue-map-locate-btn:disabled { opacity: 0.6; cursor: default; }
-        .venue-map-locate-btn svg { width: 20px; height: 20px; fill: #333; }
+        .venue-map-locate-btn svg { width: 20px; height: 20px; fill: var(--border-strong); }
 
         /* Small round marker icon on the venue map - same icon as the
            browser tab favicon, per spec. A plain divIcon, not Leaflet's
@@ -950,7 +997,7 @@
         .leaflet-popup-content-wrapper { padding: 0; border-radius: 10px; }
         .leaflet-popup-content { margin: 14px; }
 
-        .venue-empty-msg { color: #a7a7a7; text-align: center; padding: 40px 20px; font-style: italic; }
+        .venue-empty-msg { color: var(--text-muted); text-align: center; padding: 40px 20px; font-style: italic; }
 
     </style>
 </head>
@@ -979,7 +1026,7 @@
             <svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg>
             <span>Copy Playlist</span>
         </button>
-        <button type="button" class="sidebar-item" onclick="closeSidebar(); openMyRequestsModal();">
+        <button type="button" class="sidebar-item" id="sidebar-myrequests-item" onclick="closeSidebar(); openMyRequestsModal();">
             <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 15h-2v-2h2zm0-4h-2V7h2z"/></svg>
             <span>My Requests</span>
         </button>
@@ -995,6 +1042,14 @@
             <svg viewBox="0 0 24 24"><path d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
             <span>Leave Venue</span>
         </button>
+        <div class="theme-picker">
+            <div class="theme-picker-label">Appearance</div>
+            <div class="theme-seg" id="guest-theme-seg" role="group" aria-label="Appearance">
+                <button type="button" data-mode="auto" onclick="setGuestTheme('auto')">Auto</button>
+                <button type="button" data-mode="light" onclick="setGuestTheme('light')">Light</button>
+                <button type="button" data-mode="dark" onclick="setGuestTheme('dark')">Dark</button>
+            </div>
+        </div>
         <div class="sidebar-footer">
             <div class="spotify-attribution-inline">
                 <span>Powered by</span>
@@ -1221,6 +1276,31 @@
         // global on purpose (same person, same name, wherever they go).
         function creditsStorageKey() { return `userCredits_${EVENT_SLUG}`; }
         const SELECTED_VENUE_KEY = 'crowddj_selected_venue';
+
+        // --- Theme picker (guest-only, remembered in this browser) ---
+        function setGuestTheme(mode) { CrowdTheme.set(mode); markGuestTheme(); }
+        function markGuestTheme() {
+            const cur = CrowdTheme.get();
+            document.querySelectorAll('#guest-theme-seg button').forEach(b => b.classList.toggle('is-active', b.dataset.mode === cur));
+        }
+        markGuestTheme();
+
+        // --- Basic / Full mode ---
+        // 'basic' (set by the DJ) = search + request only. The server refuses
+        // everything else for that event too; this just makes the page match.
+        let basicMode = false;
+        function applySiteMode(mode) {
+            const b = mode === 'basic';
+            if (b === basicMode && document.body.classList.contains('basic-mode') === b) return;
+            basicMode = b;
+            document.body.classList.toggle('basic-mode', b);
+            if (b) {
+                const el = document.getElementById('main-display-list');
+                if (el && !(document.getElementById('search-input') || {}).value) {
+                    el.innerHTML = '<p class="empty-placeholder">Search for a song above to request it.</p>';
+                }
+            }
+        }
 
         // --- Sidebar ---
         function openSidebar() {
@@ -1740,6 +1820,7 @@
                     return;
                 }
                 const data = await res.json();
+                applySiteMode(data.siteMode);
 
                 maxCredits = data.maxCredits;
                 currentServerDuration = data.countdownLength;
@@ -1907,6 +1988,14 @@
 
         function renderQueue(queue) {
             if (queue) lastGuestQueue = queue;
+            if (basicMode) {
+                const s = document.getElementById('search-input');
+                if (!s || s.value.trim() === '') {
+                    const d = document.getElementById('main-display-list');
+                    if (d && !d.querySelector('.empty-placeholder')) d.innerHTML = '<p class="empty-placeholder">Search for a song above to request it.</p>';
+                }
+                return;
+            }
 
             // The now-playing poll calls this every few seconds to refresh
             // the Spotify continuation rows - but if the guest is actively
@@ -2606,6 +2695,7 @@
         }
 
         async function pollNowPlaying() {
+            if (basicMode) return;
             if (!hasVenueSelected()) { updateNowPlayingBar(null); return; }
             try {
                 const res = await fetch(eventUrl('/api/now-playing'));
