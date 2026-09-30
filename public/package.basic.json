@@ -1,0 +1,19 @@
+{
+  "name": "dj-request-station",
+  "version": "1.0.0",
+  "description": "Live request system - Basic install (search + request only, no music-video packages)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.2.0",
+    "node-fetch": "^2.6.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "",
+  "license": "ISC"
+}
