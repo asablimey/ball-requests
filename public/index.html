@@ -1480,7 +1480,7 @@
                             ${v.venueName ? `<div class="venue-list-item-sub">${escapeHtml(v.venueName)}</div>` : ''}
                             ${typeof v.distanceKm === 'number' ? `<div class="venue-list-item-distance">${formatDistance(v.distanceKm)}</div>` : ''}
                         </div>
-                        <button class="venue-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select</button>
+                        <button class="venue-select-btn" data-slug="${escapeHtml(v.slug)}" data-name="${escapeHtml(v.eventName)}" onclick="selectVenue(this.dataset.slug, this.dataset.name)">Select</button>
                     </div>
                 `).join('');
             } catch (e) {
@@ -1575,7 +1575,7 @@
                     <div class="venue-popup-box">
                         <p class="venue-popup-name">${escapeHtml(v.eventName)}</p>
                         ${v.venueName ? `<p class="venue-popup-sub">${escapeHtml(v.venueName)}</p>` : ''}
-                        <button class="venue-popup-select-btn" onclick="selectVenue('${v.slug}', ${JSON.stringify(v.eventName).replace(/"/g, '&quot;')})">Select Venue</button>
+                        <button class="venue-popup-select-btn" data-slug="${escapeHtml(v.slug)}" data-name="${escapeHtml(v.eventName)}" onclick="selectVenue(this.dataset.slug, this.dataset.name)">Select Venue</button>
                     </div>
                 `;
                 const marker = L.marker([v.latitude, v.longitude], { icon: venueIcon })
@@ -1812,6 +1812,7 @@
         }
 
         async function fetchSystemState() {
+            if (document.hidden) return; // screen off / tab in background: no need to poll
             if (!hasVenueSelected()) { renderNoVenueState(); return; }
             try {
                 const res = await fetch(eventUrl('/data'));
@@ -2019,7 +2020,7 @@
             }
 
             const guestRowsHtml = lastGuestQueue.map(song => {
-                const isUpvoted = song.upvoters && song.upvoters.includes(voterSignatureToken);
+                const isUpvoted = !!song.upvoted;
 
                 return `
                     <div class="song-row">
@@ -2035,7 +2036,7 @@
                         </div>
                         <div class="actions">
                             <div class="vote-node ${isUpvoted ? 'user-voted-up' : ''}">
-                                <button class="vote-btn vote-btn-up" onclick="castVote('${song.id}', 'up')">
+                                <button class="vote-btn vote-btn-up" data-id="${escapeHtml(song.id)}" onclick="castVote(this.dataset.id, 'up')">
                                     <svg viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
                                 </button>
                                 <span class="vote-count">${song.ups || 0}</span>
@@ -2207,6 +2208,10 @@
         restoreSelectedVenue();
         fetchSystemState();
         setInterval(fetchSystemState, 4000);
+        // Catch up instantly when the guest comes back to the page.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) { fetchSystemState(); pollNowPlaying(); }
+        });
 
         // --- Guest Spotify Connect (browse-your-playlists) ---
         // Uses Authorization Code + PKCE entirely in the browser: no server session or
@@ -2510,7 +2515,7 @@
                 }
 
                 body.innerHTML = playlists.map(pl => `
-                    <div class="playlist-row" onclick="showPlaylistTracks('${pl.id}', ${JSON.stringify(pl.name).replace(/"/g, '&quot;')})">
+                    <div class="playlist-row" data-id="${escapeHtml(pl.id)}" data-name="${escapeHtml(pl.name)}" onclick="showPlaylistTracks(this.dataset.id, this.dataset.name)">
                         <img src="${safeImageUrl(pl.images?.[0]?.url)}">
                         <div>
                             <p class="pl-name">${escapeHtml(pl.name)}</p>
@@ -2695,7 +2700,7 @@
         }
 
         async function pollNowPlaying() {
-            if (basicMode) return;
+            if (basicMode || document.hidden) return;
             if (!hasVenueSelected()) { updateNowPlayingBar(null); return; }
             try {
                 const res = await fetch(eventUrl('/api/now-playing'));
