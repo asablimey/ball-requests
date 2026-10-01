@@ -236,8 +236,8 @@
                         </div>
                         <div class="card-actions">
                             <a class="btn btn-admin" href="/e/${slug}/admin" target="_blank" rel="noopener">Open Admin</a>
-                            <button class="btn btn-admin" onclick="resetPassword('${slug}', '${name.replace(/'/g, "\\'")}')">Reset Password</button>
-                            <button class="btn btn-close" onclick="closeEvent('${slug}', '${name.replace(/'/g, "\\'")}')">Close</button>
+                            <button class="btn btn-admin" data-slug="${slug}" data-name="${name}" onclick="resetPassword(this.dataset.slug, this.dataset.name)">Reset Password</button>
+                            <button class="btn btn-close" data-slug="${slug}" data-name="${name}" onclick="closeEvent(this.dataset.slug, this.dataset.name)">Close</button>
                         </div>
                     </div>
                 `;
