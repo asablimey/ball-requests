@@ -99,7 +99,7 @@ const adminAuthLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests: true,
-    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${req.params.slug}`,
     message: { error: 'Too many failed admin attempts. Try again later.' }
 });
 
@@ -132,6 +132,7 @@ app.set('trust proxy', 1);
 app.use(express.json());
 
 const VOTER_COOKIE = 'crowddj_vid';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseCookies(req) {
     const header = req.headers.cookie;
@@ -140,7 +141,10 @@ function parseCookies(req) {
     header.split(';').forEach(pair => {
         const idx = pair.indexOf('=');
         if (idx === -1) return;
-        out[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+        const rawValue = pair.slice(idx + 1).trim();
+        let value;
+        try { value = decodeURIComponent(rawValue); } catch (e) { value = rawValue; } // malformed % sequences must not crash the request
+        out[pair.slice(0, idx).trim()] = value;
     });
     return out;
 }
@@ -158,6 +162,9 @@ function voterIdentityMiddleware(req, res, next) {
     const cookieName = VOTER_COOKIE;
     const cookies = parseCookies(req);
     let vid = cookies[cookieName];
+    // The cookie value ends up in queue data, logs and the admin dashboard, so
+    // anything that isn't a UUID we issued is thrown away and replaced.
+    if (!UUID_PATTERN.test(vid || '')) vid = null;
     // Because the cookie is path-scoped, a guest with no cookie for THIS event's
     // path may still be sending a cookie of the same name scoped to a different
     // event's path - the browser only sends the one matching the current path,
@@ -2798,7 +2805,9 @@ async function getSpotifyToken() {
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
-function buildSortedQueue(event) {
+function buildSortedQueue(event, voterId) {
+    // upvoters/downvoters hold guests' private cookie IDs, so they are never
+    // sent to the public. Each guest just gets "upvoted: true/false" for themselves.
     return event.activeQueue.map(t => ({
         id: t.id,
         title: t.title,
@@ -2808,9 +2817,13 @@ function buildSortedQueue(event) {
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
-        upvoters: t.upvoters || [],
-        downvoters: t.downvoters || []
+        upvoted: !!voterId && (t.upvoters || []).includes(voterId)
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
+}
+
+// Public played-history: same entries minus requester names (DJ-only).
+function publicHistory(event) {
+    return (event.playedHistory || []).map(({ requesters, ...rest }) => rest);
 }
 
 // Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
@@ -3105,10 +3118,10 @@ app.get('/e/:slug/admin/spotify-login', (req, res) => {
 // slug. Figures out which event a login belongs to from the `state` param.
 app.get('/admin/spotify-callback', async (req, res) => {
     const { code, state, error } = req.query;
-    if (error) return res.status(400).send(`Spotify login failed: ${error}`);
+    if (error) return res.status(400).type('text/plain').send(`Spotify login failed: ${String(error)}`);
     const slug = typeof state === 'string' ? state.split(':')[0] : null;
     const event = slug ? await events.getEvent(slug) : null;
-    if (!event || !state || state !== event.spotify.pendingLoginState) {
+    if (typeof code !== 'string' || !event || typeof state !== 'string' || state !== event.spotify.pendingLoginState) {
         return res.status(400).send('State mismatch - please restart the login from that event\'s admin dashboard.');
     }
     event.spotify.pendingLoginState = null;
@@ -3128,7 +3141,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
         });
         const data = await response.json();
         if (!data.refresh_token) {
-            return res.status(500).send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
+            return res.status(500).type('text/plain').send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
         }
         event.spotify.djRefreshToken = data.refresh_token;
         event.spotify.djAccessToken = data.access_token;
@@ -3144,7 +3157,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
             </body></html>
         `);
     } catch (err) {
-        res.status(500).send('Token exchange failed: ' + err.message);
+        res.status(500).type('text/plain').send('Token exchange failed: ' + err.message);
     }
 });
 
@@ -3304,28 +3317,46 @@ const masterAuthLimiter = rateLimit({
 // one shared IP while still capping a scripted flood; if you regularly run
 // bigger venues (100+ phones on one WiFi) and see false-positive 429s in
 // the logs, raise these further rather than tighten them.
-const publicActionLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 90,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
-    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
-});
+// Two layers, so the number of phones in a room never matters:
+//  1) PER DEVICE - each phone is counted on its own (by its server-issued
+//     cookie), so 5 phones or 500 on the same WiFi never use up each other's
+//     allowance. A device that misbehaves only blocks itself.
+//  2) PER IP, a very high flood ceiling - only exists so someone who throws
+//     away their cookie on every request (a script) still gets stopped. It is
+//     far above what any real room produces. Raise it if you ever see it hit.
+function hasDeviceCookie(req) {
+    return UUID_PATTERN.test(parseCookies(req)[VOTER_COOKIE] || '');
+}
+function deviceKey(req) {
+    const who = hasDeviceCookie(req)
+        ? `dev:${parseCookies(req)[VOTER_COOKIE]}`
+        : `ip:${ipKeyGenerator(req.ip)}`;
+    return `${who}:${req.params.slug}`;
+}
+function ipKey(req) {
+    return `ip:${ipKeyGenerator(req.ip)}:${req.params.slug}`;
+}
+const TOO_MANY = { error: 'Too many requests - slow down and try again in a moment.' };
 
-// Looser limiter for cheap, read-only polling endpoints (queue/now-playing
-// state, served straight from the in-memory cache) - these are hit every
-// few seconds by every connected guest/kiosk/admin tab during normal use,
-// so this exists mainly to cap a scripted client hammering them, not to
-// throttle real usage. Same shared-IP caveat as above, hence the high ceiling.
-const publicReadLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 600,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
-    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
-});
+// Search / request / vote / set-username (each can hit Spotify).
+const publicActionLimiter = [
+    rateLimit({ windowMs: 60 * 1000, limit: 3000, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey, message: TOO_MANY }),
+    rateLimit({
+        windowMs: 60 * 1000,
+        limit: (req) => (hasDeviceCookie(req) ? 40 : 600), // a phone with no cookie yet shares a looser IP bucket
+        standardHeaders: true, legacyHeaders: false, keyGenerator: deviceKey, message: TOO_MANY
+    })
+];
+
+// Cheap read-only polling (queue / now-playing / visuals), served from memory.
+const publicReadLimiter = [
+    rateLimit({ windowMs: 60 * 1000, limit: 30000, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey, message: TOO_MANY }),
+    rateLimit({
+        windowMs: 60 * 1000,
+        limit: (req) => (hasDeviceCookie(req) ? 150 : 3000),
+        standardHeaders: true, legacyHeaders: false, keyGenerator: deviceKey, message: TOO_MANY
+    })
+];
 app.get('/api/master/events', masterAuthLimiter, async (req, res) => {
     if (!verifyMasterPassword(req.headers['x-admin-password'])) {
         return res.status(401).json({ error: 'Unauthorized.' });
@@ -3809,8 +3840,8 @@ app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) 
         genreFilter: event.systemConfigs.genreFilter || [],
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
-        queue: buildSortedQueue(event),
-        history: event.playedHistory,
+        queue: buildSortedQueue(event, req.serverVoterId),
+        history: publicHistory(event),
         // This guest's own block status (Blocked tab) - lets the guest page
         // grey out the search bar for just this one browser/device, instead
         // of only finding out when a request/vote gets rejected.
@@ -3835,8 +3866,8 @@ app.get('/e/:slug/kiosk-data', publicReadLimiter, voterIdentityMiddleware, (req,
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.kioskConfigs.spotifyConnectEnabled,
         displayOnlyMode: event.kioskConfigs.displayOnlyMode,
-        queue: buildSortedQueue(event),
-        history: event.playedHistory,
+        queue: buildSortedQueue(event, req.serverVoterId),
+        history: publicHistory(event),
         blocked: isVoterBlocked(event, req.serverVoterId)
     });
 });
