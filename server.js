@@ -919,6 +919,43 @@ async function youtubeFetchDurations(videoIds) {
     }
 }
 
+
+// One videos.list call (1 quota unit) that says whether a YouTube video can
+// actually be PLAYED inside our embedded player. Cached 30 min per video.
+// Returns { ok, embeddable, ... } or { ok:false, unknown:true } when it could
+// not be checked (no key / quota / network) - unknown never blocks playback.
+const youtubeCheckCache = new Map();
+async function youtubeCheckVideo(id) {
+    const hit = youtubeCheckCache.get(id);
+    if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.result;
+    let result;
+    if (!YOUTUBE_API_KEY) result = { unknown: true, reason: 'YOUTUBE_API_KEY not set' };
+    else if (!youtubeQuotaAvailable(1)) result = { unknown: true, reason: 'daily YouTube quota budget used up' };
+    else {
+        try {
+            const r = await youtubeFetchWithBackoff(`https://www.googleapis.com/youtube/v3/videos?part=status,snippet,contentDetails&id=${encodeURIComponent(id)}&key=${YOUTUBE_API_KEY}`);
+            youtubeQuotaRecord(1, 'videos.list', 'catalog video check');
+            if (!r.ok) result = { unknown: true, reason: 'YouTube API returned ' + r.status };
+            else {
+                const item = ((await r.json()).items || [])[0];
+                if (!item) result = { exists: false, embeddable: false, problem: 'This video does not exist, or it is private/deleted.' };
+                else {
+                    const st = item.status || {};
+                    const blocked = (item.contentDetails && item.contentDetails.regionRestriction && item.contentDetails.regionRestriction.blocked) || [];
+                    let problem = null;
+                    if (st.embeddable === false) problem = 'The owner has disabled embedding, so it can never play on the display. Use a different upload of this video.';
+                    else if (st.privacyStatus === 'private') problem = 'This video is private.';
+                    else if (st.uploadStatus && st.uploadStatus !== 'processed') problem = 'YouTube has not finished processing this video.';
+                    result = { exists: true, embeddable: st.embeddable !== false, privacyStatus: st.privacyStatus, title: item.snippet && item.snippet.title, channel: item.snippet && item.snippet.channelTitle,
+                               durationMs: parseIsoDurationMs(item.contentDetails && item.contentDetails.duration), regionBlockedIn: blocked.length ? blocked : undefined, problem };
+                }
+            }
+        } catch (e) { result = { unknown: true, reason: 'check failed: ' + e.message }; }
+    }
+    youtubeCheckCache.set(id, { at: result.unknown ? Date.now() - 29 * 60 * 1000 : Date.now(), result }); // unknown results are re-tried after ~1 min
+    return result;
+}
+
 // artistNameNormalized -> uploads playlist ID, or null if none could be
 // confidently identified. Deliberately permanent/in-memory only (not
 // persisted like verifiedMusicVideoCache) - losing it on a restart just
@@ -3435,6 +3472,13 @@ catalogApi.delete('/row/:id', async (req, res) => {
     }
 });
 
+// Is this YouTube video playable in the embedded player? (used by the grid)
+catalogApi.get('/check-video', async (req, res) => {
+    const id = String(req.query.id || '');
+    if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return res.status(400).json({ error: 'Not a YouTube video ID.' });
+    res.json(await youtubeCheckVideo(id));
+});
+
 // "Now Playing" helper: what a chosen event is playing right now.
 catalogApi.get('/now-playing', async (req, res) => {
     // The catalog itself is global. This only picks which event to READ the
@@ -5678,15 +5722,18 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     let catalogDecided = false;
     if (catalogLookup.status === 'hit') {
         const row = catalogLookup.row;
+        const ytCheck = await youtubeCheckVideo(row.youtubeId);
+        runtime.lastYtCheck = { videoId: row.youtubeId, ...ytCheck };
         let blockedBy = null;
         if (musicVideoDenylist.has(np.trackId)) blockedBy = 'denylist';
         else if (vcfg.familyModeEnabled && row.nsfw !== 'no' && !musicVideoAllowlist.has(np.trackId)) blockedBy = 'family_mode_on_but_catalog_row_not_marked_NSFW_NO';
+        else if (ytCheck && ytCheck.embeddable === false) blockedBy = 'catalog_video_cannot_play: ' + (ytCheck.problem || 'embedding disabled') ;
         else if (catalogRecentlyFailed(runtime, np.trackId, row)) blockedBy = 'catalog_video_failed_recently_will_retry_in_2_min_or_when_row_is_edited';
         if (blockedBy) {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0, blockedBy };
         } else {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: true, videoId: row.youtubeId, introOffsetMs: row.startMs || 0, source: 'catalog', rowId: row.id };
-            if (!runtime.catalogServed) runtime.catalogServed = new Set();
+            if (!(runtime.catalogServed instanceof Set)) runtime.catalogServed = new Set();
             runtime.catalogServed.add(`${np.trackId}|${row.youtubeId}`);
         }
         catalogDecided = true;
@@ -5827,6 +5874,8 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const offsetFromCache = !fromCatalog && !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
     const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
+        displayReported: runtime.lastPlayerEvent || null,
+        youtubeCheck: runtime.lastYtCheck || null,
         offsetSource: !runtime.cache.matched ? 'none' : fromCatalog ? 'catalog (start time set by a person)' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
         reason: mvReason,
         catalog: { status: catalogLookup.status, via: catalogLookup.via || null, rowId: catalogLookup.row ? catalogLookup.row.id : null },
@@ -5851,6 +5900,19 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     });
 });
 
+// The display tells the server what the YouTube player actually said (error
+// code, stuck state), so the cause shows up in /api/music-video as displayReported.
+app.post('/e/:slug/api/music-video/player-event', publicReadLimiter, (req, res) => {
+    const { trackId, videoId, kind, detail } = req.body || {};
+    const runtime = ensureMusicVideoRuntime(req.event);
+    runtime.lastPlayerEvent = {
+        at: new Date().toISOString(),
+        trackId: String(trackId || '').slice(0, 40), videoId: String(videoId || '').slice(0, 20),
+        kind: String(kind || '').slice(0, 40), detail: String(detail == null ? '' : detail).slice(0, 200)
+    };
+    res.json({ success: true });
+});
+
 // A catalog video was picked by a person, so one bad moment (slow load, a
 // wrong start time, a hiccup) must not ban it until the server restarts. A
 // failure only holds it back for CATALOG_FAIL_HOLD_MS, and editing the row
@@ -5858,7 +5920,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
 const CATALOG_FAIL_HOLD_MS = 2 * 60 * 1000;
 function catalogRecentlyFailed(runtime, trackId, row) {
     const fails = runtime.catalogFails;
-    if (!fails) return false;
+    if (!(fails instanceof Map)) return false;
     const at = fails.get(`${trackId}|${row.youtubeId}`);
     if (!at) return false;
     return Date.now() - at < CATALOG_FAIL_HOLD_MS && at > (row.updatedAt || 0);
@@ -5878,9 +5940,9 @@ app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) =
         return res.status(400).json({ error: 'trackId and videoId are required.' });
     }
     const runtime = ensureMusicVideoRuntime(event);
-    if (runtime.catalogServed && runtime.catalogServed.has(`${trackId}|${videoId}`)) {
+    if (runtime.catalogServed instanceof Set && runtime.catalogServed.has(`${trackId}|${videoId}`)) {
         // Catalog video: short hold only (see catalogRecentlyFailed), never the permanent blacklist.
-        if (!runtime.catalogFails) runtime.catalogFails = new Map();
+        if (!(runtime.catalogFails instanceof Map)) runtime.catalogFails = new Map();
         runtime.catalogFails.set(`${trackId}|${videoId}`, Date.now());
         if (!keepCurrent && runtime.cache.trackId === trackId) runtime.cache = { trackId, searchedTrackId: null, matched: false, videoId: null };
         return res.json({ success: true });
