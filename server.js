@@ -3405,7 +3405,7 @@ catalogApi.get('/rows', async (req, res) => {
 
 // Create/update one row. Body = any of: id, song, artist, spotifyId, youtubeId
 // (links are accepted and reduced to IDs), startMs (number or "m:ss.s"),
-// enabled, familySafe, isrc, notes. `restore:true` + id re-creates a deleted row (undo).
+// enabled (ON/OFF), nsfw (YES/NO), isrc, notes. `restore:true` + id re-creates a deleted row (undo).
 catalogApi.post('/row', async (req, res) => {
     try {
         const result = await videoCatalog.upsert(req.body || {});
@@ -3437,13 +3437,23 @@ catalogApi.delete('/row/:id', async (req, res) => {
 
 // "Now Playing" helper: what a chosen event is playing right now.
 catalogApi.get('/now-playing', async (req, res) => {
-    const slug = String(req.query.slug || '');
-    if (!events.isValidSlug(slug)) return res.status(400).json({ error: 'Pick an event.' });
-    const ev = await events.getEvent(slug);
-    if (!ev) return res.status(404).json({ error: 'Event not found.' });
+    // The catalog itself is global. This only picks which event to READ the
+    // currently playing song from: a specific slug, or "any" = whichever loaded
+    // event is playing something right now.
+    const slug = String(req.query.slug || 'any');
+    let ev = null;
+    if (slug === 'any') {
+        const loaded = events.getLoadedEvents().filter(e => e.cachedNowPlaying && e.cachedNowPlaying.trackId);
+        ev = loaded.find(e => e.cachedNowPlaying.isPlaying) || loaded[0] || null;
+        if (!ev) return res.status(404).json({ error: 'No event is playing anything right now.' });
+    } else {
+        if (!events.isValidSlug(slug)) return res.status(400).json({ error: 'Pick an event.' });
+        ev = await events.getEvent(slug);
+        if (!ev) return res.status(404).json({ error: 'Event not found.' });
+    }
     const np = ev.cachedNowPlaying;
     if (!np || !np.trackId) return res.status(404).json({ error: 'Nothing is playing on that event right now.' });
-    res.json({ trackId: np.trackId, isrc: np.isrc || null, title: np.title, artist: np.artist, isPlaying: !!np.isPlaying, durationMs: np.durationMs || 0 });
+    res.json({ trackId: np.trackId, isrc: np.isrc || null, title: np.title, artist: np.artist, isPlaying: !!np.isPlaying, durationMs: np.durationMs || 0, eventSlug: ev.slug });
 });
 
 // Spotify search using the server's own app credentials.
@@ -5670,7 +5680,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         const row = catalogLookup.row;
         let blockedBy = null;
         if (musicVideoDenylist.has(np.trackId)) blockedBy = 'denylist';
-        else if (vcfg.familyModeEnabled && !row.familySafe && !musicVideoAllowlist.has(np.trackId)) blockedBy = 'family_mode_catalog_row_not_marked_family_safe';
+        else if (vcfg.familyModeEnabled && row.nsfw !== 'no' && !musicVideoAllowlist.has(np.trackId)) blockedBy = 'family_mode_on_but_catalog_row_not_marked_NSFW_NO';
         else if (failedHere.has(row.youtubeId)) blockedBy = 'catalog_video_failed_at_playback_on_this_event';
         if (blockedBy) {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0, blockedBy };
