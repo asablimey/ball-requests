@@ -118,6 +118,9 @@ function coreTitle(song) {
         if (next === t || !next) break;
         t = next;
     }
+    // Unbracketed featured artist: "Song ft. X", "Song feat. X", "Song featuring X".
+    const unfeat = t.replace(/\s+(?:feat|ft|featuring)\b\.?\s.*$/i, '').trim();
+    if (unfeat) t = unfeat;
     const dash = t.split(/\s[-\u2013\u2014]\s/)[0].trim();
     if (dash) t = dash;
     return clean(t);
@@ -197,6 +200,7 @@ function normalizeInput(input, existing) {
 module.exports = function createVideoCatalog({ redis }) {
     let state = null;          // { loadedAt, rows: Map, bySpotify, byIsrc, byTitle }
     let loading = null;
+    let idCounter = 0;
 
     function build(rowsObj) {
         const rows = new Map();
@@ -254,7 +258,10 @@ module.exports = function createVideoCatalog({ redis }) {
     function invalidate() { state = null; }
 
     function newId() {
-        return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        // Timestamp + an in-order counter (then a little randomness), so ids sort in
+        // the order rows were created, even for a whole batch made in one millisecond.
+        idCounter = (idCounter + 1) % 46656;
+        return 'r_' + Date.now().toString(36) + idCounter.toString(36).padStart(3, '0') + Math.random().toString(36).slice(2, 5);
     }
 
     function pickBest(list) {
