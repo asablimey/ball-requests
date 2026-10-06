@@ -1135,6 +1135,7 @@
         // loadVideoById) for every track from then on rather than being
         // torn down and rebuilt each switch.
         window.onYouTubeIframeAPIReady = function () {
+            reportPlayerEvent('yt_api_ready', 'YouTube iframe API loaded');
             clearTimeout(ytApiWatchdog);
             ['a', 'b'].forEach(slot => {
                 players[slot].yt = new YT.Player(`yt-player-${slot}`, {
@@ -1146,6 +1147,7 @@
                     events: {
                         onReady: () => {
                             players[slot].ready = true;
+                            reportPlayerEvent('player_ready', 'slot ' + slot);
                             if (slot === activeSlot) applySubtitlesSetting(slot);
                             retryLoadIfNeeded(slot);
                         },
@@ -1193,6 +1195,7 @@
         function makeYtStateChangeHandler(slot) {
             return function (e) {
                 const st = players[slot];
+                if (slot === activeSlot && !mvRevealed) reportPlayerEvent('player_state', 'slot ' + slot + ' state ' + e.data + ' (1 playing, 2 paused, 3 buffering, 5 cued, 0 ended, -1 unstarted)');
                 if (e.data === YT.PlayerState.PLAYING) {
                     if (mvSubtitlesEnabled) trySetCaptionsTrack(slot);
                     if (st.seekIssuedAt) {
@@ -1292,6 +1295,7 @@
             if (state !== YT.PlayerState.PLAYING) return;
             clearTimeout(mvLoadTimeout);
             mvRevealed = true;
+            reportPlayerEvent('revealed', 'video is on screen');
             document.getElementById(`video-loading-cover-${activeSlot}`).classList.add('is-hidden');
             document.getElementById('video-view').classList.add('is-visible');
             setTimeout(() => {
@@ -1826,6 +1830,7 @@
         }
 
         function startMusicVideo(videoId, trackId) {
+            reportPlayerEvent('start_video', 'revealed=' + mvRevealed + ' player_a_ready=' + players.a.ready + ' target=' + mvTargetSec().toFixed(1) + 's', videoId, trackId);
             musicVideoActive = true;
             // TEMP DIAGNOSTIC LOGGING - see the matching note in mvCheck().
             console.log(`[MV-SYNC] === starting video=${videoId} for track=${trackId} (intro offset=${mvIntroOffsetMs}ms, lead=${mvVideoLeadMs}ms) ===`);
@@ -1936,7 +1941,7 @@
 
         async function pollMusicVideo() {
             try {
-                const res = await fetch(eventUrl('/api/music-video'));
+                const res = await fetch(eventUrl('/api/music-video') + '?d=1');
                 if (!res.ok) return;
                 const data = await res.json();
                 const receivedAt = Date.now();
@@ -2015,6 +2020,7 @@
         // then fails to load or reveal in time, stopMusicVideo() calls
         // pollAmbientVisuals() itself right away - no need to wait on
         // this. Every poll after this first one behaves exactly as before.
+        reportPlayerEvent('display_loaded', 'visuals page build 2026-10-06-trace');
         pollQueueBoard();
         pollNowPlaying();
         pollMusicVideo().then(() => {
