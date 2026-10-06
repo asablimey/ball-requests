@@ -154,6 +154,36 @@
         .vc-modal-card textarea { width: 100%; height: 220px; background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 8px; padding: 10px; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; outline: none; }
         .toast .undo { margin-left: 12px; color: var(--spotify-green); font-weight: 700; cursor: pointer; pointer-events: auto; }
         .toast.show.has-action { pointer-events: auto; }
+
+        /* ---- Spreadsheet look for the Videos grid ---- */
+        .vc-wrap { background: #fff; border: 1px solid #c0c0c0; border-radius: 4px; max-height: 72vh; overflow: auto; }
+        table.vc { border-collapse: separate; border-spacing: 0; min-width: 1260px; color: #202124; font-size: 0.9rem; }
+        table.vc th { background: #f8f9fa; color: #5f6368; border-right: 1px solid #c0c0c0; border-bottom: 1px solid #c0c0c0; text-transform: none; letter-spacing: 0; font-size: 0.8rem; font-weight: 400; padding: 0 8px; position: sticky; z-index: 3; }
+        table.vc tr.letters th { top: 0; height: 24px; text-align: center; cursor: default; }
+        table.vc tr.heads th { top: 24px; height: 34px; text-align: left; font-size: 0.95rem; color: #202124; background: #fff; cursor: pointer; }
+        table.vc tr.heads th.nosort { cursor: default; }
+        table.vc th.rn, table.vc td.rn { width: 46px; min-width: 46px; text-align: center; background: #f8f9fa; color: #5f6368; font-size: 0.8rem; border-right: 1px solid #c0c0c0; position: sticky; left: 0; z-index: 2; }
+        table.vc th.rn { z-index: 4; }
+        table.vc td.rn::before { content: counter(vcrow); }
+        #vc-body { counter-reset: vcrow 1; }
+        #vc-body tr[data-row] { counter-increment: vcrow; }
+        table.vc td { border-right: 1px solid #e1e3e6; border-bottom: 1px solid #e1e3e6; padding: 0; background: #fff; }
+        table.vc td.c-onoff, table.vc td.c-nsfw { width: 110px; }
+        table.vc input[type=text] { color: #202124; background: transparent; border: 2px solid transparent; border-radius: 0; padding: 0 8px; height: 34px; font-size: 0.9rem; }
+        table.vc input[type=text]:hover { border-color: transparent; }
+        table.vc input[type=text]:focus { border-color: #1a73e8; background: #fff; }
+        table.vc input.bad { background: #fde8e8 !important; border-color: #d93025 !important; }
+        table.vc input.dup { background: #fff7e0; border-color: #e8a317 !important; }
+        table.vc td.c-act { background: #fff; padding: 0 4px; }
+        .act-btn { color: #5f6368; }
+        .act-btn:hover { background: #e8eaed; color: #202124; }
+        tr.flash td { background: #e6f4ea !important; }
+        tr.panel td { background: #f1f3f4; color: #202124; padding: 12px 14px; }
+        tr.panel .panel-title { color: #5f6368; }
+        tr.panel .panel-item { background: #fff; border: 1px solid #dadce0; }
+        tr.panel .panel-item .meta { color: #5f6368; }
+        tr.panel .btn-admin { background: #fff; color: #202124; border-color: #dadce0; }
+        tr.panel .vc-toolbar input[type=text] { background: #fff; color: #202124; border: 1px solid #dadce0; }
     </style>
 </head>
 <body>
@@ -197,22 +227,22 @@
             <div class="header">
                 <div>
                     <h1>Music Videos</h1>
-                    <div class="subtitle" id="vc-count">Loading...</div>
+                    <div class="subtitle"><b>One catalog for ALL events.</b> <span id="vc-count">Loading...</span></div>
                 </div>
                 <button class="refresh-btn" onclick="vcLoad()">↻ Reload</button>
             </div>
-            <p class="vc-help">Shared by every event. Each cell saves when you click away. Paste a full Spotify or YouTube link into a cell and it becomes the ID. You can also paste a block of cells copied from a spreadsheet: it fills rows downward from the cell you paste into, in the column order shown. The player finds a song by Spotify ID, then ISRC, then artist + title. No row, or a disabled row, means ambient visuals. <b>Song starts at</b> is how far into the YouTube video the song begins.</p>
+            <p class="vc-help">This table is shared by every event, past and future; nothing here belongs to a single event slug. Each cell saves when you click away. Paste a full Spotify or YouTube link into a cell and it becomes the ID. You can also paste a block copied from your Google Sheet: it fills rows downward from the cell you paste into, in the column order shown (a pasted header row is skipped). The player finds a song by Spotify ID, then ISRC, then Title + Artist. No row, or Video OFF, means ambient visuals. <b>Start time</b> is how far into the YouTube video the song begins. <b>NSFW</b>: with Family mode on, only rows marked NO play (blank is treated as not safe).</p>
             <div class="vc-toolbar">
                 <input type="text" id="vc-search" placeholder="Search songs, artists, IDs…" oninput="vcRender()">
                 <select id="vc-filter" onchange="vcRender()">
                     <option value="all">All rows</option>
                     <option value="novideo">No video yet</option>
                     <option value="disabled">Disabled</option>
-                    <option value="notfamily">Not family-safe</option>
+                    <option value="notfamily">NSFW YES or not set</option>
                 </select>
                 <button class="btn btn-admin" onclick="vcAddRow()">+ Add row</button>
-                <select id="vc-np-event" title="Event to read Now Playing from"></select>
-                <button class="btn btn-admin" onclick="vcFromNowPlaying()">♪ From now playing</button>
+                <select id="vc-np-event" title="Only used by the Now playing button: which event to read the current song from. The catalog itself is shared by every event."></select>
+                <button class="btn btn-admin" onclick="vcFromNowPlaying()">♪ Add now playing</button>
                 <span class="vc-spacer"></span>
                 <button class="btn btn-admin" onclick="vcOpenPasteModal()">Paste rows…</button>
                 <button class="btn btn-admin" onclick="document.getElementById('vc-csv-file').click()">Import CSV</button>
@@ -222,28 +252,22 @@
             </div>
             <div class="vc-wrap">
                 <table class="vc">
-                    <thead><tr>
-                        <th data-k="song" onclick="vcSort('song')">Song</th>
-                        <th data-k="artist" onclick="vcSort('artist')">Artist</th>
-                        <th data-k="spotifyId" onclick="vcSort('spotifyId')">Spotify</th>
-                        <th data-k="youtubeId" onclick="vcSort('youtubeId')">YouTube</th>
-                        <th data-k="startMs" onclick="vcSort('startMs')">Song starts at</th>
-                        <th data-k="enabled" onclick="vcSort('enabled')">Enabled</th>
-                        <th data-k="familySafe" onclick="vcSort('familySafe')">Family-safe</th>
-                        <th data-k="isrc" onclick="vcSort('isrc')">ISRC</th>
-                        <th data-k="notes" onclick="vcSort('notes')">Notes</th>
-                        <th class="nosort"></th>
-                    </tr></thead>
+                    <thead>
+                        <tr class="letters"><th class="rn"></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th><th>G</th><th>H</th><th>I</th><th>J</th></tr>
+                        <tr class="heads"><th class="rn">1</th><th data-k="song" onclick="vcSort('song')">Title</th><th data-k="artist" onclick="vcSort('artist')">Artist</th><th data-k="spotifyId" onclick="vcSort('spotifyId')">Spotify link/ID</th><th data-k="youtubeId" onclick="vcSort('youtubeId')">Youtube Link/ID</th><th data-k="startMs" onclick="vcSort('startMs')">Start time</th><th data-k="enabled" onclick="vcSort('enabled')">Video ON/OFF</th><th data-k="nsfw" onclick="vcSort('nsfw')">NSFW YES/NO</th><th data-k="isrc" onclick="vcSort('isrc')">ISRC</th><th data-k="notes" onclick="vcSort('notes')">Notes</th><th class="nosort"></th></tr>
+                    </thead>
                     <tbody id="vc-body"></tbody>
                 </table>
             </div>
         </div>
     </div>
 
+    <datalist id="vc-dl-onoff"><option value="ON"><option value="OFF"></datalist>
+    <datalist id="vc-dl-nsfw"><option value="NO"><option value="YES"></datalist>
     <div class="vc-modal" id="vc-paste-modal">
         <div class="vc-modal-card">
             <h2 style="margin:0 0 6px;font-size:1.1rem">Paste rows from a spreadsheet</h2>
-            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Song, Artist, Spotify, YouTube, Song starts at, Enabled, Family-safe, ISRC, Notes. A header row is skipped. Rows with a Spotify ID already in the catalog update that row.</p>
+            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Title, Artist, Spotify link/ID, Youtube Link/ID, Start time, Video ON/OFF, NSFW YES/NO, ISRC, Notes. A header row is skipped. Rows with a Spotify ID already in the catalog update that row.</p>
             <textarea id="vc-paste-text" placeholder="Paste here"></textarea>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
                 <button class="btn btn-admin" onclick="document.getElementById('vc-paste-modal').classList.remove('show')">Cancel</button>
@@ -437,7 +461,7 @@
     </script>
     <script>
         /* ===================== Videos tab (curated catalog) ===================== */
-        const VC_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'enabled', 'familySafe', 'isrc', 'notes'];
+        const VC_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'enabled', 'nsfw', 'isrc', 'notes'];
         const VC_TEXT_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'isrc', 'notes'];
         const VC_RENDER_CAP = 600;
         let vcRows = [];            // saved rows, as the server has them
@@ -524,9 +548,8 @@
             const sel = document.getElementById('vc-np-event');
             if (!sel) return;
             const prev = sel.value;
-            if (!masterEvents.length) { sel.innerHTML = '<option value="">No events</option>'; return; }
-            sel.innerHTML = masterEvents.map(ev => `<option value="${escapeHtml(ev.slug)}">${escapeHtml(ev.eventName || ev.slug)} (/e/${escapeHtml(ev.slug)})</option>`).join('');
-            if (prev && masterEvents.some(ev => ev.slug === prev)) sel.value = prev;
+            sel.innerHTML = '<option value="any">Any event playing now</option>' + masterEvents.map(ev => `<option value="${escapeHtml(ev.slug)}">${escapeHtml(ev.eventName || ev.slug)} (/e/${escapeHtml(ev.slug)})</option>`).join('');
+            if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
         }
 
         /* ---------- rendering ---------- */
@@ -548,24 +571,26 @@
         function vcMatches(r, q, filter) {
             if (filter === 'novideo' && r.youtubeId) return false;
             if (filter === 'disabled' && r.enabled) return false;
-            if (filter === 'notfamily' && r.familySafe) return false;
+            if (filter === 'notfamily' && r.nsfw === 'no') return false;
             if (!q) return true;
             return [r.song, r.artist, r.spotifyId, r.youtubeId, r.isrc, r.notes].join(' ').toLowerCase().includes(q);
         }
 
+        function vcShowOnOff(v) { return typeof v === 'boolean' ? (v ? 'ON' : 'OFF') : String(v == null ? '' : v); }
+        function vcShowNsfw(v) { return v === 'yes' ? 'YES' : v === 'no' ? 'NO' : String(v == null ? '' : v); }
         function vcRowHtml(r) {
             const raw = !!r._raw; // an unsaved row: show exactly what was typed
             const start = raw ? (r.startMs == null ? '' : r.startMs) : vcFmtStart(r.startMs);
-            const txt = (f, v, cls, ph) => `<td class="${cls}"><input type="text" data-f="${f}" value="${escapeHtml(v)}" placeholder="${ph || ''}" autocomplete="off" spellcheck="false"></td>`;
-            const chk = (f, v) => `<td class="c-chk"><input type="checkbox" data-f="${f}" ${v ? 'checked' : ''}></td>`;
+            const txt = (f, v, cls, ph, list) => `<td class="${cls}"><input type="text" data-f="${f}" value="${escapeHtml(v)}" placeholder="${ph || ''}" ${list ? `list="${list}"` : ''} autocomplete="off" spellcheck="false"></td>`;
             return `<tr data-row="1" ${r.id ? `data-id="${escapeHtml(r.id)}"` : ''}>
+                <td class="rn"></td>
                 ${txt('song', r.song || '', 'c-song')}
                 ${txt('artist', r.artist || '', 'c-artist')}
                 ${txt('spotifyId', r.spotifyId || '', 'c-spotify', 'link or ID')}
                 ${txt('youtubeId', r.youtubeId || '', 'c-youtube', 'link or ID')}
                 ${txt('startMs', start, 'c-start', '0:00')}
-                ${chk('enabled', r.enabled !== false)}
-                ${chk('familySafe', !!r.familySafe)}
+                ${txt('enabled', vcShowOnOff(r.enabled == null ? true : r.enabled), 'c-onoff', '', 'vc-dl-onoff')}
+                ${txt('nsfw', vcShowNsfw(r.nsfw), 'c-nsfw', '', 'vc-dl-nsfw')}
                 ${txt('isrc', r.isrc || '', 'c-isrc')}
                 ${txt('notes', r.notes || '', 'c-notes')}
                 <td class="c-act"><span class="tick">✓</span>
@@ -633,8 +658,9 @@
         function vcFillRow(tr, row) {
             tr.querySelectorAll('[data-f]').forEach(el => {
                 const f = el.dataset.f;
-                if (el.type === 'checkbox') el.checked = !!row[f];
-                else if (f === 'startMs') el.value = vcFmtStart(row.startMs);
+                if (f === 'startMs') el.value = vcFmtStart(row.startMs);
+                else if (f === 'enabled') el.value = vcShowOnOff(!!row.enabled);
+                else if (f === 'nsfw') el.value = vcShowNsfw(row.nsfw);
                 else el.value = row[f] || '';
             });
         }
@@ -642,8 +668,7 @@
             Object.keys(values).forEach(f => {
                 const el = tr.querySelector(`[data-f="${f}"]`);
                 if (!el) return;
-                if (el.type === 'checkbox') { const v = String(values[f]).trim().toLowerCase(); if (v) el.checked = ['true', 'yes', 'y', '1', 'on', 'x'].includes(v); }
-                else el.value = values[f];
+                el.value = values[f];
             });
         }
         function vcClearMarks(tr) {
@@ -820,7 +845,8 @@
             }
         }
         function vcGridPaste(startTr, startField, text) {
-            const grid = vcParseDelimited(text, '\t');
+            let grid = vcParseDelimited(text, '\t');
+            if (grid.length && VC_FIELDS.indexOf(startField) === 0 && /^(song|title)$/i.test(String(grid[0][0]).trim())) grid = grid.slice(1);
             if (!grid.length) return;
             const payloads = vcGridToPayloads(grid, VC_FIELDS.indexOf(startField));
             const trs = [...document.querySelectorAll('#vc-body tr[data-row]')];
@@ -841,9 +867,12 @@
             vcBulk(vcGridToPayloads(grid, 0), null);
         }
 
-        const VC_CSV_HEADERS = { id: 'id', song: 'song', title: 'song', artist: 'artist', spotify: 'spotifyId', spotifyid: 'spotifyId',
-            youtube: 'youtubeId', youtubeid: 'youtubeId', songstartsat: 'startMs', startsat: 'startMs', start: 'startMs', startms: 'startMs',
-            enabled: 'enabled', familysafe: 'familySafe', family: 'familySafe', isrc: 'isrc', notes: 'notes' };
+        const VC_CSV_HEADERS = { id: 'id', song: 'song', title: 'song', artist: 'artist',
+            spotify: 'spotifyId', spotifyid: 'spotifyId', spotifylinkid: 'spotifyId',
+            youtube: 'youtubeId', youtubeid: 'youtubeId', youtubelinkid: 'youtubeId',
+            songstartsat: 'startMs', startsat: 'startMs', start: 'startMs', startms: 'startMs', starttime: 'startMs',
+            enabled: 'enabled', videoonoff: 'enabled', videoon: 'enabled', nsfw: 'nsfw', nsfwyesno: 'nsfw',
+            isrc: 'isrc', notes: 'notes' };
         function vcImportCsv(input) {
             const file = input.files && input.files[0];
             input.value = '';
@@ -867,10 +896,10 @@
         }
         function vcExportCsv() {
             const esc = v => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-            const head = ['id', 'song', 'artist', 'spotify', 'youtube', 'song starts at', 'enabled', 'family-safe', 'isrc', 'notes'];
+            const head = ['id', 'Title', 'Artist', 'Spotify link/ID', 'Youtube Link/ID', 'Start time', 'Video ON/OFF', 'NSFW YES/NO', 'ISRC', 'Notes'];
             const lines = [head.join(',')];
             vcRows.slice().sort(vcCompare).forEach(r => lines.push([r.id, r.song, r.artist, r.spotifyId, r.youtubeId, vcFmtStart(r.startMs),
-                r.enabled ? 'TRUE' : 'FALSE', r.familySafe ? 'TRUE' : 'FALSE', r.isrc, r.notes].map(esc).join(',')));
+                r.enabled ? 'ON' : 'OFF', vcShowNsfw(r.nsfw), r.isrc, r.notes].map(esc).join(',')));
             const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -881,8 +910,7 @@
 
         /* ---------- Now Playing ---------- */
         async function vcFromNowPlaying() {
-            const slug = document.getElementById('vc-np-event').value;
-            if (!slug) { vcToast('Pick an event first.'); return; }
+            const slug = document.getElementById('vc-np-event').value || 'any';
             const r = await vcApi('GET', '/now-playing?slug=' + encodeURIComponent(slug));
             if (!r.ok) { vcToast(r.data.error || 'Could not read now playing.'); return; }
             const np = r.data;
@@ -915,7 +943,7 @@
             vcClosePanel();
             const el = document.createElement('tr');
             el.className = 'panel';
-            el.innerHTML = `<td colspan="10">${html}</td>`;
+            el.innerHTML = `<td colspan="11">${html}</td>`;
             tr.after(el);
             vcPanel = { tr, el, kind, player: null, timer: null };
             return el;
