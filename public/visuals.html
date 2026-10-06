@@ -997,6 +997,7 @@
                                           // back in sync before it's shown again
         let mvCorrectingReadySince = null;
         let mvLoadTimeout = null;
+        let mvFromCatalog = false;
         const MV_LOAD_TIMEOUT_MS = 15000; // never confirmed ready to reveal in this long -> give up on it (see revealReadyCheck)
         let currentVideoTrackId = null;   // trackId/videoId of the video currently ON SCREEN (or loading into it)
         let currentVideoId = null;
@@ -1611,12 +1612,13 @@
             if (!settling && absMs > MV_BIG_DRIFT_MS) {
                 mvConsecutiveBigDrifts++;
                 if (mvConsecutiveBigDrifts >= MV_MAX_BIG_DRIFT_CHECKS) {
-                    if (!mvRevealed) { reportVideoFailureAndStop(); return; }
+                    if (!mvRevealed && !mvFromCatalog) { reportVideoFailureAndStop(); return; }
+                    // Catalog video not yet revealed: keep correcting, never give up on it.
                     // On screen and playing: it FINISHES. Just make sure this
                     // video isn't offered again for this track next time.
-                    if (!mvFlaggedBad) {
+                    if (mvRevealed && !mvFlaggedBad) {
                         mvFlaggedBad = true;
-                        if (currentVideoTrackId && currentVideoId) reportSyncFailed(currentVideoTrackId, currentVideoId, true);
+                        if (currentVideoTrackId && currentVideoId && !mvFromCatalog) reportSyncFailed(currentVideoTrackId, currentVideoId, true);
                     }
                     mvConsecutiveBigDrifts = 0;
                 }
@@ -1829,7 +1831,7 @@
                         // attempt - the current video simply keeps playing.
                         const playerWasReady = players[slot].ready;
                         pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
-                        if (playerWasReady) reportSyncFailed(failedTrackId, failedVideoId);
+                        if (playerWasReady && !mvFromCatalog) reportSyncFailed(failedTrackId, failedVideoId);
                     }
                 }, MV_HANDOFF_TIMEOUT_MS);
                 return;
@@ -1861,7 +1863,7 @@
             clearTimeout(mvLoadTimeout);
             mvLoadTimeout = setTimeout(() => {
                 if (!musicVideoActive || mvRevealed) return;
-                if (players[activeSlot].ready) {
+                if (players[activeSlot].ready && !mvFromCatalog) {
                     reportVideoFailureAndStop();
                 } else {
                     stopMusicVideo();
@@ -1935,6 +1937,8 @@
                 // into a new video once server-side detection resolves.
                 mvIntroOffsetMs = (typeof data.introOffsetMs === 'number' && Number.isFinite(data.introOffsetMs))
                     ? data.introOffsetMs : 0;
+                // A person picked this video in the catalog: never blacklist it for sync/load trouble, just retry.
+                mvFromCatalog = data.source === 'catalog';
 
                 // Show Queue / Mute from the admin are deliberate - they win instantly.
                 if (visualsForceQueue || data.override) {
