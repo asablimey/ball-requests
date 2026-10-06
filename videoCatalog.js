@@ -103,13 +103,36 @@ function stripDiacritics(s) {
     return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
-// Primary artist + core title, lower-cased, no punctuation. Spotify decorates
-// titles ("- Remastered 2011", "(feat. X)") and joins artists with ", ".
+// Matching keys. Spotify decorates titles ("- Remastered 2011", "(feat. X)",
+// "- Single Version") and joins artists with ", ". Both sides go through the
+// same cleaning, so a row typed as "Beatles" / "Hey Jude" still matches
+// "The Beatles" / "Hey Jude - Remastered 2015".
+const clean = (v) => stripDiacritics(v).toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
+
+function coreTitle(song) {
+    let t = String(song || '').trim();
+    // Drop trailing "(...)" / "[...]" groups, but never the whole title
+    // (e.g. "(I Can't Get No) Satisfaction" keeps its opening bracket).
+    for (let i = 0; i < 4; i++) {
+        const next = t.replace(/\s*[(\[][^()\[\]]*[)\]]\s*$/, '').trim();
+        if (next === t || !next) break;
+        t = next;
+    }
+    const dash = t.split(/\s[-\u2013\u2014]\s/)[0].trim();
+    if (dash) t = dash;
+    return clean(t);
+}
+
+function artistKeys(artist) {
+    return String(artist || '')
+        .split(/,|;|&|\band\b|\bfeat\.?\b|\bft\.?\b|\bwith\b|\bx\b|\//i)
+        .map(a => clean(a).replace(/^the/, ''))
+        .filter(Boolean);
+}
+
+// Primary artist + core title, e.g. "beatles|heyjude".
 function titleKey(artist, song) {
-    const primaryArtist = String(artist || '').split(/,|;|&|\bfeat\.?\b|\bft\.?\b|\bx\b/i)[0];
-    const coreSong = String(song || '').split(/[(\[]/)[0].split(/\s-\s/)[0];
-    const clean = (v) => stripDiacritics(v).toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
-    const a = clean(primaryArtist), t = clean(coreSong);
+    const a = artistKeys(artist)[0], t = coreTitle(song);
     return a && t ? `${a}|${t}` : '';
 }
 
@@ -177,7 +200,7 @@ module.exports = function createVideoCatalog({ redis }) {
 
     function build(rowsObj) {
         const rows = new Map();
-        const bySpotify = new Map(), byIsrc = new Map(), byTitle = new Map();
+        const bySpotify = new Map(), byIsrc = new Map(), byTitle = new Map(), byCore = new Map();
         const push = (map, key, row) => {
             if (!key) return;
             if (!map.has(key)) map.set(key, []);
@@ -188,8 +211,9 @@ module.exports = function createVideoCatalog({ redis }) {
             push(bySpotify, row.spotifyId, row);
             push(byIsrc, row.isrc, row);
             push(byTitle, titleKey(row.artist, row.song), row);
+            push(byCore, coreTitle(row.song), row);
         }
-        return { loadedAt: Date.now(), rows, bySpotify, byIsrc, byTitle };
+        return { loadedAt: Date.now(), rows, bySpotify, byIsrc, byTitle, byCore };
     }
 
     async function fetchAll() {
@@ -242,24 +266,34 @@ module.exports = function createVideoCatalog({ redis }) {
         })[0];
     }
 
-    // np: { trackId, isrc, title, artist }. The first tier (Spotify ID, then
-    // ISRC, then artist+title) that finds ANY row decides the outcome, so a row
-    // a human disabled by Spotify ID is not overridden by a looser match.
+    // np: { trackId, isrc, title, artist }. A row only needs Title + Artist and
+    // a YouTube ID. Spotify ID and ISRC are optional extras that pin an exact
+    // version of a song. Tiers, strongest first: Spotify ID, ISRC, Title+Artist
+    // (any of the playing artists), then Title alone for rows whose Artist is
+    // blank. The first tier holding a usable row wins; a row a person switched
+    // OFF stops the search; a row with no YouTube ID yet does not block a
+    // looser match that has one.
     async function lookup(np) {
         const st = await ensureLoaded();
-        const tiers = [
-            ['spotify', st.bySpotify.get(np && np.trackId)],
-            ['isrc', st.byIsrc.get(parseIsrc(np && np.isrc) || '')],
-            ['title', st.byTitle.get(titleKey(np && np.artist, np && np.title))]
-        ];
+        const n = np || {};
+        const tiers = [['spotify', st.bySpotify.get(n.trackId) || []],
+                       ['isrc', st.byIsrc.get(parseIsrc(n.isrc) || '') || []]];
+        const titleHits = [];
+        for (const a of artistKeys(n.artist)) {
+            for (const r of (st.byTitle.get(`${a}|${coreTitle(n.title)}`) || [])) if (!titleHits.includes(r)) titleHits.push(r);
+        }
+        tiers.push(['title', titleHits]);
+        const core = coreTitle(n.title);
+        tiers.push(['title_only', core ? (st.byCore.get(core) || []).filter(r => !artistKeys(r.artist).length) : []]);
+        let noVideo = null;
         for (const [via, list] of tiers) {
-            if (!list || !list.length) continue;
+            if (!list.length) continue;
             const row = pickBest(list);
             if (!row.enabled) return { status: 'disabled', via, row };
-            if (!row.youtubeId) return { status: 'no_video', via, row };
+            if (!row.youtubeId) { noVideo = noVideo || { status: 'no_video', via, row }; continue; }
             return { status: 'hit', via, row };
         }
-        return { status: 'miss', rowCount: st.rows.size };
+        return noVideo || { status: 'miss', rowCount: st.rows.size };
     }
 
     async function list() {
@@ -282,7 +316,7 @@ module.exports = function createVideoCatalog({ redis }) {
             if (dupes.length) warnings.push({ field: 'spotifyId', message: `Another row already uses this Spotify ID (${dupes[0].artist || '?'} - ${dupes[0].song || '?'}).` });
         }
         if (!row.spotifyId && !row.isrc && !(row.song && row.artist)) {
-            warnings.push({ field: 'song', message: 'Needs a Spotify ID, an ISRC, or both Song and Artist before it can match anything.' });
+            warnings.push({ field: 'song', message: 'Fill in Title and Artist so the player can recognise the song (Spotify ID and ISRC are optional).' });
         }
         return warnings;
     }
@@ -352,5 +386,5 @@ module.exports = function createVideoCatalog({ redis }) {
     }
 
     return { lookup, list, stats, upsert, upsertMany, remove, invalidate,
-             parse: { parseYouTubeId, parseSpotifyId, parseIsrc, parseStartMs, titleKey } };
+             parse: { parseYouTubeId, parseSpotifyId, parseIsrc, parseStartMs, titleKey, coreTitle, artistKeys } };
 };
