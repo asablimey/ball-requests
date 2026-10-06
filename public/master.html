@@ -231,7 +231,7 @@
                 </div>
                 <button class="refresh-btn" onclick="vcLoad()">↻ Reload</button>
             </div>
-            <p class="vc-help">This table is shared by every event, past and future; nothing here belongs to a single event slug. Each cell saves when you click away. Paste a full Spotify or YouTube link into a cell and it becomes the ID. You can also paste a block copied from your Google Sheet: it fills rows downward from the cell you paste into, in the column order shown (a pasted header row is skipped). The player finds a song by Spotify ID, then ISRC, then Title + Artist. No row, or Video OFF, means ambient visuals. <b>Start time</b> is how far into the YouTube video the song begins. <b>NSFW</b>: with Family mode on, only rows marked NO play (blank is treated as not safe).</p>
+            <p class="vc-help">This table is shared by every event, past and future; nothing here belongs to a single event slug. Each cell saves when you click away. Paste a full Spotify or YouTube link into a cell and it becomes the ID. You can also paste a block copied from your Google Sheet: it fills rows downward from the cell you paste into, in the column order shown (a pasted header row is skipped). <b>A row only needs Title, Artist and the YouTube link/ID.</b> The player recognises the song by Title + Artist (ignoring things like "- Remastered" or "(feat. X)"); Spotify ID and ISRC are optional and only used to pin an exact version. No row, or Video OFF, means ambient visuals. <b>Start time</b> is how far into the YouTube video the song begins. <b>NSFW</b>: with Family mode on, only rows marked NO play (blank is treated as not safe).</p>
             <div class="vc-toolbar">
                 <input type="text" id="vc-search" placeholder="Search songs, artists, IDs…" oninput="vcRender()">
                 <select id="vc-filter" onchange="vcRender()">
@@ -267,7 +267,7 @@
     <div class="vc-modal" id="vc-paste-modal">
         <div class="vc-modal-card">
             <h2 style="margin:0 0 6px;font-size:1.1rem">Paste rows from a spreadsheet</h2>
-            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Title, Artist, Spotify link/ID, Youtube Link/ID, Start time, Video ON/OFF, NSFW YES/NO, ISRC, Notes. A header row is skipped. Rows with a Spotify ID already in the catalog update that row.</p>
+            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Title, Artist, Spotify link/ID, Youtube Link/ID, Start time, Video ON/OFF, NSFW YES/NO, ISRC, Notes. A header row is skipped. Spotify link/ID and ISRC can be left blank. Rows with a Spotify ID already in the catalog update that row.</p>
             <textarea id="vc-paste-text" placeholder="Paste here"></textarea>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
                 <button class="btn btn-admin" onclick="document.getElementById('vc-paste-modal').classList.remove('show')">Cancel</button>
@@ -916,7 +916,9 @@
             const np = r.data;
             document.getElementById('vc-search').value = '';
             document.getElementById('vc-filter').value = 'all';
-            let row = vcRows.find(x => x.spotifyId === np.trackId) || (np.isrc && vcRows.find(x => x.isrc === np.isrc));
+            const nk = (v) => String(v || '').toLowerCase().replace(/\s*[(\[].*$/, '').replace(/\s-\s.*$/, '').replace(/[^a-z0-9]+/g, '');
+            let row = vcRows.find(x => x.spotifyId === np.trackId) || (np.isrc && vcRows.find(x => x.isrc === np.isrc))
+                || vcRows.find(x => nk(x.song) && nk(x.song) === nk(np.title) && nk(x.artist).slice(0, 4) === nk(np.artist).slice(0, 4));
             if (!row) {
                 const saved = await vcApi('POST', '/row', { song: np.title, artist: np.artist, spotifyId: np.trackId, isrc: np.isrc || '' });
                 if (!saved.ok) { vcToast(saved.data.error || 'Could not add the row.'); return; }
