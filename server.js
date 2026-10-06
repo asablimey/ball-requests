@@ -5681,12 +5681,20 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         let blockedBy = null;
         if (musicVideoDenylist.has(np.trackId)) blockedBy = 'denylist';
         else if (vcfg.familyModeEnabled && row.nsfw !== 'no' && !musicVideoAllowlist.has(np.trackId)) blockedBy = 'family_mode_on_but_catalog_row_not_marked_NSFW_NO';
-        else if (failedHere.has(row.youtubeId)) blockedBy = 'catalog_video_failed_at_playback_on_this_event';
+        else if (catalogRecentlyFailed(runtime, np.trackId, row)) blockedBy = 'catalog_video_failed_recently_will_retry_in_2_min_or_when_row_is_edited';
         if (blockedBy) {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0, blockedBy };
         } else {
             runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: true, videoId: row.youtubeId, introOffsetMs: row.startMs || 0, source: 'catalog', rowId: row.id };
+            if (!runtime.catalogServed) runtime.catalogServed = new Set();
+            runtime.catalogServed.add(`${np.trackId}|${row.youtubeId}`);
         }
+        catalogDecided = true;
+    } else if (catalogLookup.status === 'disabled' || catalogLookup.status === 'no_video') {
+        // The catalog HAS a row for this song. It is authoritative: a row switched
+        // OFF, or one still missing its YouTube ID, means ambient visuals. The
+        // automatic selector must never second-guess a person's row.
+        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
         catalogDecided = true;
     } else if (!MV_AUTO_MATCH) {
         // Catalog miss with the old pipeline switched off: ambient visuals.
@@ -5842,6 +5850,19 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     });
 });
 
+// A catalog video was picked by a person, so one bad moment (slow load, a
+// wrong start time, a hiccup) must not ban it until the server restarts. A
+// failure only holds it back for CATALOG_FAIL_HOLD_MS, and editing the row
+// (new start time, new YouTube ID, anything) clears the hold straight away.
+const CATALOG_FAIL_HOLD_MS = 2 * 60 * 1000;
+function catalogRecentlyFailed(runtime, trackId, row) {
+    const fails = runtime.catalogFails;
+    if (!fails) return false;
+    const at = fails.get(`${trackId}|${row.youtubeId}`);
+    if (!at) return false;
+    return Date.now() - at < CATALOG_FAIL_HOLD_MS && at > (row.updatedAt || 0);
+}
+
 // The display reports here when a video it was offered turned out not to
 // actually work in practice - couldn't hold sync with the song, or errored
 // at real playback time (region lock, an owner opt-out that only surfaces
@@ -5856,6 +5877,13 @@ app.post('/e/:slug/api/music-video/sync-failed', publicReadLimiter, (req, res) =
         return res.status(400).json({ error: 'trackId and videoId are required.' });
     }
     const runtime = ensureMusicVideoRuntime(event);
+    if (runtime.catalogServed && runtime.catalogServed.has(`${trackId}|${videoId}`)) {
+        // Catalog video: short hold only (see catalogRecentlyFailed), never the permanent blacklist.
+        if (!runtime.catalogFails) runtime.catalogFails = new Map();
+        runtime.catalogFails.set(`${trackId}|${videoId}`, Date.now());
+        if (!keepCurrent && runtime.cache.trackId === trackId) runtime.cache = { trackId, searchedTrackId: null, matched: false, videoId: null };
+        return res.json({ success: true });
+    }
     runtime.blacklist.add(`${trackId}|${videoId}`);
     // If this video was the server-wide "verified" answer for this song,
     // it's now known to be wrong in practice (whatever the audio check
