@@ -148,6 +148,16 @@
         .pv-box { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
         .pv-frame { width: 400px; max-width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px; overflow: hidden; }
         .pv-frame iframe { width: 100%; height: 100%; border: 0; }
+        .pv-ctl { flex: 1; min-width: 320px; max-width: 560px; outline: none; }
+        .pv-clock { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 2rem; font-weight: 700; letter-spacing: 0.5px; line-height: 1.1; margin: 2px 0 8px; }
+        .pv-clock small { font-size: 0.8rem; font-weight: 400; opacity: 0.6; margin-left: 8px; }
+        .pv-seek { width: 100%; margin: 0 0 10px; accent-color: #1a73e8; }
+        .pv-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+        .pv-row .pv-lbl { font-size: 0.72rem; color: #5f6368; min-width: 44px; }
+        .pv-nudge { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem !important; padding: 5px 8px !important; min-width: 58px; }
+        .pv-row input[type=text], .pv-row select { height: 32px; padding: 0 8px; border: 1px solid #dadce0; border-radius: 6px; font-size: 0.85rem; background: #fff; color: #202124; }
+        .pv-row input[type=text] { width: 110px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+        .pv-hint { font-size: 0.72rem; color: #5f6368; line-height: 1.45; margin-top: 4px; }
         .vc-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 10001; display: none; align-items: center; justify-content: center; padding: 20px; }
         .vc-modal.show { display: flex; }
         .vc-modal-card { background: var(--panel-bg); border: 1px solid #333; border-radius: 14px; padding: 22px; width: 100%; max-width: 760px; }
@@ -523,9 +533,23 @@
         function vcFmtStart(ms) {
             ms = Number(ms) || 0;
             const m = Math.floor(ms / 60000);
-            let t = String(+(((ms % 60000) / 1000)).toFixed(2));
+            let t = String(+(((ms % 60000) / 1000)).toFixed(3));
             if (t.indexOf('.') === -1) t = t.padStart(2, '0'); else if (t.indexOf('.') < 2) t = '0' + t;
             return m + ':' + t;
+        }
+        // Fixed-width clock for the preview panel: m:ss.mmm
+        function vcFmtClock(ms) {
+            ms = Math.max(0, Math.round(Number(ms) || 0));
+            const m = Math.floor(ms / 60000), sec = Math.floor((ms % 60000) / 1000), r = ms % 1000;
+            return m + ':' + String(sec).padStart(2, '0') + '.' + String(r).padStart(3, '0');
+        }
+        // "12", "12.345", "1:02.345", "1:02:03" -> ms (or null)
+        function vcParseClock(str) {
+            const t = String(str || '').trim();
+            if (!/^\d+(\.\d+)?(:\d+(\.\d+)?){0,2}$/.test(t)) return null;
+            let sec = 0;
+            t.split(':').map(Number).forEach(n => { sec = sec * 60 + n; });
+            return Math.round(sec * 1000);
         }
         function vcFmtDuration(ms) {
             if (typeof ms !== 'number') return '?';
@@ -990,18 +1014,29 @@
             const videoId = m && m[1];
             if (!videoId) { vcToast('Add a YouTube link or ID first.'); return; }
             if (fromSuggest) vcClosePanel();
+            const nud = (label, d) => `<button class="btn btn-admin pv-nudge" data-pv="nudge" data-d="${d}">${label}</button>`;
             const el = vcOpenPanelRow(tr, 'preview', `
                 <div class="pv-box">
                     <div class="pv-frame"><div id="vc-yt"></div></div>
-                    <div>
-                        <div class="panel-title">${escapeHtml(f.artist)}${f.artist && f.song ? ' - ' : ''}${escapeHtml(f.song)}. Play it, then click <b>Mark start</b> at the moment the song itself begins.</div>
-                        <div style="margin-bottom:10px">Player time: <b id="vc-pv-time">0:00</b></div>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn btn-admin" data-pv="mark">Mark start here</button>
+                    <div class="pv-ctl" tabindex="0">
+                        <div class="panel-title">${escapeHtml(f.artist)}${f.artist && f.song ? ' - ' : ''}${escapeHtml(f.song)}. Find the moment the song itself begins, pause, fine-tune with the nudge buttons, then click <b>Mark start here</b>.</div>
+                        <div class="pv-clock"><span id="vc-pv-time">0:00.000</span><small id="vc-pv-dur"></small></div>
+                        <input type="range" class="pv-seek" id="vc-pv-seek" min="0" max="0" step="1" value="0">
+                        <div class="pv-row">
+                            <button class="btn btn-admin" data-pv="toggle">Play / Pause</button>
+                            <select id="vc-pv-rate" title="Playback speed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option></select>
+                            <input type="text" id="vc-pv-type" placeholder="m:ss.mmm" title="Type a time and press Enter">
+                            <button class="btn btn-admin" data-pv="goto">Go to time</button>
+                        </div>
+                        <div class="pv-row"><span class="pv-lbl">Back</span>${nud('-5s', -5000)}${nud('-1s', -1000)}${nud('-0.1s', -100)}${nud('-0.01s', -10)}${nud('-1ms', -1)}</div>
+                        <div class="pv-row"><span class="pv-lbl">Forward</span>${nud('+1ms', 1)}${nud('+0.01s', 10)}${nud('+0.1s', 100)}${nud('+1s', 1000)}${nud('+5s', 5000)}</div>
+                        <div class="pv-row">
+                            <button class="btn btn-admin" style="border-color:#1a73e8" data-pv="mark">Mark start here</button>
                             ${fromSuggest ? '' : '<button class="btn btn-admin" data-pv="jump">Back to saved start</button>'}
                             ${fromSuggest ? '<button class="btn btn-admin" style="border-color:var(--spotify-green)" data-pv="use">Use this video</button><button class="btn btn-admin" data-pv="back">Back to suggestions</button>' : ''}
                             <button class="btn btn-admin" data-pv="close">Close</button>
                         </div>
+                        <div class="pv-hint">Keys (when not typing): Left/Right = 0.1s, Shift = 1s, Alt = 0.01s, Alt+Shift = 1ms. Tip: pause, drop the speed to 0.25x, and nudge. The clock always shows the exact time you will save, even if the picture can only land on the nearest video frame.</div>
                     </div>
                 </div>`);
             if (!el) return;
@@ -1009,18 +1044,95 @@
             await vcLoadYT();
             if (!vcPanel || vcPanel.el !== el) return;
             const saved = vcRows.find(r => r.id === tr.dataset.id);
-            const begin = fromSuggest ? 0 : Math.floor(((saved && saved.startMs) || 0) / 1000);
+            const beginMs = fromSuggest ? 0 : ((saved && saved.startMs) || 0);
+            vcPanel.hold = { ms: beginMs, until: 0 };   // the exact target we show while paused
+            vcPanel.lastRaw = null; vcPanel.lastAt = 0; vcPanel.dragging = false;
             vcPanel.player = new YT.Player('vc-yt', {
                 videoId, width: '100%', height: '100%',
-                playerVars: { start: begin, rel: 0, playsinline: 1 }
+                playerVars: { start: Math.floor(beginMs / 1000), rel: 0, playsinline: 1 },
+                events: {
+                    onReady: () => {
+                        if (!vcPanel || vcPanel.el !== el) return;
+                        if (beginMs > 0) { vcPvSeek(beginMs); }
+                        try { vcPanel.player.pauseVideo(); } catch (e) { /* ignore */ }
+                    }
+                }
             });
+
+            const seekEl = el.querySelector('#vc-pv-seek');
+            const typeEl = el.querySelector('#vc-pv-type');
+            let seekThrottle = 0;
+            seekEl.addEventListener('pointerdown', () => { vcPanel.dragging = true; });
+            seekEl.addEventListener('pointerup', () => { if (vcPanel) vcPanel.dragging = false; });
+            seekEl.addEventListener('input', () => {
+                const now = Date.now();
+                if (now - seekThrottle > 60) { seekThrottle = now; vcPvSeek(Number(seekEl.value)); }
+                el.querySelector('#vc-pv-time').textContent = vcFmtClock(Number(seekEl.value));
+            });
+            seekEl.addEventListener('change', () => { vcPanel.dragging = false; vcPvSeek(Number(seekEl.value)); });
+            el.querySelector('#vc-pv-rate').addEventListener('change', e => {
+                try { vcPanel.player.setPlaybackRate(Number(e.target.value)); } catch (err) { /* ignore */ }
+            });
+            const goto = () => {
+                const ms = vcParseClock(typeEl.value);
+                if (ms === null) { vcToast('Type a time like 1:02.345 or 62.345'); return; }
+                vcPvSeek(ms);
+            };
+            typeEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); goto(); } });
+            el.querySelector('[data-pv="goto"]').addEventListener('click', e => { e.stopPropagation(); goto(); });
+            el.addEventListener('keydown', e => {
+                if (e.target.closest('input, select, textarea')) return;
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                let step = e.altKey ? (e.shiftKey ? 1 : 10) : (e.shiftKey ? 1000 : 100);
+                vcPvSeek(vcPvNow() + (e.key === 'ArrowLeft' ? -step : step));
+            });
+
             vcPanel.timer = setInterval(() => {
                 try {
-                    const t = vcPanel.player.getCurrentTime();
+                    if (!vcPanel || !vcPanel.player) return;
                     const out = document.getElementById('vc-pv-time');
-                    if (out && typeof t === 'number') out.textContent = vcFmtStart(Math.round(t * 10) * 100);
+                    if (!out) return;
+                    const ms = vcPvNow();
+                    out.textContent = vcFmtClock(ms);
+                    const dur = (vcPanel.player.getDuration && vcPanel.player.getDuration() || 0) * 1000;
+                    if (dur > 0) {
+                        const d = document.getElementById('vc-pv-dur');
+                        if (d && !d.textContent) d.textContent = '/ ' + vcFmtClock(dur);
+                        if (Number(seekEl.max) !== Math.round(dur)) seekEl.max = Math.round(dur);
+                    }
+                    if (!vcPanel.dragging) seekEl.value = Math.round(ms);
                 } catch (e) { /* player not ready yet */ }
-            }, 250);
+            }, 33);
+        }
+
+        /* Preview time helpers. While paused we show the exact time the user chose (the "target"),
+           because YouTube snaps the picture to a video frame and would otherwise report a slightly
+           different time than the one that was asked for. While playing we show the live time,
+           smoothed between the player's updates so the milliseconds actually move. */
+        function vcPvSeek(ms) {
+            const pv = vcPanel, p = pv && pv.player;
+            if (!p || !p.seekTo) return;
+            const dur = (p.getDuration && p.getDuration() || 0) * 1000;
+            ms = Math.round(Math.max(0, dur > 0 ? Math.min(ms, dur) : ms));
+            pv.hold = { ms, until: Date.now() + 600 };
+            pv.lastRaw = null;
+            p.seekTo(ms / 1000, true);
+        }
+        function vcPvNow() {
+            const pv = vcPanel, p = pv && pv.player;
+            if (!p || !p.getCurrentTime) return 0;
+            let state = -1;
+            try { state = p.getPlayerState(); } catch (e) { /* ignore */ }
+            if (pv.hold && (state !== 1 || Date.now() < pv.hold.until)) return pv.hold.ms;
+            pv.hold = null;
+            const raw = Math.round((p.getCurrentTime() || 0) * 1000);
+            if (state !== 1) return raw;
+            const now = performance.now();
+            let rate = 1;
+            try { rate = p.getPlaybackRate() || 1; } catch (e) { /* ignore */ }
+            if (pv.lastRaw !== raw) { pv.lastRaw = raw; pv.lastAt = now; return raw; }
+            return raw + Math.min(now - pv.lastAt, 300) * rate;
         }
 
         function vcOpenSpotifySearch(tr) {
@@ -1145,14 +1257,20 @@
                         return;
                     }
                     if (!player || !player.getCurrentTime) { vcToast('The player is still loading.'); return; }
-                    if (btn.dataset.pv === 'mark') {
-                        const ms = Math.round(player.getCurrentTime() * 10) * 100;
+                    if (btn.dataset.pv === 'goto') return;   // handled by its own listener
+                    if (btn.dataset.pv === 'toggle') {
+                        let st = -1; try { st = player.getPlayerState(); } catch (e) { /* ignore */ }
+                        if (st === 1) player.pauseVideo(); else player.playVideo();
+                    } else if (btn.dataset.pv === 'nudge') {
+                        vcPvSeek(vcPvNow() + Number(btn.dataset.d));
+                    } else if (btn.dataset.pv === 'mark') {
+                        const ms = Math.round(vcPvNow());
                         tr.querySelector('[data-f="startMs"]').value = vcFmtStart(ms);
                         vcSaveRow(tr);
                         vcToast('Start set to ' + vcFmtStart(ms) + '.');
                     } else if (btn.dataset.pv === 'jump') {
                         const saved = vcRows.find(r => r.id === tr.dataset.id);
-                        player.seekTo(((saved && saved.startMs) || 0) / 1000, true);
+                        vcPvSeek((saved && saved.startMs) || 0);
                     }
                 }
             });
