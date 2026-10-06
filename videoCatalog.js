@@ -8,8 +8,11 @@
  * the master grid show up on the very next poll, even for the song playing now.
  *
  * Row shape:
- *   { id, song, artist, spotifyId, youtubeId, startMs, enabled, familySafe,
+ *   { id, song, artist, spotifyId, youtubeId, startMs, enabled, nsfw,
  *     isrc, notes, updatedAt }
+ *   enabled = the sheet's "Video ON/OFF" column.
+ *   nsfw    = the sheet's "NSFW YES/NO" column: 'yes' | 'no' | '' (not set).
+ *             Family mode only plays rows marked 'no'; a blank is NOT treated as safe.
  *   startMs = how far into the YouTube video the song actually begins
  *             (what the player calls introOffsetMs).
  */
@@ -66,6 +69,27 @@ function parseStartMs(input) {
     return ms >= 0 && ms <= MAX_START_MS ? ms : null;
 }
 
+// "Video ON/OFF" column. Returns true/false, `fallback` for blank, null if unrecognised.
+function parseOnOff(input, fallback) {
+    if (typeof input === 'boolean') return input;
+    if (input === null || input === undefined) return fallback;
+    const s = String(input).trim().toLowerCase();
+    if (s === '') return fallback;
+    if (['on', 'true', 'yes', 'y', '1', 'x', '✓'].includes(s)) return true;
+    if (['off', 'false', 'no', 'n', '0'].includes(s)) return false;
+    return null;
+}
+
+// "NSFW YES/NO" column. Returns 'yes' | 'no' | '' (blank), or null if unrecognised.
+function parseNsfw(input) {
+    if (typeof input === 'boolean') return input ? 'yes' : 'no';
+    const s = String(input == null ? '' : input).trim().toLowerCase();
+    if (s === '') return '';
+    if (['yes', 'y', 'true', '1', 'nsfw'].includes(s)) return 'yes';
+    if (['no', 'n', 'false', '0', 'safe'].includes(s)) return 'no';
+    return null;
+}
+
 function parseBool(input, fallback) {
     if (typeof input === 'boolean') return input;
     if (input === null || input === undefined || input === '') return fallback;
@@ -99,7 +123,7 @@ function normalizeInput(input, existing) {
     const src = input || {};
     const errors = {};
     const has = (k) => Object.prototype.hasOwnProperty.call(src, k);
-    const base = existing || { enabled: true, familySafe: false, startMs: 0 };
+    const base = existing || { enabled: true, nsfw: '', startMs: 0 };
     const row = {
         id: existing ? existing.id : undefined,
         song: has('song') ? clampStr(src.song, 200) : (base.song || ''),
@@ -108,7 +132,7 @@ function normalizeInput(input, existing) {
         youtubeId: base.youtubeId || '',
         startMs: base.startMs || 0,
         enabled: base.enabled !== false,
-        familySafe: !!base.familySafe,
+        nsfw: base.nsfw === 'yes' || base.nsfw === 'no' ? base.nsfw : '',
         isrc: base.isrc || '',
         notes: has('notes') ? clampStr(src.notes, 500) : (base.notes || '')
     };
@@ -132,8 +156,16 @@ function normalizeInput(input, existing) {
         if (v === null) errors.isrc = 'ISRC is 12 characters, e.g. USRC17607839.';
         else row.isrc = v;
     }
-    if (has('enabled')) row.enabled = parseBool(src.enabled, row.enabled);
-    if (has('familySafe')) row.familySafe = parseBool(src.familySafe, row.familySafe);
+    if (has('enabled')) {
+        const v = parseOnOff(src.enabled, true);
+        if (v === null) errors.enabled = 'Use ON or OFF.';
+        else row.enabled = v;
+    }
+    if (has('nsfw')) {
+        const v = parseNsfw(src.nsfw);
+        if (v === null) errors.nsfw = 'Use YES or NO (or leave blank).';
+        else row.nsfw = v;
+    }
     return { row, errors };
 }
 
