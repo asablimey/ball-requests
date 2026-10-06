@@ -212,7 +212,7 @@
            then it fades in over whatever ambient content was showing. */
         #video-view {
             position: fixed; inset: 0; background: #000;
-            opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
+            opacity: 0; pointer-events: none; transition: none; /* hard cut both ways: no slow fade between queue/ambient and video */
         }
         #video-view.is-visible { opacity: 1; }
         /* The frame is exactly the 16:9 picture (fitted to the screen), plus
@@ -670,6 +670,35 @@
 
             const renderList = () => applyQueueList(el.querySelector('#amb-qv-list'), requests, upcoming);
 
+            // Paint instantly from what the main board last fetched, so the queue
+            // slide is never an empty shell while its own fetch is in flight.
+            const paintCached = () => {
+                if (lastKioskData) {
+                    const nameEl = el.querySelector('#amb-qv-event-name');
+                    const venueEl = el.querySelector('#amb-qv-venue-name');
+                    if (nameEl) nameEl.innerText = lastKioskData.eventName || 'Now Playing';
+                    if (venueEl) venueEl.innerText = lastKioskData.venueName || '';
+                    requests = lastKioskData.queue || [];
+                }
+                const np = lastNpData;
+                if (np && np.connected && np.title) {
+                    upcoming = np.upcoming || [];
+                    const card = el.querySelector('#amb-qv-now-playing');
+                    if (card) {
+                        card.style.display = 'flex';
+                        const artEl = el.querySelector('#amb-qv-artwork');
+                        const art = safeImageUrl(np.artwork);
+                        if (artEl && artEl.getAttribute('src') !== art) artEl.setAttribute('src', art);
+                        el.querySelector('#amb-qv-np-title').innerText = np.title;
+                        el.querySelector('#amb-qv-np-artist').innerText = np.artist || '';
+                        el.querySelector('#amb-qv-live-dot').classList.toggle('is-paused', !np.isPlaying);
+                    }
+                    tracker.update(np);
+                }
+                renderList();
+            };
+            paintCached();
+
             const refresh = async () => {
                 try {
                     const [kioskRes, npRes] = await Promise.all([
@@ -734,7 +763,7 @@
             return null;
         }
 
-        function renderAmbientSlide() {
+        function renderAmbientSlide(forceCut) {
             if (ambientItems.length === 0) return;
             const item = ambientItems[ambientIndex % ambientItems.length];
             const incoming = activeLayer === 'a' ? 'b' : 'a';
@@ -765,7 +794,7 @@
 
             // Crossfade: bring the new layer in, then drop the old one out.
             // A 'cut' transition skips the fade entirely for an instant swap.
-            const skipFade = item.transition === 'cut';
+            const skipFade = !!forceCut || item.transition === 'cut';
             incomingEl.classList.toggle('no-fade', skipFade);
             layerEl(outgoing).classList.toggle('no-fade', skipFade);
             requestAnimationFrame(() => {
@@ -803,70 +832,76 @@
             renderAmbientSlide();
         }
 
+        function applyAmbientData(data, forceCut) {
+            applyMuteOverlay(data.muted);
+
+            const forceQueue = !!data.showQueue;
+            if (forceQueue && !visualsForceQueue) {
+                // Just switched on: stop whatever ambient content is
+                // running and pin the fallback board up until this is
+                // switched off again from Admin -> Settings -> Content.
+                clearAmbientAdvanceTimer();
+                clearSlideCleanup();
+                showView('queue');
+            } else if (!forceQueue && visualsForceQueue) {
+                // Just switched off: forget the last-known ambient state
+                // so the logic below treats this like a fresh block
+                // becoming active and restarts a slide from scratch,
+                // rather than assuming nothing changed while pinned.
+                ambientItems = [];
+                ambientRuleId = null;
+                ambientInactiveStreak = 0;
+            }
+            visualsForceQueue = forceQueue;
+            if (visualsForceQueue) return;
+
+            if (!data.active) {
+                ambientInactiveStreak++;
+                if (ambientInactiveStreak >= AMBIENT_INACTIVE_TOLERANCE) {
+                    clearAmbientAdvanceTimer();
+                    clearSlideCleanup();
+                    ambientItems = [];
+                    ambientRuleId = null;
+                    showView('queue');
+                }
+                return;
+            }
+            ambientInactiveStreak = 0;
+
+            const ruleChanged = data.ruleId !== ambientRuleId;
+            ambientRuleId = data.ruleId;
+
+            if (ruleChanged || ambientItems.length === 0) {
+                ambientItems = data.items || [];
+                ambientIndex = 0;
+                showView('ambient');
+                renderAmbientSlide(forceCut);
+            } else {
+                // Same block still active - just keep its item list fresh
+                // in case a file was added/removed, without restarting
+                // whatever is currently on screen.
+                ambientItems = data.items || [];
+                showView('ambient');
+            }
+        }
+
         async function pollAmbientVisuals() {
-            // The Music Video overlay owns the screen once a video is
-            // actually on screen (not while it's still loading behind the
-            // scenes) - this poll isn't allowed to switch the view out from
-            // under it. Its own ambient state naturally goes stale while
-            // paused here; the hand-back resets it so the next call renders
-            // a fresh slide rather than assuming whatever was mid-flight is
-            // still valid.
-            if (mvRevealed) return;
             try {
                 const res = await fetch(eventUrl('/api/ambient-visuals'));
                 if (!res.ok) return;
                 const data = await res.json();
-
-                applyMuteOverlay(data.muted);
-
-                const forceQueue = !!data.showQueue;
-                if (forceQueue && !visualsForceQueue) {
-                    // Just switched on: stop whatever ambient content is
-                    // running and pin the fallback board up until this is
-                    // switched off again from Admin -> Settings -> Content.
-                    clearAmbientAdvanceTimer();
-                    clearSlideCleanup();
-                    showView('queue');
-                } else if (!forceQueue && visualsForceQueue) {
-                    // Just switched off: forget the last-known ambient state
-                    // so the logic below treats this like a fresh block
-                    // becoming active and restarts a slide from scratch,
-                    // rather than assuming nothing changed while pinned.
-                    ambientItems = [];
-                    ambientRuleId = null;
-                    ambientInactiveStreak = 0;
-                }
-                visualsForceQueue = forceQueue;
-                if (visualsForceQueue) return;
-
-                if (!data.active) {
-                    ambientInactiveStreak++;
-                    if (ambientInactiveStreak >= AMBIENT_INACTIVE_TOLERANCE) {
-                        clearAmbientAdvanceTimer();
-                        clearSlideCleanup();
-                        ambientItems = [];
-                        ambientRuleId = null;
-                        showView('queue');
-                    }
+                // The Music Video overlay owns the screen once a video is
+                // actually on screen (not while it's still loading behind the
+                // scenes) - this poll isn't allowed to switch the view out from
+                // under it. The reply is kept so the hand-back can show it at
+                // once instead of fetching it after the video has gone.
+                if (mvRevealed) {
+                    ambientPrefetch = { data, at: Date.now() };
+                    applyMuteOverlay(data.muted);
                     return;
                 }
-                ambientInactiveStreak = 0;
-
-                const ruleChanged = data.ruleId !== ambientRuleId;
-                ambientRuleId = data.ruleId;
-
-                if (ruleChanged || ambientItems.length === 0) {
-                    ambientItems = data.items || [];
-                    ambientIndex = 0;
-                    showView('ambient');
-                    renderAmbientSlide();
-                } else {
-                    // Same block still active - just keep its item list fresh
-                    // in case a file was added/removed, without restarting
-                    // whatever is currently on screen.
-                    ambientItems = data.items || [];
-                    showView('ambient');
-                }
+                ambientPrefetch = { data, at: Date.now() };
+                applyAmbientData(data, false);
             } catch (e) { /* keep showing whatever's already on screen */ }
         }
 
@@ -887,8 +922,11 @@
         // only ever shown for the track that's actually playing.
         let npLiveTitle = '';
         let npLiveArtist = '';
+        let lastKioskData = null;   // newest /kiosk-data reply, reused to paint the queue slide instantly
+        let lastNpData = null;      // newest /api/now-playing reply, same purpose
 
         function updateNowPlaying(data) {
+            lastNpData = data;
             const card = document.getElementById('qv-now-playing');
             if (!data || !data.connected || !data.title) {
                 card.style.display = 'none';
@@ -919,6 +957,7 @@
                 const res = await fetch(eventUrl('/kiosk-data'));
                 if (!res.ok) return;
                 const data = await res.json();
+                lastKioskData = data;
                 document.getElementById('qv-event-name').innerText = data.eventName || 'Now Playing';
                 document.getElementById('qv-venue-name').innerText = data.venueName || '';
                 boardRequests = data.queue || [];
@@ -1081,6 +1120,349 @@
         // sync at all: blacklist it and fall back to ambient visuals.
         const MV_MAX_BIG_DRIFT_CHECKS = 2;
 
+
+        /* =========================================================
+           Look-ahead switching (seamless song-to-song, queue <-> video)
+           The server tells us, with every poll, where the current song is
+           (clock) and what plays next (next: its video and start point).
+           Well before the song ends, the NEXT video is loaded into the
+           hidden standby player, buffered, and PARKED (paused) on its exact
+           first frame. At the moment the song changes, nothing has to load:
+           the standby is just un-paused and shown with a hard cut. The old
+           video is held on its last frame until then, so there is never a
+           black gap. The sync model above (mvTargetSec, mvCheck, nudging,
+           offsets) is unchanged and takes over the instant the new video
+           is on screen.
+           ========================================================= */
+        let songClock = null;          // same anchor rules as mvClock, but kept for every song (with or without a video)
+        let mvNextInfo = null;         // {trackId, videoId, startMs, title, artist, durationMs, known}
+        let mvLastPoll = null;         // last /api/music-video reply
+        let mvLastPollAt = 0;
+        let mvTrackMeta = { title: '', artist: '' };     // title/artist of the song whose video is on screen
+        let mvPendingMeta = { title: '', artist: '' };   // same, for the video in the (slower) pending handoff
+        let mvPlayLatencyMs = 120;     // learned: how long playVideo() takes to start moving frames
+        let mvExpectedSwitch = null;   // {from, to, at}: we switched on our own prediction; ignore stale polls for `from`
+        let standby = null;            // the parked next video: {slot, trackId, videoId, afterTrackId, startSec, status, ...}
+        const MV_ARM_LEAD_MS = 60000;           // start preparing the next video this long before the song ends
+        const MV_PARK_BUFFER_AHEAD_SEC = 4;     // parked only once at least this much is buffered past the start
+        const MV_PARK_TIMEOUT_MS = 25000;       // re-load if it has not parked in this long
+        const MV_ON_TIME_TOLERANCE_SEC = 0.35;  // parked frame this close to where the video should be -> instant swap
+        const MV_PREDICT_FRESH_MS = 3000;       // only switch on prediction if the last poll is this recent
+        const MV_HOLD_END_BEFORE_SEC = 0.5;     // pause on the last frame this close to the end of a video
+        let mvStandbyInterval = null;
+
+        // After we switched on our own prediction of a song's end, the server can keep
+        // reporting the OLD song for a few seconds. A reading of the old song that is
+        // at (or past) its end is just that lag; one from well before its end means
+        // the song did not actually change and the prediction was wrong.
+        function mvIsStaleReading(data) {
+            if (!mvExpectedSwitch || data.trackId !== mvExpectedSwitch.from) return false;
+            if (Date.now() - mvExpectedSwitch.at > 15000) return false;
+            const c = data.clock;
+            if (!c || !c.durationMs) return true;
+            const age = c.isPlaying ? Math.max(0, (c.serverNow || Date.now()) - (c.updatedAt || c.serverNow || Date.now())) : 0;
+            return (c.progressMs || 0) + age >= c.durationMs - 4000;
+        }
+
+        function updateSongClock(c, receivedAt) {
+            if (!c || !c.trackId) { songClock = null; return; }
+            const serverNow = Number.isFinite(c.serverNow) ? c.serverNow : Date.now();
+            const ageMs = c.isPlaying ? Math.max(0, serverNow - (c.updatedAt || serverNow)) : 0;
+            const newBase = receivedAt - ((c.progressMs || 0) + ageMs);
+            const isPlaying = !!c.isPlaying;
+            if (!songClock || songClock.trackId !== c.trackId || songClock.isPlaying !== isPlaying || songClock.predicted ||
+                Math.abs(newBase - songClock.base) > MV_CLOCK_RESYNC_THRESHOLD_MS) {
+                songClock = { base: newBase, isPlaying, pausedPosMs: c.progressMs || 0, trackId: c.trackId, durationMs: c.durationMs || 0 };
+            } else {
+                songClock.pausedPosMs = c.progressMs || 0;
+                songClock.durationMs = c.durationMs || songClock.durationMs;
+            }
+        }
+        function songRemainingMs() {
+            if (!songClock || !songClock.durationMs) return null;
+            const pos = songClock.isPlaying ? (Date.now() - songClock.base) : songClock.pausedPosMs;
+            return songClock.durationMs - pos;
+        }
+
+        function standbyDisarm() {
+            if (!standby) return;
+            const st = players[standby.slot];
+            const isPending = pendingSlot === standby.slot;
+            if (st && st.ready && !isPending && standby.slot !== activeSlot) { try { st.yt.stopVideo(); } catch (e) { /* ignore */ } }
+            standby = null;
+        }
+        function standbyArm(nx) {
+            const slot = otherSlot(activeSlot);
+            const st = players[slot];
+            if (!st.ready) return;
+            const startSec = Math.max(0, ((nx.startMs || 0) + mvVideoLeadMs) / 1000);
+            standby = {
+                slot, trackId: nx.trackId, videoId: nx.videoId, afterTrackId: songClock ? songClock.trackId : null,
+                startSec, startMs: nx.startMs || 0, status: 'loading', since: Date.now(), tries: (standby && standby.trackId === nx.trackId ? standby.tries : 0),
+                title: nx.title || '', artist: nx.artist || '', durationMs: nx.durationMs || 0, parkedSec: null, lastSeekAt: 0
+            };
+            st.currentRate = null; st.holdingEnd = false; st.playIssuedAt = null; st.graceUntil = 0;
+            document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
+            try {
+                st.yt.loadVideoById({ videoId: nx.videoId, startSeconds: startSec });
+                mvSetRate(slot, 1);
+                applySubtitlesSetting(slot);
+            } catch (e) { standby = null; }
+            reportPlayerEvent('standby_arm', 'next video preloading, start ' + startSec.toFixed(2) + 's', nx.videoId, nx.trackId);
+        }
+
+        // Keeps the standby player loaded, paused on its first frame and buffered.
+        function standbyManage() {
+            if (pendingSlot) return; // the older, slower handoff is using the other player right now
+            const nx = mvNextInfo;
+            const wanted = !!(nx && nx.videoId && songClock && !visualsForceQueue);
+            if (standby && (!wanted || standby.trackId !== nx.trackId || standby.videoId !== nx.videoId || standby.slot === activeSlot)) {
+                standbyDisarm();
+            }
+            if (!standby) {
+                if (!wanted) return;
+                const rem = songRemainingMs();
+                if (rem !== null && rem > MV_ARM_LEAD_MS) return;
+                standbyArm(nx);
+                return;
+            }
+            const sb = standby, st = players[sb.slot];
+            if (!st.ready || sb.status === 'parked') {
+                if (sb.status === 'parked' && st.ready) {
+                    // A parked player that YouTube dropped (cued/unstarted/ended) is re-loaded.
+                    let state; try { state = st.yt.getPlayerState(); } catch (e) { return; }
+                    if (state === YT.PlayerState.ENDED || state === YT.PlayerState.CUED || state === -1) { const nx2 = mvNextInfo; standby = null; if (nx2) standbyArm(nx2); }
+                }
+                return;
+            }
+            let state, cur;
+            try { state = st.yt.getPlayerState(); cur = st.yt.getCurrentTime(); } catch (e) { return; }
+            const now = Date.now();
+            if (now - sb.since > MV_PARK_TIMEOUT_MS) {
+                if (sb.tries < 3) { const nx2 = { ...nx, }; const tries = sb.tries + 1; standby = null; standbyArm(nx2); if (standby) standby.tries = tries; }
+                return;
+            }
+            if (sb.status === 'loading') {
+                if (state === YT.PlayerState.PLAYING) {
+                    let ahead = 0;
+                    try { ahead = st.yt.getVideoLoadedFraction() * st.yt.getDuration() - sb.startSec; } catch (e) { ahead = 99; }
+                    // Let it run (muted, invisible) until enough is buffered, then park it.
+                    if (ahead >= MV_PARK_BUFFER_AHEAD_SEC || now - sb.since > 8000 || cur > sb.startSec + 3) {
+                        st.yt.pauseVideo();
+                        sb.status = 'parking'; sb.lastSeekAt = 0;
+                    }
+                }
+            } else if (sb.status === 'parking') {
+                if (state === YT.PlayerState.PLAYING) { st.yt.pauseVideo(); return; }
+                if (state === YT.PlayerState.PAUSED) {
+                    if (Math.abs(cur - sb.startSec) <= 0.08) {
+                        sb.status = 'parked'; sb.parkedSec = cur;
+                        reportPlayerEvent('standby_parked', 'next video parked at ' + cur.toFixed(2) + 's', sb.videoId, sb.trackId);
+                    } else if (now - sb.lastSeekAt > 700) {
+                        sb.lastSeekAt = now;
+                        st.yt.seekTo(sb.startSec, true);
+                    }
+                }
+            }
+        }
+
+        // Brings the parked video on screen right now with a hard cut.
+        function standbyFastSwap(sb) {
+            const newSlot = sb.slot, oldSlot = activeSlot;
+            const st = players[newSlot];
+            const coldStart = !mvRevealed;
+            try { st.playIssuedAt = Date.now(); st.yt.playVideo(); } catch (e) { return false; }
+            st.holdingEnd = false;
+            st.graceUntil = Date.now() + 2500;
+            standby = null;
+            activeSlot = newSlot;
+            currentVideoTrackId = sb.trackId; currentVideoId = sb.videoId;
+            mvTrackMeta = { title: sb.title, artist: sb.artist };
+            mvNextInfo = null;
+            mvFromCatalog = true;
+            mvIntroOffsetMs = sb.startMs || 0; // this video's own start point, until the first real reading confirms it
+            document.getElementById(`video-slot-${oldSlot}`).classList.remove('is-active');
+            document.getElementById(`video-slot-${newSlot}`).classList.add('is-active');
+            document.getElementById(`video-loading-cover-${newSlot}`).classList.add('is-hidden-instant');
+            if (!coldStart) {
+                // The old video stays visible underneath until the new slot is on top
+                // (same frame), then it can safely be stopped and re-covered.
+                setTimeout(() => {
+                    if (activeSlot === oldSlot) return;
+                    try { players[oldSlot].yt.stopVideo(); } catch (e) { /* ignore */ }
+                    document.getElementById(`video-loading-cover-${oldSlot}`).classList.remove('is-hidden', 'is-hidden-instant');
+                }, 300);
+            } else {
+                musicVideoActive = true; mvRevealed = true; mvStartedAt = Date.now();
+                clearTimeout(mvLoadTimeout);
+                mvRevealReadySince = null;
+                showView('video');
+                clearAmbientAdvanceTimer();
+                clearSlideCleanup();
+                mvSampleCount = 0;
+                clearMvDriftInterval();
+                mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
+            }
+            mvLastCorrectionAt = Date.now();
+            mvConsecutiveBigDrifts = 0;
+            mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
+            mvCorrectingActive = false; mvCorrectingReadySince = null;
+            mvLastReading = null; mvLastReadingChangedAt = 0;
+            reportPlayerEvent('standby_swap', (coldStart ? 'from queue/ambient' : 'video to video') + ', instant cut', sb.videoId, sb.trackId);
+            return true;
+        }
+
+        // Called by startMusicVideo when the server reports a new song whose
+        // video is already parked. Returns true if it handled the start.
+        function startFromStandby(videoId, trackId) {
+            const sb = standby;
+            if (!sb || sb.trackId !== trackId || sb.videoId !== videoId) return false;
+            if (sb.status !== 'parked' || !players[sb.slot].ready) { standbyDisarm(); return false; }
+            const target = mvTargetSec();
+            if (Math.abs(target - sb.parkedSec) <= MV_ON_TIME_TOLERANCE_SEC) return standbyFastSwap(sb);
+            // The song is already well underway (late detection / skip): the parked
+            // player is warm and buffered, so a seek is near-instant. Seek to where the
+            // video should be, play, and cut over as soon as it is close (or after a
+            // short, bounded settle) - the normal nudge loop finishes the job on screen.
+            const st = players[sb.slot];
+            const slot = sb.slot;
+            standby = null;
+            mvPendingMeta = { title: sb.title, artist: sb.artist };
+            try {
+                st.playIssuedAt = Date.now();
+                st.yt.seekTo(target + mvPlayLatencyMs / 1000, true);
+                st.yt.playVideo();
+            } catch (e) { return false; }
+            warm = { slot, trackId, at: Date.now(), lastSeek: Date.now(), seeks: 0, cold: !mvRevealed };
+            if (mvRevealed) {
+                pendingSlot = slot; pendingVideoId = videoId; pendingTrackId = trackId; pendingReadySince = null;
+                clearTimeout(pendingLoadTimeout);
+                pendingLoadTimeout = setTimeout(() => {
+                    if (pendingSlot === slot && pendingTrackId === trackId) {
+                        pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null; warm = null;
+                    }
+                }, MV_HANDOFF_TIMEOUT_MS);
+            } else {
+                const old = activeSlot;
+                document.getElementById(`video-slot-${old}`).classList.remove('is-active');
+                document.getElementById(`video-slot-${slot}`).classList.add('is-active');
+                document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
+                activeSlot = slot;
+                currentVideoTrackId = trackId; currentVideoId = videoId;
+                mvTrackMeta = { title: sb.title, artist: sb.artist };
+                mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null; mvRevealReadySince = null;
+                clearTimeout(mvLoadTimeout);
+                mvLoadTimeout = setTimeout(() => {
+                    if (!musicVideoActive || mvRevealed) return;
+                    warm = null;
+                    stopMusicVideo();
+                }, MV_LOAD_TIMEOUT_MS);
+                clearMvDriftInterval();
+                mvLastReading = null; mvLastReadingChangedAt = 0; mvSampleCount = 0;
+                mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
+            }
+            return true;
+        }
+
+        // Settles a warm (already buffered) player that had to jump into a song that
+        // is already running, then reveals / cuts to it. Bounded, so it never stalls.
+        let warm = null;
+        function warmCheck() {
+            if (!warm) return;
+            const w = warm;
+            const stillWanted = w.cold ? (musicVideoActive && !mvRevealed && activeSlot === w.slot && currentVideoTrackId === w.trackId)
+                                       : (pendingSlot === w.slot && pendingTrackId === w.trackId);
+            if (!stillWanted) { warm = null; return; }
+            const st = players[w.slot];
+            let state, cur;
+            try { state = st.yt.getPlayerState(); cur = st.yt.getCurrentTime(); } catch (e) { return; }
+            const age = Date.now() - w.at;
+            if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') {
+                if (age > 6000) warm = null; // hand it to the ordinary confirmation checks
+                return;
+            }
+            const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
+            if (driftMs <= 120 || age > 2500) {
+                warm = null;
+                if (w.cold) revealMusicVideo(); else completeHandoff();
+                return;
+            }
+            if (Date.now() - w.lastSeek > 450 && w.seeks < 3) {
+                w.seeks++; w.lastSeek = Date.now();
+                st.playIssuedAt = Date.now();
+                try { st.yt.seekTo(mvTargetSec() + mvPlayLatencyMs / 1000, true); } catch (e) { /* ignore */ }
+            }
+        }
+
+        // The moment the current song is predicted to end, switch to whatever
+        // plays next - the parked video, or straight to the queue/ambient
+        // screen if the next song has no video. Only on fresh, consistent data.
+        function mvPredictedSwitchCheck() {
+            if (!songClock || !songClock.isPlaying || !songClock.durationMs) return;
+            if (mvExpectedSwitch) return;
+            if (!mvLastPoll || Date.now() - mvLastPollAt > MV_PREDICT_FRESH_MS) return;
+            if (!mvLastPoll.clock || !mvLastPoll.clock.isPlaying || mvLastPoll.clock.trackId !== songClock.trackId) return;
+            const endAt = songClock.base + songClock.durationMs;
+            const now = Date.now();
+            if (standby && standby.status === 'parked' && standby.afterTrackId === songClock.trackId && !pendingSlot) {
+                if (now >= endAt - mvPlayLatencyMs) {
+                    const sb = standby;
+                    const from = songClock.trackId;
+                    const clk = { base: endAt, isPlaying: true, pausedPosMs: 0, trackId: sb.trackId, durationMs: sb.durationMs, predicted: true };
+                    songClock = clk;
+                    mvClock = { base: endAt, isPlaying: true, pausedPosMs: 0, trackId: sb.trackId, predicted: true };
+                    if (standbyFastSwap(sb)) mvExpectedSwitch = { from, to: sb.trackId, at: now };
+                }
+                return;
+            }
+            // Next song is KNOWN to have no video: leave the video for the queue/ambient at once.
+            if (mvRevealed && !standby && !pendingSlot && mvNextInfo && mvNextInfo.known && !mvNextInfo.videoId &&
+                mvLastPoll.next && mvLastPoll.next.trackId === mvNextInfo.trackId && now >= endAt + 150) {
+                const from = songClock.trackId, to = mvNextInfo.trackId;
+                mvExpectedSwitch = { from, to, at: now };
+                songClock = { base: endAt, isPlaying: true, pausedPosMs: 0, trackId: to, durationMs: mvNextInfo.durationMs, predicted: true };
+                mvNextInfo = null;
+                stopMusicVideo();
+            }
+        }
+
+        // A video that reaches its end before the song does (or just before the
+        // switch) is paused on its last frame instead of ending, because an ended
+        // YouTube player shows its end screen and would have to be hidden behind black.
+        function mvHoldEndCheck() {
+            if (!mvRevealed) return;
+            const st = players[activeSlot];
+            if (st.ready && st.holdingEnd) {
+                try {
+                    const d = st.yt.getDuration();
+                    if (mvClock && mvClock.isPlaying && d > 5 && mvTargetSec() < d - 2) {
+                        st.holdingEnd = false;           // the song is clearly not at the end of this video: resume normal sync
+                        mvSeekTo(activeSlot, mvTargetSec());
+                        st.yt.playVideo();
+                    }
+                } catch (e) { /* ignore */ }
+                return;
+            }
+            if (!st.ready) return;
+            let state, cur, dur;
+            try { state = st.yt.getPlayerState(); cur = st.yt.getCurrentTime(); dur = st.yt.getDuration(); } catch (e) { return; }
+            if (state !== YT.PlayerState.PLAYING || !(dur > 5) || typeof cur !== 'number') return;
+            if (dur - cur <= MV_HOLD_END_BEFORE_SEC) {
+                st.holdingEnd = true;
+                try { st.yt.pauseVideo(); } catch (e) { /* ignore */ }
+            }
+        }
+
+        function mvStandbyTick() {
+            try {
+                standbyManage();
+                warmCheck();
+                mvPredictedSwitchCheck();
+                mvHoldEndCheck();
+            } catch (e) { /* never let the look-ahead break playback */ }
+        }
+        mvStandbyInterval = setInterval(mvStandbyTick, 50);
+
         function otherSlot(slot) { return slot === 'a' ? 'b' : 'a'; }
 
         // The YouTube IFrame API loads over the network like anything else,
@@ -1198,6 +1580,11 @@
                 const st = players[slot];
                 if (slot === activeSlot && !mvRevealed) reportPlayerEvent('player_state', 'slot ' + slot + ' state ' + e.data + ' (1 playing, 2 paused, 3 buffering, 5 cued, 0 ended, -1 unstarted)');
                 if (e.data === YT.PlayerState.PLAYING) {
+                    if (st.playIssuedAt) {
+                        const plat = Date.now() - st.playIssuedAt;
+                        st.playIssuedAt = null;
+                        if (plat < 2000) mvPlayLatencyMs = Math.min(600, Math.max(30, Math.round(mvPlayLatencyMs * 0.5 + plat * 0.5)));
+                    }
                     if (mvSubtitlesEnabled) trySetCaptionsTrack(slot);
                     if (st.seekIssuedAt) {
                         const lat = Date.now() - st.seekIssuedAt;
@@ -1218,6 +1605,13 @@
                     // takes it from here - no timer to schedule here anymore.
                     // Likewise for the pending slot pre-handoff.
                 } else {
+                    // A video held on its last frame, or one that has only just been
+                    // switched in and is momentarily buffering, keeps the picture up
+                    // instead of dropping to a black cover (see mvHoldEndCheck).
+                    const keepPicture = slot === activeSlot && mvRevealed &&
+                        ((st.holdingEnd && e.data === YT.PlayerState.PAUSED) ||
+                         (st.graceUntil && Date.now() < st.graceUntil && (e.data === YT.PlayerState.BUFFERING || e.data === -1)));
+                    if (keepPicture) return;
                     if (slot === activeSlot) {
                         if (mvRevealed) document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
                         // Not revealed yet and no longer PLAYING - the confirm
@@ -1298,13 +1692,9 @@
             mvRevealed = true;
             reportPlayerEvent('revealed', 'video is on screen');
             document.getElementById(`video-loading-cover-${activeSlot}`).classList.add('is-hidden');
-            document.getElementById('video-view').classList.add('is-visible');
-            setTimeout(() => {
-                if (!mvRevealed) return;
-                showView('video');
-                clearAmbientAdvanceTimer();
-                clearSlideCleanup();
-            }, 450);
+            showView('video');
+            clearAmbientAdvanceTimer();
+            clearSlideCleanup();
 
             // Start sampling this newly-active slot from scratch and kick
             // off the continuous drift-correction loop, which keeps running
@@ -1316,6 +1706,25 @@
             mvSampleCount = 0;
             clearMvDriftInterval();
             mvDriftInterval = setInterval(mvTick, MV_SAMPLE_INTERVAL_MS);
+        }
+
+
+        // Instant return from a video to the queue/ambient screens. Nothing here
+        // waits on the network: the queue board is always up to date underneath,
+        // and the ambient data was prefetched while the video was playing.
+        let ambientPrefetch = null; // { data, at }
+        function handBackToScreens() {
+            clearAmbientAdvanceTimer();
+            clearSlideCleanup();
+            ambientItems = [];
+            ambientRuleId = null;
+            ambientInactiveStreak = 0;
+            showView('queue'); // the safe default, shown in the very same frame the video leaves
+            const pf = ambientPrefetch;
+            if (pf && Date.now() - pf.at < 20000) {
+                try { applyAmbientData(pf.data, true); } catch (e) { /* fall through to the live poll */ }
+            }
+            pollAmbientVisuals(); // refresh in the background
         }
 
         // Forgets whatever the ambient layer was doing and renders it afresh.
@@ -1441,7 +1850,7 @@
             const progressNow = (data.progressMs || 0) + ageMs;
             const newBase = receivedAt - progressNow;
             const isPlaying = !!data.isPlaying;
-            if (!mvClock || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > MV_CLOCK_RESYNC_THRESHOLD_MS) {
+            if (!mvClock || mvClock.predicted || mvClock.trackId !== data.trackId || mvClock.isPlaying !== isPlaying || Math.abs(newBase - mvClock.base) > MV_CLOCK_RESYNC_THRESHOLD_MS) {
                 // New song, a play/pause transition, or a big enough jump to
                 // be a real seek rather than reporting noise - this reading
                 // becomes the new anchor outright.
@@ -1541,8 +1950,8 @@
             const nearStart = cur !== null && cur <= MV_INFO_POPUP_WINDOW_SEC;
             const nearEnd = cur !== null && dur > 0 && (dur - cur) <= MV_INFO_POPUP_WINDOW_SEC;
             if (nearStart || nearEnd) {
-                document.getElementById('mv-info-title').innerText = npLiveTitle;
-                document.getElementById('mv-info-artist').innerText = npLiveArtist;
+                document.getElementById('mv-info-title').innerText = mvTrackMeta.title || npLiveTitle;
+                document.getElementById('mv-info-artist').innerText = mvTrackMeta.artist || npLiveArtist;
                 pop.classList.add('is-visible');
             } else {
                 pop.classList.remove('is-visible');
@@ -1595,6 +2004,7 @@
             // so the video still on screen (the previous song's) must not be
             // "corrected" against it - that used to yank it back to 0:00.
             if (pendingSlot) return;
+            if (st.holdingEnd) return; // parked on its final frame until the next song's video takes over
             if (st.seekIssuedAt && Date.now() - st.seekIssuedAt > 5000) st.seekIssuedAt = null;
             let state;
             try { state = st.yt.getPlayerState(); } catch (e) { return; }
@@ -1822,6 +2232,8 @@
             // and start sampling it from scratch - mvCheck/mvTick already
             // read whichever slot activeSlot points to, so drift correction
             // picks the new one up automatically from the next tick.
+            players[newSlot].holdingEnd = false;
+            mvTrackMeta = { title: mvPendingMeta.title, artist: mvPendingMeta.artist };
             mvLastCorrectionAt = Date.now();
             mvConsecutiveBigDrifts = 0;
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
@@ -1835,6 +2247,7 @@
             clearTimeout(st.loadTimeout);
             if (!st.ready) return;
             st.currentRate = null; // force the rate to be re-applied for the new video
+            st.holdingEnd = false;
             st.seekIssuedAt = Date.now();
             st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
@@ -1846,6 +2259,10 @@
 
         function startMusicVideo(videoId, trackId) {
             reportPlayerEvent('start_video', 'revealed=' + mvRevealed + ' player_a_ready=' + players.a.ready + ' target=' + mvTargetSec().toFixed(1) + 's', videoId, trackId);
+            if (standby) {
+                if (startFromStandby(videoId, trackId)) { musicVideoActive = true; mvStartedAt = Date.now(); return; }
+                standbyDisarm();
+            }
             musicVideoActive = true;
             mvStartedAt = Date.now();
             // TEMP DIAGNOSTIC LOGGING - see the matching note in mvCheck().
@@ -1861,6 +2278,7 @@
                 // visuals between two music videos.
                 const slot = otherSlot(activeSlot);
                 pendingSlot = slot; pendingVideoId = videoId; pendingTrackId = trackId; pendingReadySince = null;
+                mvPendingMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '' };
                 loadIntoSlot(slot, videoId);
                 clearTimeout(pendingLoadTimeout);
                 pendingLoadTimeout = setTimeout(() => {
@@ -1886,6 +2304,7 @@
             // below) reveals it once confirmed in sync (item 6).
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
+            mvTrackMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '' };
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
             mvRevealReadySince = null;
             loadIntoSlot(activeSlot, videoId);
@@ -1932,6 +2351,8 @@
             clearTimeout(pendingLoadTimeout); pendingLoadTimeout = null;
             currentVideoTrackId = null;
             currentVideoId = null;
+            standby = null;
+            ['a', 'b'].forEach(sl => { players[sl].holdingEnd = false; });
             pendingSlot = null; pendingVideoId = null; pendingTrackId = null; pendingReadySince = null;
             mvClock = null;
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
@@ -1946,9 +2367,10 @@
                 document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             });
             if (wasRevealed) {
-                // Force a fresh render rather than assuming whatever ambient
-                // state was current before the video started is still valid.
-                resetAmbientAndRepoll();
+                // Back to the queue / ambient screen with no waiting: the queue board
+                // underneath is always kept current, and the ambient slides were
+                // fetched in the background while the video played.
+                handBackToScreens();
             } else {
                 // Never made it on screen - ambient visuals never stopped.
                 pollAmbientVisuals();
@@ -1980,16 +2402,38 @@
                 // Per-video cold-open offset - see mvIntroOffsetMs above.
                 // Starts at 0 and picks up the real number a few seconds
                 // into a new video once server-side detection resolves.
-                mvIntroOffsetMs = (typeof data.introOffsetMs === 'number' && Number.isFinite(data.introOffsetMs))
-                    ? data.introOffsetMs : 0;
-                // A person picked this video in the catalog: never blacklist it for sync/load trouble, just retry.
-                mvFromCatalog = data.source === 'catalog';
+                const staleAfterSwitch = mvIsStaleReading(data);
+                if (!staleAfterSwitch) {
+                    mvIntroOffsetMs = (typeof data.introOffsetMs === 'number' && Number.isFinite(data.introOffsetMs))
+                        ? data.introOffsetMs : 0;
+                    // A person picked this video in the catalog: never blacklist it for sync/load trouble, just retry.
+                    mvFromCatalog = data.source === 'catalog';
+                }
 
                 // Show Queue / Mute from the admin are deliberate - they win instantly.
                 if (visualsForceQueue || data.override) {
+                    standbyDisarm();
+                    mvNextInfo = null; songClock = null;
                     if (musicVideoActive) stopMusicVideo();
                     return;
                 }
+
+                // We switched on our own prediction of the song's end; Spotify (via the
+                // server) can still report the old song for a few seconds. Those readings
+                // must not pull the screen back to the old video.
+                if (mvExpectedSwitch) {
+                    const age = Date.now() - mvExpectedSwitch.at;
+                    if (data.trackId === mvExpectedSwitch.to || age > 15000) mvExpectedSwitch = null;
+                    else if (data.trackId === mvExpectedSwitch.from) {
+                        if (mvIsStaleReading(data)) return;   // old song's final reading, delivered late
+                        mvExpectedSwitch = null;              // the old song is genuinely still going: our prediction was wrong
+                    }
+                }
+                mvLastPoll = data;
+                mvLastPollAt = receivedAt;
+                if (data.clock) updateSongClock(data.clock, receivedAt);
+                mvNextInfo = data.next && data.next.trackId ? data.next : null;
+                if (data.trackId && data.trackId === currentVideoTrackId && data.title) mvTrackMeta = { title: data.title, artist: data.artist || '' };
 
                 if (data.enabled && data.matched && data.videoId) {
                     // Always fold the newest reading into the sync clock first.
