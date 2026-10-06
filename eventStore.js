@@ -1106,6 +1106,7 @@ async function deleteEvent(slug) {
 }
 
 module.exports = {
+    redis, // raw Upstash command helper, used by videoCatalog.js
     isValidSlug,
     getEvent,
     createEvent,
