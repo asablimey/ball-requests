@@ -5836,6 +5836,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
         introOffsetMs: mvOffsetNow,
+        source: runtime.cache.source || null,
         trackId: np.trackId,
         progressMs: np.progressMs,
         durationMs: np.durationMs,
