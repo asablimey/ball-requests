@@ -5606,6 +5606,7 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 // Visuals, same as if no Music Videos block were active at all.
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
+    if (req.query.d === '1') ensureMusicVideoRuntime(event).displayLastPolledAt = Date.now();
     const vcfg = ensureVisualsConfigs(event);
     const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
 
@@ -5874,7 +5875,8 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const offsetFromCache = !fromCatalog && !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
     const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
-        displayReported: runtime.lastPlayerEvent || null,
+        displayLastPolledAt: runtime.displayLastPolledAt ? new Date(runtime.displayLastPolledAt).toISOString() : 'never (no display page has polled since server start)',
+        displayTrace_newestFirst: Array.isArray(runtime.playerTrace) ? runtime.playerTrace : [],
         youtubeCheck: runtime.lastYtCheck || null,
         offsetSource: !runtime.cache.matched ? 'none' : fromCatalog ? 'catalog (start time set by a person)' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
         reason: mvReason,
@@ -5905,11 +5907,13 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
 app.post('/e/:slug/api/music-video/player-event', publicReadLimiter, (req, res) => {
     const { trackId, videoId, kind, detail } = req.body || {};
     const runtime = ensureMusicVideoRuntime(req.event);
-    runtime.lastPlayerEvent = {
-        at: new Date().toISOString(),
-        trackId: String(trackId || '').slice(0, 40), videoId: String(videoId || '').slice(0, 20),
-        kind: String(kind || '').slice(0, 40), detail: String(detail == null ? '' : detail).slice(0, 200)
-    };
+    if (!Array.isArray(runtime.playerTrace)) runtime.playerTrace = [];
+    runtime.playerTrace.unshift({
+        at: new Date().toISOString().slice(11, 23),
+        kind: String(kind || '').slice(0, 40), detail: String(detail == null ? '' : detail).slice(0, 200),
+        videoId: String(videoId || '').slice(0, 20)
+    });
+    runtime.playerTrace.length = Math.min(runtime.playerTrace.length, 15);
     res.json({ success: true });
 });
 
