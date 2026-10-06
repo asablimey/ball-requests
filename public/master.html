@@ -105,6 +105,55 @@
         }
         .toast.show { opacity: 1; }
         .toast.error { border-color: var(--red-action); }
+
+        /* ---- Tabs + Videos catalog ---- */
+        #dashboard.wide { max-width: 1500px; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+        .tab-btn { background: var(--card-bg); border: 1px solid #333; color: #a7a7a7; padding: 9px 18px; border-radius: 50px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+        .tab-btn.active { background: white; color: black; border-color: white; }
+        .vc-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+        .vc-toolbar input[type=text], .vc-toolbar select { background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 8px; padding: 9px 12px; font-size: 0.88rem; outline: none; }
+        .vc-toolbar input[type=text]:focus, .vc-toolbar select:focus { border-color: var(--spotify-green); }
+        #vc-search { width: 220px; }
+        .vc-spacer { flex: 1; }
+        .vc-status { font-size: 0.8rem; color: #a7a7a7; min-width: 110px; text-align: right; }
+        .vc-status.err { color: var(--red-action); }
+        .vc-help { color: #a7a7a7; font-size: 0.78rem; margin: 0 0 12px; line-height: 1.5; }
+        .vc-wrap { overflow-x: auto; border: 1px solid #282828; border-radius: 12px; background: var(--panel-bg); }
+        table.vc { border-collapse: collapse; width: 100%; min-width: 1180px; font-size: 0.85rem; }
+        table.vc th { text-align: left; padding: 10px 8px; color: #a7a7a7; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #282828; white-space: nowrap; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel-bg); }
+        table.vc th.nosort { cursor: default; }
+        table.vc td { padding: 3px 4px; border-bottom: 1px solid #202020; vertical-align: middle; }
+        table.vc input[type=text] { width: 100%; background: transparent; border: 1px solid transparent; color: white; padding: 7px 6px; border-radius: 6px; font-size: 0.85rem; outline: none; }
+        table.vc input[type=text]:hover { border-color: #333; }
+        table.vc input[type=text]:focus { border-color: var(--spotify-green); background: var(--card-bg); }
+        table.vc input.bad { border-color: var(--red-action) !important; background: rgba(233,20,41,0.12); }
+        table.vc input.dup { border-color: #e8a317 !important; }
+        table.vc td.c-song { min-width: 170px; } table.vc td.c-artist { min-width: 140px; }
+        table.vc td.c-spotify { min-width: 150px; } table.vc td.c-youtube { min-width: 120px; }
+        table.vc td.c-start { width: 92px; } table.vc td.c-isrc { min-width: 120px; } table.vc td.c-notes { min-width: 150px; }
+        table.vc td.c-chk { width: 56px; text-align: center; }
+        table.vc td.c-act { white-space: nowrap; width: 150px; text-align: right; }
+        .act-btn { background: none; border: none; color: #a7a7a7; cursor: pointer; font-size: 1rem; padding: 4px 6px; border-radius: 6px; }
+        .act-btn:hover { background: var(--card-bg); color: white; }
+        .tick { color: var(--spotify-green); font-size: 0.8rem; opacity: 0; transition: opacity 0.3s; margin-right: 4px; }
+        .tick.on { opacity: 1; }
+        tr.flash td { background: rgba(29,185,84,0.16); }
+        tr.panel td { padding: 12px 14px; background: #141414; }
+        .panel-title { font-size: 0.8rem; color: #a7a7a7; margin-bottom: 8px; }
+        .panel-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+        .panel-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; background: var(--card-bg); border-radius: 8px; padding: 8px 10px; font-size: 0.82rem; }
+        .panel-item .meta { color: #a7a7a7; font-size: 0.75rem; }
+        .panel-item button { flex-shrink: 0; }
+        .pv-box { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+        .pv-frame { width: 400px; max-width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px; overflow: hidden; }
+        .pv-frame iframe { width: 100%; height: 100%; border: 0; }
+        .vc-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 10001; display: none; align-items: center; justify-content: center; padding: 20px; }
+        .vc-modal.show { display: flex; }
+        .vc-modal-card { background: var(--panel-bg); border: 1px solid #333; border-radius: 14px; padding: 22px; width: 100%; max-width: 760px; }
+        .vc-modal-card textarea { width: 100%; height: 220px; background: var(--card-bg); border: 1px solid #333; color: white; border-radius: 8px; padding: 10px; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; outline: none; }
+        .toast .undo { margin-left: 12px; color: var(--spotify-green); font-weight: 700; cursor: pointer; pointer-events: auto; }
+        .toast.show.has-action { pointer-events: auto; }
     </style>
 </head>
 <body>
@@ -120,6 +169,11 @@
     </div>
 
     <div id="dashboard">
+        <div class="tabs">
+            <button class="tab-btn active" id="tabbtn-events" onclick="switchTab('events')">Events</button>
+            <button class="tab-btn" id="tabbtn-videos" onclick="switchTab('videos')">Videos</button>
+        </div>
+        <div id="tab-events">
         <div class="header">
             <div>
                 <h1>All Events</h1>
@@ -135,6 +189,65 @@
             <div class="account-recovery-row">
                 <input type="text" id="recovery-username" class="lock-input" style="text-align:left; margin-bottom:0;" placeholder="Username" autocapitalize="off" autocorrect="off">
                 <button class="btn btn-admin" onclick="resetAccountPassword()">Reset Account Password</button>
+            </div>
+        </div>
+        </div><!-- /tab-events -->
+
+        <div id="tab-videos" style="display:none">
+            <div class="header">
+                <div>
+                    <h1>Music Videos</h1>
+                    <div class="subtitle" id="vc-count">Loading...</div>
+                </div>
+                <button class="refresh-btn" onclick="vcLoad()">↻ Reload</button>
+            </div>
+            <p class="vc-help">Shared by every event. Each cell saves when you click away. Paste a full Spotify or YouTube link into a cell and it becomes the ID. You can also paste a block of cells copied from a spreadsheet: it fills rows downward from the cell you paste into, in the column order shown. The player finds a song by Spotify ID, then ISRC, then artist + title. No row, or a disabled row, means ambient visuals. <b>Song starts at</b> is how far into the YouTube video the song begins.</p>
+            <div class="vc-toolbar">
+                <input type="text" id="vc-search" placeholder="Search songs, artists, IDs…" oninput="vcRender()">
+                <select id="vc-filter" onchange="vcRender()">
+                    <option value="all">All rows</option>
+                    <option value="novideo">No video yet</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="notfamily">Not family-safe</option>
+                </select>
+                <button class="btn btn-admin" onclick="vcAddRow()">+ Add row</button>
+                <select id="vc-np-event" title="Event to read Now Playing from"></select>
+                <button class="btn btn-admin" onclick="vcFromNowPlaying()">♪ From now playing</button>
+                <span class="vc-spacer"></span>
+                <button class="btn btn-admin" onclick="vcOpenPasteModal()">Paste rows…</button>
+                <button class="btn btn-admin" onclick="document.getElementById('vc-csv-file').click()">Import CSV</button>
+                <button class="btn btn-admin" onclick="vcExportCsv()">Export CSV</button>
+                <input type="file" id="vc-csv-file" accept=".csv,text/csv" style="display:none" onchange="vcImportCsv(this)">
+                <span class="vc-status" id="vc-status"></span>
+            </div>
+            <div class="vc-wrap">
+                <table class="vc">
+                    <thead><tr>
+                        <th data-k="song" onclick="vcSort('song')">Song</th>
+                        <th data-k="artist" onclick="vcSort('artist')">Artist</th>
+                        <th data-k="spotifyId" onclick="vcSort('spotifyId')">Spotify</th>
+                        <th data-k="youtubeId" onclick="vcSort('youtubeId')">YouTube</th>
+                        <th data-k="startMs" onclick="vcSort('startMs')">Song starts at</th>
+                        <th data-k="enabled" onclick="vcSort('enabled')">Enabled</th>
+                        <th data-k="familySafe" onclick="vcSort('familySafe')">Family-safe</th>
+                        <th data-k="isrc" onclick="vcSort('isrc')">ISRC</th>
+                        <th data-k="notes" onclick="vcSort('notes')">Notes</th>
+                        <th class="nosort"></th>
+                    </tr></thead>
+                    <tbody id="vc-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="vc-modal" id="vc-paste-modal">
+        <div class="vc-modal-card">
+            <h2 style="margin:0 0 6px;font-size:1.1rem">Paste rows from a spreadsheet</h2>
+            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Song, Artist, Spotify, YouTube, Song starts at, Enabled, Family-safe, ISRC, Notes. A header row is skipped. Rows with a Spotify ID already in the catalog update that row.</p>
+            <textarea id="vc-paste-text" placeholder="Paste here"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+                <button class="btn btn-admin" onclick="document.getElementById('vc-paste-modal').classList.remove('show')">Cancel</button>
+                <button class="btn btn-close" style="background:var(--spotify-green)" onclick="vcSubmitPasteModal()">Add rows</button>
             </div>
         </div>
     </div>
@@ -208,7 +321,10 @@
             } catch (e) { return 'Unknown date'; }
         }
 
+        let masterEvents = [];
         function renderEvents(list) {
+            masterEvents = list;
+            if (typeof vcFillEventSelect === 'function') vcFillEventSelect();
             const container = document.getElementById('events-list');
             const countLabel = document.getElementById('event-count-label');
             countLabel.textContent = list.length === 1 ? '1 event' : `${list.length} events`;
@@ -236,8 +352,8 @@
                         </div>
                         <div class="card-actions">
                             <a class="btn btn-admin" href="/e/${slug}/admin" target="_blank" rel="noopener">Open Admin</a>
-                            <button class="btn btn-admin" data-slug="${slug}" data-name="${name}" onclick="resetPassword(this.dataset.slug, this.dataset.name)">Reset Password</button>
-                            <button class="btn btn-close" data-slug="${slug}" data-name="${name}" onclick="closeEvent(this.dataset.slug, this.dataset.name)">Close</button>
+                            <button class="btn btn-admin" onclick="resetPassword('${slug}', '${name.replace(/'/g, "\\'")}')">Reset Password</button>
+                            <button class="btn btn-close" onclick="closeEvent('${slug}', '${name.replace(/'/g, "\\'")}')">Close</button>
                         </div>
                     </div>
                 `;
@@ -319,5 +435,680 @@
             }
         }
     </script>
+    <script>
+        /* ===================== Videos tab (curated catalog) ===================== */
+        const VC_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'enabled', 'familySafe', 'isrc', 'notes'];
+        const VC_TEXT_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'isrc', 'notes'];
+        const VC_RENDER_CAP = 600;
+        let vcRows = [];            // saved rows, as the server has them
+        let vcLoaded = false;
+        let vcSortKey = 'artist', vcSortDir = 1;
+        let vcBusyCount = 0;
+        let vcPanel = null;         // the one open sub-panel: { tr, el, kind, player, timer }
+        let vcToastTimer = null;
+
+        function switchTab(tab) {
+            document.getElementById('tab-events').style.display = tab === 'events' ? 'block' : 'none';
+            document.getElementById('tab-videos').style.display = tab === 'videos' ? 'block' : 'none';
+            document.getElementById('tabbtn-events').classList.toggle('active', tab === 'events');
+            document.getElementById('tabbtn-videos').classList.toggle('active', tab === 'videos');
+            document.getElementById('dashboard').classList.toggle('wide', tab === 'videos');
+            if (tab === 'videos' && !vcLoaded) vcLoad();
+        }
+
+        async function vcApi(method, path, body) {
+            try {
+                const res = await fetch('/api/master/catalog' + path, {
+                    method,
+                    headers: Object.assign({ 'x-admin-password': masterPassword }, body ? { 'Content-Type': 'application/json' } : {}),
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                let data = {};
+                try { data = await res.json(); } catch (e) { /* non-JSON error body */ }
+                return { ok: res.ok, status: res.status, data };
+            } catch (e) {
+                return { ok: false, status: 0, data: { error: 'Could not reach the server.' } };
+            }
+        }
+
+        function vcStatus(text, isErr) {
+            const el = document.getElementById('vc-status');
+            el.textContent = text;
+            el.classList.toggle('err', !!isErr);
+        }
+        function vcBusy(delta) {
+            vcBusyCount = Math.max(0, vcBusyCount + delta);
+            if (vcBusyCount > 0) vcStatus('Saving…');
+            else if (!document.getElementById('vc-status').classList.contains('err')) vcStatus('All changes saved');
+        }
+        function vcToast(message, actionLabel, action) {
+            const el = document.getElementById('toast');
+            clearTimeout(vcToastTimer);
+            el.className = 'toast show has-action';
+            el.textContent = message;
+            if (actionLabel) {
+                const a = document.createElement('span');
+                a.className = 'undo';
+                a.textContent = actionLabel;
+                a.onclick = () => { el.className = 'toast'; action(); };
+                el.appendChild(a);
+            }
+            vcToastTimer = setTimeout(() => { el.className = 'toast'; }, actionLabel ? 8000 : 3000);
+        }
+
+        function vcFmtStart(ms) {
+            ms = Number(ms) || 0;
+            const m = Math.floor(ms / 60000);
+            let t = String(+(((ms % 60000) / 1000)).toFixed(2));
+            if (t.indexOf('.') === -1) t = t.padStart(2, '0'); else if (t.indexOf('.') < 2) t = '0' + t;
+            return m + ':' + t;
+        }
+        function vcFmtDuration(ms) {
+            if (typeof ms !== 'number') return '?';
+            const s = Math.round(ms / 1000);
+            return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        }
+
+        async function vcLoad() {
+            vcStatus('Loading…');
+            const r = await vcApi('GET', '/rows');
+            if (!r.ok) { vcStatus(r.data.error || 'Could not load the catalog.', true); return; }
+            vcRows = r.data.rows || [];
+            vcLoaded = true;
+            vcStatus('');
+            vcRender();
+            vcFillEventSelect();
+        }
+
+        function vcFillEventSelect() {
+            const sel = document.getElementById('vc-np-event');
+            if (!sel) return;
+            const prev = sel.value;
+            if (!masterEvents.length) { sel.innerHTML = '<option value="">No events</option>'; return; }
+            sel.innerHTML = masterEvents.map(ev => `<option value="${escapeHtml(ev.slug)}">${escapeHtml(ev.eventName || ev.slug)} (/e/${escapeHtml(ev.slug)})</option>`).join('');
+            if (prev && masterEvents.some(ev => ev.slug === prev)) sel.value = prev;
+        }
+
+        /* ---------- rendering ---------- */
+        function vcSort(key) {
+            if (vcSortKey === key) vcSortDir = -vcSortDir; else { vcSortKey = key; vcSortDir = 1; }
+            vcRender();
+        }
+        function vcCompare(a, b) {
+            const k = vcSortKey;
+            let x = a[k], y = b[k];
+            if (typeof x === 'boolean' || typeof y === 'boolean') { x = x ? 1 : 0; y = y ? 1 : 0; }
+            let c;
+            if (typeof x === 'number' && typeof y === 'number') c = x - y;
+            else c = String(x || '').toLowerCase().localeCompare(String(y || '').toLowerCase());
+            if (c) return c * vcSortDir;
+            return (String(a.artist || '').toLowerCase().localeCompare(String(b.artist || '').toLowerCase()))
+                || (String(a.song || '').toLowerCase().localeCompare(String(b.song || '').toLowerCase()));
+        }
+        function vcMatches(r, q, filter) {
+            if (filter === 'novideo' && r.youtubeId) return false;
+            if (filter === 'disabled' && r.enabled) return false;
+            if (filter === 'notfamily' && r.familySafe) return false;
+            if (!q) return true;
+            return [r.song, r.artist, r.spotifyId, r.youtubeId, r.isrc, r.notes].join(' ').toLowerCase().includes(q);
+        }
+
+        function vcRowHtml(r) {
+            const raw = !!r._raw; // an unsaved row: show exactly what was typed
+            const start = raw ? (r.startMs == null ? '' : r.startMs) : vcFmtStart(r.startMs);
+            const txt = (f, v, cls, ph) => `<td class="${cls}"><input type="text" data-f="${f}" value="${escapeHtml(v)}" placeholder="${ph || ''}" autocomplete="off" spellcheck="false"></td>`;
+            const chk = (f, v) => `<td class="c-chk"><input type="checkbox" data-f="${f}" ${v ? 'checked' : ''}></td>`;
+            return `<tr data-row="1" ${r.id ? `data-id="${escapeHtml(r.id)}"` : ''}>
+                ${txt('song', r.song || '', 'c-song')}
+                ${txt('artist', r.artist || '', 'c-artist')}
+                ${txt('spotifyId', r.spotifyId || '', 'c-spotify', 'link or ID')}
+                ${txt('youtubeId', r.youtubeId || '', 'c-youtube', 'link or ID')}
+                ${txt('startMs', start, 'c-start', '0:00')}
+                ${chk('enabled', r.enabled !== false)}
+                ${chk('familySafe', !!r.familySafe)}
+                ${txt('isrc', r.isrc || '', 'c-isrc')}
+                ${txt('notes', r.notes || '', 'c-notes')}
+                <td class="c-act"><span class="tick">✓</span>
+                    <button class="act-btn" data-act="preview" title="Preview, and mark the start time">▶</button>
+                    <button class="act-btn" data-act="spotify" title="Search Spotify to fill this row">🔍</button>
+                    <button class="act-btn" data-act="suggest" title="Suggest YouTube videos (one search, 100 quota units)">✨</button>
+                    <button class="act-btn" data-act="delete" title="Delete row">🗑</button></td>
+            </tr>`;
+        }
+        function vcMakeRowEl(r) {
+            const t = document.createElement('tbody');
+            t.innerHTML = vcRowHtml(r);
+            return t.firstElementChild;
+        }
+
+        function vcRender() {
+            vcClosePanel();
+            const body = document.getElementById('vc-body');
+            // keep unsaved rows (typed but not saved yet, or with errors) across re-renders
+            const unsaved = [...body.querySelectorAll('tr[data-row]:not([data-id])')];
+            const q = document.getElementById('vc-search').value.trim().toLowerCase();
+            const filter = document.getElementById('vc-filter').value;
+            const matching = vcRows.filter(r => vcMatches(r, q, filter)).sort(vcCompare);
+            const shown = matching.slice(0, VC_RENDER_CAP);
+            body.innerHTML = shown.map(vcRowHtml).join('');
+            unsaved.reverse().forEach(tr => body.insertBefore(tr, body.firstChild));
+            document.querySelectorAll('table.vc th[data-k]').forEach(th => {
+                const base = th.textContent.replace(/ [▲▼]$/, '');
+                th.textContent = th.dataset.k === vcSortKey ? base + (vcSortDir === 1 ? ' ▲' : ' ▼') : base;
+            });
+            vcCount(matching.length);
+            vcRefreshDups();
+        }
+        function vcCount(matchingCount) {
+            const playable = vcRows.filter(r => r.enabled && r.youtubeId).length;
+            const q = document.getElementById('vc-search').value.trim();
+            const filtered = typeof matchingCount === 'number' && matchingCount !== vcRows.length;
+            let t = `${vcRows.length} row${vcRows.length === 1 ? '' : 's'} · ${playable} playable`;
+            if (filtered) t += ` · ${matchingCount} match${q ? ' the search' : ' the filter'}`;
+            if (matchingCount > VC_RENDER_CAP) t += ` (showing the first ${VC_RENDER_CAP}; narrow the search)`;
+            document.getElementById('vc-count').textContent = t;
+        }
+
+        function vcRefreshDups() {
+            const counts = {};
+            vcRows.forEach(r => { if (r.spotifyId) counts[r.spotifyId] = (counts[r.spotifyId] || 0) + 1; });
+            document.querySelectorAll('#vc-body tr[data-row][data-id]').forEach(tr => {
+                const row = vcRows.find(r => r.id === tr.dataset.id);
+                const input = tr.querySelector('[data-f="spotifyId"]');
+                const dup = row && row.spotifyId && counts[row.spotifyId] > 1;
+                input.classList.toggle('dup', !!dup);
+                if (dup) input.title = 'Another row uses this Spotify ID.';
+                else if (input.title === 'Another row uses this Spotify ID.') input.title = '';
+            });
+        }
+
+        /* ---------- reading / marking a row ---------- */
+        function vcReadRow(tr) {
+            const o = {};
+            tr.querySelectorAll('[data-f]').forEach(el => {
+                o[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value.trim();
+            });
+            return o;
+        }
+        function vcFillRow(tr, row) {
+            tr.querySelectorAll('[data-f]').forEach(el => {
+                const f = el.dataset.f;
+                if (el.type === 'checkbox') el.checked = !!row[f];
+                else if (f === 'startMs') el.value = vcFmtStart(row.startMs);
+                else el.value = row[f] || '';
+            });
+        }
+        function vcSetInputs(tr, values) { // raw values, no normalising (used for failed pastes)
+            Object.keys(values).forEach(f => {
+                const el = tr.querySelector(`[data-f="${f}"]`);
+                if (!el) return;
+                if (el.type === 'checkbox') { const v = String(values[f]).trim().toLowerCase(); if (v) el.checked = ['true', 'yes', 'y', '1', 'on', 'x'].includes(v); }
+                else el.value = values[f];
+            });
+        }
+        function vcClearMarks(tr) {
+            tr.querySelectorAll('input').forEach(el => { el.classList.remove('bad'); if (!el.classList.contains('dup')) el.title = ''; });
+        }
+        function vcMarkErrors(tr, errors) {
+            Object.keys(errors).forEach(f => {
+                const el = tr.querySelector(`[data-f="${f}"]`);
+                if (el) { el.classList.add('bad'); el.title = errors[f]; }
+            });
+            const first = Object.values(errors)[0];
+            vcStatus('Not saved: ' + first, true);
+            tr.querySelector('.tick').classList.remove('on');
+        }
+        function vcMarkWarnings(tr, warnings) {
+            tr.querySelectorAll('[data-f="song"]').forEach(el => { el.classList.remove('dup'); if (el.title.startsWith('Needs')) el.title = ''; });
+            (warnings || []).forEach(w => {
+                if (w.field === 'spotifyId') return; // handled by vcRefreshDups
+                const el = tr.querySelector(`[data-f="${w.field}"]`);
+                if (el) { el.classList.add('dup'); el.title = w.message; }
+            });
+        }
+        function vcFlashTick(tr) {
+            const tick = tr.querySelector('.tick');
+            tick.classList.add('on');
+            clearTimeout(tr._tickTimer);
+            tr._tickTimer = setTimeout(() => tick.classList.remove('on'), 1800);
+        }
+        function vcFlashRow(tr) {
+            tr.classList.add('flash');
+            tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            setTimeout(() => tr.classList.remove('flash'), 1600);
+        }
+        function vcUpsertState(row) {
+            const i = vcRows.findIndex(r => r.id === row.id);
+            if (i >= 0) vcRows[i] = row; else vcRows.push(row);
+        }
+        function vcIsBlank(p) {
+            return !(p.song || p.artist || p.spotifyId || p.youtubeId || p.isrc || p.notes);
+        }
+
+        /* ---------- saving ---------- */
+        function vcSaveRow(tr) {
+            tr._chain = (tr._chain || Promise.resolve()).then(() => vcDoSave(tr)).catch(e => vcStatus('Save failed: ' + e.message, true));
+            return tr._chain;
+        }
+        async function vcDoSave(tr) {
+            if (!tr.isConnected) return;
+            const payload = vcReadRow(tr);
+            const id = tr.dataset.id || undefined;
+            if (!id && vcIsBlank(payload)) return;
+            if (id) payload.id = id;
+            vcClearMarks(tr);
+            document.getElementById('vc-status').classList.remove('err');
+            vcBusy(+1);
+            const r = await vcApi('POST', '/row', payload);
+            vcBusy(-1);
+            if (r.status === 400 && r.data.errors) { vcMarkErrors(tr, r.data.errors); return; }
+            if (!r.ok) { vcStatus(r.data.error || 'Save failed (' + r.status + ').', true); return; }
+            const row = r.data.row;
+            if (!id) {
+                const other = document.querySelector(`#vc-body tr[data-id="${CSS.escape(row.id)}"]`);
+                if (other && other !== tr) { // that Spotify ID already had a row; the server merged into it
+                    vcUpsertState(row);
+                    tr.remove();
+                    vcFillRow(other, row);
+                    vcFlashRow(other);
+                    vcRefreshDups();
+                    vcToast('That Spotify ID already had a row, so it was updated instead of duplicated.');
+                    vcCount();
+                    return;
+                }
+            }
+            tr.dataset.id = row.id;
+            vcUpsertState(row);
+            vcFillRow(tr, row);
+            vcMarkWarnings(tr, r.data.warnings);
+            vcFlashTick(tr);
+            vcRefreshDups();
+            vcCount();
+            vcStatus('All changes saved');
+        }
+
+        /* ---------- add / delete ---------- */
+        function vcAddRow(values, errors) {
+            const body = document.getElementById('vc-body');
+            const tr = vcMakeRowEl(Object.assign({ enabled: true, _raw: true }, values || {}));
+            body.insertBefore(tr, body.firstChild);
+            if (errors) vcMarkErrors(tr, errors);
+            if (!values) tr.querySelector('[data-f="song"]').focus();
+            return tr;
+        }
+        async function vcDelete(tr) {
+            const id = tr.dataset.id;
+            if (vcPanel && vcPanel.tr === tr) vcClosePanel();
+            if (!id) { tr.remove(); return; }
+            const row = vcRows.find(r => r.id === id);
+            tr.remove();
+            vcRows = vcRows.filter(r => r.id !== id);
+            vcCount();
+            vcRefreshDups();
+            vcBusy(+1);
+            const r = await vcApi('DELETE', '/row/' + encodeURIComponent(id));
+            vcBusy(-1);
+            if (!r.ok) { vcStatus(r.data.error || 'Delete failed.', true); vcLoad(); return; }
+            vcToast('Row deleted.', 'Undo', async () => {
+                const back = await vcApi('POST', '/row', Object.assign({}, row, { id: row.id, restore: true }));
+                if (back.ok) { vcUpsertState(back.data.row); vcRender(); vcToast('Row restored.'); }
+                else vcToast('Could not restore: ' + (back.data.error || back.status));
+            });
+        }
+
+        /* ---------- bulk paste / CSV ---------- */
+        function vcParseDelimited(text, delim) {
+            const rows = [];
+            let row = [], cur = '', inQ = false, i = 0, atStart = true;
+            text = text.replace(/\r\n?/g, '\n');
+            while (i < text.length) {
+                const c = text[i];
+                if (inQ) {
+                    if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i += 2; continue; } inQ = false; i++; continue; }
+                    cur += c; i++; continue;
+                }
+                if (c === '"' && atStart) { inQ = true; atStart = false; i++; continue; }
+                if (c === delim) { row.push(cur); cur = ''; atStart = true; i++; continue; }
+                if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; atStart = true; i++; continue; }
+                cur += c; atStart = false; i++;
+            }
+            if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+            return rows.filter(r => r.some(c => String(c).trim() !== ''));
+        }
+        function vcGridToPayloads(grid, startIdx) {
+            return grid.map(cells => {
+                const o = {};
+                cells.forEach((c, i) => { const f = VC_FIELDS[startIdx + i]; if (f) o[f] = String(c).trim(); });
+                return o;
+            });
+        }
+        async function vcBulk(payloads, targetTrs) {
+            if (!payloads.length) return;
+            vcBusy(+1);
+            document.getElementById('vc-status').classList.remove('err');
+            let saved = 0;
+            const failed = [];
+            for (let i = 0; i < payloads.length; i += 100) {
+                const chunk = payloads.slice(i, i + 100).map((p, j) => {
+                    const tr = targetTrs && targetTrs[i + j];
+                    return tr && tr.dataset.id ? Object.assign({}, p, { id: tr.dataset.id }) : p;
+                });
+                const r = await vcApi('POST', '/rows/bulk', { rows: chunk });
+                if (!r.ok) { vcStatus('Bulk save failed: ' + (r.data.error || r.status), true); break; }
+                saved += r.data.saved;
+                r.data.results.forEach(res => {
+                    if (res.row) vcUpsertState(res.row);
+                    else failed.push({ gi: i + res.index, errors: res.errors });
+                });
+            }
+            const targetIds = (targetTrs || []).map(t => t && t.dataset.id);
+            vcBusy(-1);
+            vcRender();
+            // rows that failed validation come back as editable rows with the problem cells marked
+            failed.forEach(f => {
+                const raw = payloads[f.gi];
+                const targetId = targetIds[f.gi];
+                const existingTr = targetId && document.querySelector(`#vc-body tr[data-id="${CSS.escape(targetId)}"]`);
+                if (existingTr) { vcSetInputs(existingTr, raw); vcMarkErrors(existingTr, f.errors); }
+                else vcAddRow(raw, f.errors);
+            });
+            if (failed.length) {
+                vcToast(`${saved} row${saved === 1 ? '' : 's'} saved, ${failed.length} need fixing (marked in red at the top).`);
+                vcStatus(`${failed.length} row${failed.length === 1 ? '' : 's'} not saved`, true);
+            } else {
+                vcToast(`${saved} row${saved === 1 ? '' : 's'} saved.`);
+            }
+        }
+        function vcGridPaste(startTr, startField, text) {
+            const grid = vcParseDelimited(text, '\t');
+            if (!grid.length) return;
+            const payloads = vcGridToPayloads(grid, VC_FIELDS.indexOf(startField));
+            const trs = [...document.querySelectorAll('#vc-body tr[data-row]')];
+            const at = trs.indexOf(startTr);
+            vcBulk(payloads, payloads.map((_, i) => trs[at + i] || null));
+        }
+        function vcOpenPasteModal() {
+            document.getElementById('vc-paste-text').value = '';
+            document.getElementById('vc-paste-modal').classList.add('show');
+            document.getElementById('vc-paste-text').focus();
+        }
+        function vcSubmitPasteModal() {
+            const text = document.getElementById('vc-paste-text').value;
+            let grid = vcParseDelimited(text, text.includes('\t') ? '\t' : ',');
+            if (grid.length && /^(song|title|song title)$/i.test(String(grid[0][0]).trim())) grid = grid.slice(1);
+            document.getElementById('vc-paste-modal').classList.remove('show');
+            if (!grid.length) return;
+            vcBulk(vcGridToPayloads(grid, 0), null);
+        }
+
+        const VC_CSV_HEADERS = { id: 'id', song: 'song', title: 'song', artist: 'artist', spotify: 'spotifyId', spotifyid: 'spotifyId',
+            youtube: 'youtubeId', youtubeid: 'youtubeId', songstartsat: 'startMs', startsat: 'startMs', start: 'startMs', startms: 'startMs',
+            enabled: 'enabled', familysafe: 'familySafe', family: 'familySafe', isrc: 'isrc', notes: 'notes' };
+        function vcImportCsv(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                const grid = vcParseDelimited(String(reader.result).replace(/^\uFEFF/, ''), ',');
+                if (!grid.length) { vcToast('That CSV is empty.'); return; }
+                const mapped = grid[0].map(h => VC_CSV_HEADERS[String(h).toLowerCase().replace(/[^a-z]/g, '')] || null);
+                const hasHeader = mapped.some(m => m === 'song' || m === 'spotifyId' || m === 'youtubeId');
+                const cols = hasHeader ? mapped : VC_FIELDS;
+                const body = hasHeader ? grid.slice(1) : grid;
+                const payloads = body.map(cells => {
+                    const o = {};
+                    cells.forEach((c, i) => { if (cols[i]) o[cols[i]] = String(c).trim(); });
+                    return o;
+                });
+                vcBulk(payloads, null);
+            };
+            reader.readAsText(file);
+        }
+        function vcExportCsv() {
+            const esc = v => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+            const head = ['id', 'song', 'artist', 'spotify', 'youtube', 'song starts at', 'enabled', 'family-safe', 'isrc', 'notes'];
+            const lines = [head.join(',')];
+            vcRows.slice().sort(vcCompare).forEach(r => lines.push([r.id, r.song, r.artist, r.spotifyId, r.youtubeId, vcFmtStart(r.startMs),
+                r.enabled ? 'TRUE' : 'FALSE', r.familySafe ? 'TRUE' : 'FALSE', r.isrc, r.notes].map(esc).join(',')));
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'video-catalog-' + new Date().toISOString().slice(0, 10) + '.csv';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        }
+
+        /* ---------- Now Playing ---------- */
+        async function vcFromNowPlaying() {
+            const slug = document.getElementById('vc-np-event').value;
+            if (!slug) { vcToast('Pick an event first.'); return; }
+            const r = await vcApi('GET', '/now-playing?slug=' + encodeURIComponent(slug));
+            if (!r.ok) { vcToast(r.data.error || 'Could not read now playing.'); return; }
+            const np = r.data;
+            document.getElementById('vc-search').value = '';
+            document.getElementById('vc-filter').value = 'all';
+            let row = vcRows.find(x => x.spotifyId === np.trackId) || (np.isrc && vcRows.find(x => x.isrc === np.isrc));
+            if (!row) {
+                const saved = await vcApi('POST', '/row', { song: np.title, artist: np.artist, spotifyId: np.trackId, isrc: np.isrc || '' });
+                if (!saved.ok) { vcToast(saved.data.error || 'Could not add the row.'); return; }
+                row = saved.data.row;
+                vcUpsertState(row);
+            } else {
+                vcToast('Already in the catalog.');
+            }
+            vcRender();
+            const tr = document.querySelector(`#vc-body tr[data-id="${CSS.escape(row.id)}"]`);
+            if (tr) { tr._dur = np.durationMs; vcFlashRow(tr); tr.querySelector('[data-f="youtubeId"]').focus(); }
+        }
+
+        /* ---------- sub-panels: preview / Spotify search / suggest ---------- */
+        function vcClosePanel() {
+            if (!vcPanel) return;
+            clearInterval(vcPanel.timer);
+            try { if (vcPanel.player && vcPanel.player.destroy) vcPanel.player.destroy(); } catch (e) { /* ignore */ }
+            vcPanel.el.remove();
+            vcPanel = null;
+        }
+        function vcOpenPanelRow(tr, kind, html) {
+            if (vcPanel && vcPanel.tr === tr && vcPanel.kind === kind) { vcClosePanel(); return null; }
+            vcClosePanel();
+            const el = document.createElement('tr');
+            el.className = 'panel';
+            el.innerHTML = `<td colspan="10">${html}</td>`;
+            tr.after(el);
+            vcPanel = { tr, el, kind, player: null, timer: null };
+            return el;
+        }
+
+        function vcLoadYT() {
+            return new Promise(resolve => {
+                if (window.YT && YT.Player) return resolve();
+                const prev = window.onYouTubeIframeAPIReady;
+                window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(); };
+                if (!document.getElementById('yt-iframe-api')) {
+                    const s = document.createElement('script');
+                    s.id = 'yt-iframe-api';
+                    s.src = 'https://www.youtube.com/iframe_api';
+                    document.head.appendChild(s);
+                }
+            });
+        }
+        async function vcOpenPreview(tr, overrideVideoId, fromSuggest) {
+            const f = vcReadRow(tr);
+            const raw = overrideVideoId || f.youtubeId;
+            const m = String(raw || '').match(/(?:v=|youtu\.be\/|embed\/|shorts\/)?([A-Za-z0-9_-]{11})(?:[?&].*)?$/);
+            const videoId = m && m[1];
+            if (!videoId) { vcToast('Add a YouTube link or ID first.'); return; }
+            if (fromSuggest) vcClosePanel();
+            const el = vcOpenPanelRow(tr, 'preview', `
+                <div class="pv-box">
+                    <div class="pv-frame"><div id="vc-yt"></div></div>
+                    <div>
+                        <div class="panel-title">${escapeHtml(f.artist)}${f.artist && f.song ? ' - ' : ''}${escapeHtml(f.song)}. Play it, then click <b>Mark start</b> at the moment the song itself begins.</div>
+                        <div style="margin-bottom:10px">Player time: <b id="vc-pv-time">0:00</b></div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button class="btn btn-admin" data-pv="mark">Mark start here</button>
+                            ${fromSuggest ? '' : '<button class="btn btn-admin" data-pv="jump">Back to saved start</button>'}
+                            ${fromSuggest ? '<button class="btn btn-admin" style="border-color:var(--spotify-green)" data-pv="use">Use this video</button><button class="btn btn-admin" data-pv="back">Back to suggestions</button>' : ''}
+                            <button class="btn btn-admin" data-pv="close">Close</button>
+                        </div>
+                    </div>
+                </div>`);
+            if (!el) return;
+            el.dataset.video = videoId;
+            await vcLoadYT();
+            if (!vcPanel || vcPanel.el !== el) return;
+            const saved = vcRows.find(r => r.id === tr.dataset.id);
+            const begin = fromSuggest ? 0 : Math.floor(((saved && saved.startMs) || 0) / 1000);
+            vcPanel.player = new YT.Player('vc-yt', {
+                videoId, width: '100%', height: '100%',
+                playerVars: { start: begin, rel: 0, playsinline: 1 }
+            });
+            vcPanel.timer = setInterval(() => {
+                try {
+                    const t = vcPanel.player.getCurrentTime();
+                    const out = document.getElementById('vc-pv-time');
+                    if (out && typeof t === 'number') out.textContent = vcFmtStart(Math.round(t * 10) * 100);
+                } catch (e) { /* player not ready yet */ }
+            }, 250);
+        }
+
+        function vcOpenSpotifySearch(tr) {
+            const f = vcReadRow(tr);
+            const el = vcOpenPanelRow(tr, 'spotify', `
+                <div class="panel-title">Search Spotify. Picking a result fills Song, Artist, Spotify ID and ISRC.</div>
+                <div class="vc-toolbar" style="margin-bottom:8px"><input type="text" id="vc-sp-q" style="width:320px" placeholder="Artist and song" value="${escapeHtml((f.artist + ' ' + f.song).trim())}"></div>
+                <div class="panel-list" id="vc-sp-results"></div>`);
+            if (!el) return;
+            const input = el.querySelector('#vc-sp-q');
+            const run = async () => {
+                const q = input.value.trim();
+                const box = el.querySelector('#vc-sp-results');
+                if (!q) { box.innerHTML = ''; return; }
+                box.innerHTML = '<div class="panel-title">Searching…</div>';
+                const r = await vcApi('GET', '/spotify-search?q=' + encodeURIComponent(q));
+                if (!vcPanel || vcPanel.el !== el) return;
+                if (!r.ok) { box.innerHTML = `<div class="panel-title">${escapeHtml(r.data.error || 'Search failed.')}</div>`; return; }
+                const tracks = r.data.tracks || [];
+                if (!tracks.length) { box.innerHTML = '<div class="panel-title">No results.</div>'; return; }
+                box.innerHTML = tracks.map((t, i) => `<div class="panel-item"><div><b>${escapeHtml(t.name)}</b> - ${escapeHtml(t.artist)}<div class="meta">${escapeHtml(t.album)} · ${vcFmtDuration(t.durationMs)}${t.isrc ? ' · ' + escapeHtml(t.isrc) : ''}</div></div><button class="btn btn-admin" data-sp-use="${i}">Use</button></div>`).join('');
+                el._tracks = tracks;
+            };
+            let timer;
+            input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 400); });
+            input.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(timer); run(); } });
+            run();
+            input.focus();
+        }
+
+        // Results are kept on the row so previewing a candidate and coming back
+        // never costs a second search.
+        function vcRenderSuggest(el, tr) {
+            const sg = tr._suggest;
+            const cell = el.firstElementChild;
+            el._cands = sg.cands;
+            cell.innerHTML = `<div class="panel-title">YouTube quota used today: ${sg.used} of ${sg.budget} units. ${tr._dur ? 'Sorted by closest length to the song. ' : ''}A person should confirm each one. <button class="btn btn-admin" style="padding:4px 10px;margin-left:6px" data-sg-again="1">Search again (100 units)</button></div>` +
+                (sg.cands.length ? `<div class="panel-list">${sg.cands.map((c, i) => `<div class="panel-item"><div><b>${escapeHtml(c.title)}</b><div class="meta">${escapeHtml(c.channel)} · ${vcFmtDuration(c.durationMs)}${typeof c.durationDiffMs === 'number' ? ' (' + (c.durationDiffMs >= 0 ? '+' : '-') + Math.round(Math.abs(c.durationDiffMs) / 1000) + 's vs song)' : ''}</div></div><div style="display:flex;gap:6px"><button class="btn btn-admin" data-sg-prev="${i}">Preview</button><button class="btn btn-admin" data-sg-use="${i}">Use</button></div></div>`).join('')}</div>` : '<div class="panel-title">No embeddable results.</div>');
+        }
+        async function vcOpenSuggest(tr, forceRerun) {
+            const f = vcReadRow(tr);
+            if (!f.song) { vcToast('Give the row a Song (and ideally an Artist) first.'); return; }
+            if (vcPanel && vcPanel.tr === tr && vcPanel.kind === 'suggest' && !forceRerun) { vcClosePanel(); return; }
+            if (tr._suggest && !forceRerun) {
+                vcClosePanel();
+                const cached = vcOpenPanelRow(tr, 'suggest', '');
+                if (cached) vcRenderSuggest(cached, tr);
+                return;
+            }
+            if (!confirm('This runs ONE YouTube search for this row and uses 100 units of the daily quota. Continue?')) return;
+            vcClosePanel();
+            const el = vcOpenPanelRow(tr, 'suggest', '<div class="panel-title">Searching YouTube…</div>');
+            if (!el) return;
+            const r = await vcApi('POST', '/suggest', { artist: f.artist, song: f.song, durationMs: tr._dur || 0 });
+            if (!vcPanel || vcPanel.el !== el) return;
+            if (!r.ok) { el.firstElementChild.innerHTML = `<div class="panel-title">${escapeHtml(r.data.error || 'Search failed.')}</div>`; return; }
+            tr._suggest = { cands: r.data.candidates || [], used: r.data.quotaUsedToday, budget: r.data.quotaBudget };
+            vcRenderSuggest(el, tr);
+        }
+
+        /* ---------- event wiring (delegated) ---------- */
+        document.addEventListener('DOMContentLoaded', () => {
+            const body = document.getElementById('vc-body');
+
+            body.addEventListener('change', e => {
+                const el = e.target;
+                if (!el.dataset || !el.dataset.f) return;
+                const tr = el.closest('tr[data-row]');
+                if (tr) vcSaveRow(tr);
+            });
+
+            body.addEventListener('keydown', e => {
+                if (e.key === 'Enter' && e.target.matches('input[type=text][data-f]')) e.target.blur();
+            });
+
+            body.addEventListener('paste', e => {
+                const el = e.target;
+                if (!el.dataset || !el.dataset.f) return;
+                const text = (e.clipboardData || window.clipboardData).getData('text');
+                if (!/[\t\n]/.test(text.replace(/\n+$/, ''))) return; // a single value pastes normally
+                e.preventDefault();
+                vcGridPaste(el.closest('tr[data-row]'), el.dataset.f, text);
+            });
+
+            body.addEventListener('click', e => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const panelRow = btn.closest('tr.panel');
+                const tr = panelRow ? (vcPanel && vcPanel.tr) : btn.closest('tr[data-row]');
+                if (!tr) return;
+
+                if (btn.dataset.act === 'delete') return vcDelete(tr);
+                if (btn.dataset.act === 'preview') return vcOpenPreview(tr);
+                if (btn.dataset.act === 'spotify') return vcOpenSpotifySearch(tr);
+                if (btn.dataset.act === 'suggest') return vcOpenSuggest(tr);
+
+                if (btn.dataset.spUse !== undefined) {
+                    const t = panelRow._tracks[Number(btn.dataset.spUse)];
+                    vcSetInputs(tr, { song: t.name, artist: t.artist, spotifyId: t.id, isrc: t.isrc || '' });
+                    tr._dur = t.durationMs;
+                    vcClosePanel();
+                    vcSaveRow(tr);
+                    return;
+                }
+                if (btn.dataset.sgAgain !== undefined) return vcOpenSuggest(tr, true);
+                if (btn.dataset.sgPrev !== undefined) return vcOpenPreview(tr, panelRow._cands[Number(btn.dataset.sgPrev)].videoId, true);
+                if (btn.dataset.sgUse !== undefined) {
+                    const c = panelRow._cands[Number(btn.dataset.sgUse)];
+                    vcSetInputs(tr, { youtubeId: c.videoId });
+                    vcClosePanel();
+                    vcSaveRow(tr);
+                    return;
+                }
+                if (btn.dataset.pv) {
+                    if (btn.dataset.pv === 'close') return vcClosePanel();
+                    if (btn.dataset.pv === 'back') { vcClosePanel(); return vcOpenSuggest(tr); }
+                    const player = vcPanel && vcPanel.player;
+                    if (btn.dataset.pv === 'use') {
+                        vcSetInputs(tr, { youtubeId: panelRow.dataset.video });
+                        vcClosePanel();
+                        vcSaveRow(tr);
+                        return;
+                    }
+                    if (!player || !player.getCurrentTime) { vcToast('The player is still loading.'); return; }
+                    if (btn.dataset.pv === 'mark') {
+                        const ms = Math.round(player.getCurrentTime() * 10) * 100;
+                        tr.querySelector('[data-f="startMs"]').value = vcFmtStart(ms);
+                        vcSaveRow(tr);
+                        vcToast('Start set to ' + vcFmtStart(ms) + '.');
+                    } else if (btn.dataset.pv === 'jump') {
+                        const saved = vcRows.find(r => r.id === tr.dataset.id);
+                        player.seekTo(((saved && saved.startMs) || 0) / 1000, true);
+                    }
+                }
+            });
+        });
+    </script>
+
 </body>
 </html>
