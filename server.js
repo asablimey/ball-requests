@@ -5517,7 +5517,15 @@ async function syncAllLoadedEvents() {
         const now = Date.now();
         const dueForSync = connected.filter(event => {
             const waitingOnBoundary = !!event.schedulerRuntime?.pendingSwitchUri;
-            const interval = waitingOnBoundary ? SCHEDULER_FAST_POLL_MS : NOW_PLAYING_NORMAL_POLL_MS;
+            // Also poll every second in the last seconds of a song, so a skip,
+            // pause or the real track change reaches the displays quickly.
+            const np0 = event.cachedNowPlaying;
+            let nearSongEnd = false;
+            if (np0 && np0.isPlaying && np0.durationMs && np0.progressCapturedAt) {
+                const remaining = np0.durationMs - (np0.progressMs + (now - np0.progressCapturedAt));
+                nearSongEnd = remaining < 12000 && remaining > -6000;
+            }
+            const interval = (waitingOnBoundary || nearSongEnd) ? SCHEDULER_FAST_POLL_MS : NOW_PLAYING_NORMAL_POLL_MS;
             const lastSynced = nowPlayingLastSyncedAt.get(event.slug) || 0;
             return now - lastSynced >= interval;
         });
@@ -5604,6 +5612,64 @@ app.get('/e/:slug/api/ambient-visuals', publicReadLimiter, (req, res) => {
 // thanks to the eager, queue-time trigger (see triggerMusicVideoVerification)
 // - anything unresolved or unmatched falls straight back to Ambient
 // Visuals, same as if no Music Videos block were active at all.
+
+// --- Look-ahead for seamless video switching ---------------------------------
+// The display needs two things BEFORE a song changes so the next video can be
+// loaded, buffered and parked at its exact start point in the hidden player:
+//   clock - where the current song is (so the display can predict its end)
+//   next  - the next song in Spotify's queue and, if the catalog has an
+//           enabled, playable video for it, which one and where it starts.
+// next.known is true only when the answer is certain (catalog is
+// authoritative). When it is false the display never cuts away early.
+async function mvBuildClockAndNext(event, vcfg, runtime, np) {
+    const clock = {
+        trackId: np.trackId, title: np.title || '', artist: np.artist || '',
+        progressMs: np.progressMs || 0, durationMs: np.durationMs || 0,
+        isPlaying: !!np.isPlaying,
+        updatedAt: np.progressCapturedAt || np.updatedAt,
+        serverNow: Date.now()
+    };
+    const up = Array.isArray(np.upcoming) ? np.upcoming[0] : null;
+    if (!up || !up.id) return { clock, next: null };
+    const next = { trackId: up.id, title: up.title || '', artist: up.artist || '', durationMs: up.durationMs || 0, videoId: null, startMs: 0, known: false };
+    try {
+        const forceVideos = !!vcfg.musicVideosEnabled;
+        let allowed = true;
+        if (!forceVideos) {
+            if (!event.musicScheduler?.enabled) allowed = false;
+            else {
+                const rule = getActiveMusicVideoRule(event);
+                if (!rule) allowed = false;
+                else {
+                    const videosInARow = Number.isInteger(rule.videosInARow) && rule.videosInARow >= 1 ? rule.videosInARow : 2;
+                    const visualsAfter = Number.isInteger(rule.visualsAfter) && rule.visualsAfter >= 0 ? rule.visualsAfter : 1;
+                    const cycleLength = videosInARow + visualsAfter;
+                    const counted = runtime.cache && runtime.cache.trackId === np.trackId;
+                    const curCycle = (runtime.cycleCount || 0) + (counted || runtime.cache?.trackId === null ? 0 : 1);
+                    if (((curCycle + 1) % cycleLength) >= videosInARow) allowed = false;
+                }
+            }
+        }
+        if (!allowed) { next.known = true; return { clock, next }; }
+
+        const lookup = await videoCatalog.lookup({ trackId: up.id, title: up.title, artist: up.artist });
+        if (lookup.status === 'hit') {
+            const row = lookup.row;
+            const ytCheck = await youtubeCheckVideo(row.youtubeId);
+            let blocked = false;
+            if (musicVideoDenylist.has(up.id)) blocked = true;
+            else if (vcfg.familyModeEnabled && row.nsfw !== 'no' && !musicVideoAllowlist.has(up.id)) blocked = true;
+            else if (ytCheck && ytCheck.embeddable === false) blocked = true;
+            else if (catalogRecentlyFailed(runtime, up.id, row)) blocked = true;
+            next.known = true;
+            if (!blocked) { next.videoId = row.youtubeId; next.startMs = row.startMs || 0; next.source = 'catalog'; }
+        } else if (lookup.status === 'disabled' || lookup.status === 'no_video' || !MV_AUTO_MATCH) {
+            next.known = true; // the catalog decides: no video for the next song
+        }
+    } catch (e) { next.known = false; next.videoId = null; }
+    return { clock, next };
+}
+
 app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     if (req.query.d === '1') ensureMusicVideoRuntime(event).displayLastPolledAt = Date.now();
@@ -5621,6 +5687,18 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const forceVideos = !!vcfg.musicVideosEnabled;
     const np = event.cachedNowPlaying;
     const runtime = ensureMusicVideoRuntime(event);
+
+    // Every reply below (match or not) also carries the song clock and the
+    // next song's video, so the display can get that video ready in advance.
+    {
+        const sendJsonRaw = res.json.bind(res);
+        let extraPromise = null;
+        res.json = (body) => {
+            if (!np || !np.trackId) return sendJsonRaw(body);
+            if (!extraPromise) extraPromise = mvBuildClockAndNext(event, vcfg, runtime, np).catch(() => null);
+            extraPromise.then(extra => sendJsonRaw(extra ? { ...body, ...extra } : body));
+        };
+    }
 
     // RULE: if a video is already playing, it must finish. Once a video has
     // been offered for the song that is playing right now, nothing about the
@@ -5886,6 +5964,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
+        title: np.title, artist: np.artist,
         introOffsetMs: mvOffsetNow,
         source: runtime.cache.source || null,
         trackId: np.trackId,
