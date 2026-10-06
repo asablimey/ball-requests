@@ -80,13 +80,14 @@ function parseOnOff(input, fallback) {
     return null;
 }
 
-// "NSFW YES/NO" column. Returns 'yes' | 'no' | '' (blank), or null if unrecognised.
+// "Suggestive? YES/NO" column (was "NSFW YES/NO"). Returns 'yes' | 'no' | '' (blank), or null if unrecognised.
 function parseNsfw(input) {
     if (typeof input === 'boolean') return input ? 'yes' : 'no';
     const s = String(input == null ? '' : input).trim().toLowerCase();
     if (s === '') return '';
-    if (['yes', 'y', 'true', '1', 'nsfw'].includes(s)) return 'yes';
-    if (['no', 'n', 'false', '0', 'safe'].includes(s)) return 'no';
+    // yes = video is suggestive in any way (blocked in Family mode); no = fine (plays in Family mode)
+    if (['yes', 'y', 'true', '1', 'nsfw', 'suggestive', 'explicit', 'e'].includes(s)) return 'yes';
+    if (['no', 'n', 'false', '0', 'safe', 'clean', 'c', 'family', 'ok', 'not suggestive'].includes(s)) return 'no';
     return null;
 }
 
@@ -189,7 +190,7 @@ function normalizeInput(input, existing) {
     }
     if (has('nsfw')) {
         const v = parseNsfw(src.nsfw);
-        if (v === null) errors.nsfw = 'Use YES or NO (or leave blank).';
+        if (v === null) errors.nsfw = 'Use YES (suggestive) or NO (or leave blank).';
         else row.nsfw = v;
     }
     return { row, errors };
