@@ -998,6 +998,7 @@
         let mvCorrectingReadySince = null;
         let mvLoadTimeout = null;
         let mvFromCatalog = false;
+        let mvStartedAt = 0;
         const MV_LOAD_TIMEOUT_MS = 15000; // never confirmed ready to reveal in this long -> give up on it (see revealReadyCheck)
         let currentVideoTrackId = null;   // trackId/videoId of the video currently ON SCREEN (or loading into it)
         let currentVideoId = null;
@@ -1578,6 +1579,7 @@
         function mvSeekTo(slot, sec) {
             const st = players[slot];
             st.seekIssuedAt = Date.now();
+            st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
             st.yt.seekTo(sec + mvSeekLatencyMs / 1000, true);
         }
@@ -1656,7 +1658,7 @@
             // item 7: once a video is genuinely on screen, only reach for a hard seek
             // past a wider threshold than the one used for the initial lock/handoff -
             // rate-nudging alone absorbs everything under it, invisibly.
-            const seekThreshold = mvRevealed ? MV_POST_REVEAL_SEEK_THRESHOLD_MS : MV_SEEK_THRESHOLD_MS;
+            const seekThreshold = mvRevealed ? (mvFromCatalog ? 5000 : MV_POST_REVEAL_SEEK_THRESHOLD_MS) : (mvFromCatalog ? 1500 : MV_SEEK_THRESHOLD_MS);
 
             if (absMs > seekThreshold) {
                 if (!settling) {
@@ -1713,10 +1715,15 @@
             if (state !== YT.PlayerState.PLAYING || typeof cur !== 'number') return { confirmed: false, readySince: null };
 
             const driftMs = Math.abs((cur - mvTargetSec()) * 1000);
-            if (driftMs > MV_CONFIRM_TOLERANCE_MS) {
-                // Nudge it back into position and wait for the next check -
-                // no more than once a second so this doesn't fight itself.
-                if (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000) {
+            // A video a person picked in the catalog is shown as soon as it is playing roughly in time;
+            // the gentle speed-nudging then tightens the sync while it is on screen.
+            if (driftMs > (mvFromCatalog ? 150 : MV_CONFIRM_TOLERANCE_MS)) {
+                // Nudge it back into position and wait for the next check.
+                // Catalog videos are still hidden here: small drift is closed by speed-nudging
+                // (mvCheck), and a hard seek happens only for a big miss, at most once per 3s,
+                // because every seek makes the player buffer and restarts the confirm streak.
+                const sinceSeek = Date.now() - (st.lastSeekAt || 0);
+                if (mvFromCatalog ? (driftMs > 1500 && sinceSeek > 3000) : (!st.seekIssuedAt || Date.now() - st.seekIssuedAt > 1000)) {
                     mvSeekTo(slot, mvTargetSec());
                 }
                 return { confirmed: false, readySince: null };
@@ -1736,6 +1743,9 @@
         // revealReadyCheck below (item 6).
         function pendingCheck() {
             if (!pendingSlot) return;
+            if (mvFromCatalog && Date.now() - mvStartedAt > 12000) {
+                try { if (players[pendingSlot].yt.getPlayerState() === YT.PlayerState.PLAYING) { completeHandoff(); return; } } catch (e) { /* fall through to the normal check */ }
+            }
             const result = checkSlotConfirmedInSync(pendingSlot, pendingReadySince);
             pendingReadySince = result.readySince;
             if (result.confirmed) completeHandoff();
@@ -1761,6 +1771,10 @@
         // without needing a second timer here.
         function revealReadyCheck() {
             if (!musicVideoActive || mvRevealed) { mvRevealReadySince = null; return; }
+            // Catalog video: the instant it is playing, show it. No waiting on sync.
+            // Catalog video: stays hidden until it is lined up (see checkSlotConfirmedInSync). Safety net only:
+            // if it somehow cannot line up within 12s, show it rather than never showing it.
+            if (mvFromCatalog && Date.now() - mvStartedAt > 12000) { revealMusicVideo(); if (mvRevealed) return; }
             const result = checkSlotConfirmedInSync(activeSlot, mvRevealReadySince);
             mvRevealReadySince = result.readySince;
             if (result.confirmed) revealMusicVideo();
@@ -1822,6 +1836,7 @@
             if (!st.ready) return;
             st.currentRate = null; // force the rate to be re-applied for the new video
             st.seekIssuedAt = Date.now();
+            st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
             st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000 });
             mvSetRate(slot, 1);
@@ -1832,6 +1847,7 @@
         function startMusicVideo(videoId, trackId) {
             reportPlayerEvent('start_video', 'revealed=' + mvRevealed + ' player_a_ready=' + players.a.ready + ' target=' + mvTargetSec().toFixed(1) + 's', videoId, trackId);
             musicVideoActive = true;
+            mvStartedAt = Date.now();
             // TEMP DIAGNOSTIC LOGGING - see the matching note in mvCheck().
             console.log(`[MV-SYNC] === starting video=${videoId} for track=${trackId} (intro offset=${mvIntroOffsetMs}ms, lead=${mvVideoLeadMs}ms) ===`);
 
@@ -2029,7 +2045,7 @@
         setInterval(pollAmbientVisuals, 8000);
         setInterval(pollQueueBoard, 8000);
         setInterval(pollNowPlaying, 4000);
-        setInterval(pollMusicVideo, 3000);
+        setInterval(pollMusicVideo, 1000);
     </script>
 </body>
 </html>
