@@ -5,6 +5,14 @@ const fetch = require('node-fetch');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
 const events = require('./eventStore');
+// Curated music-video catalog (see videoCatalog.js): the primary source of
+// music videos. Rows live in one global Redis hash, edited from the Videos tab
+// on /master.
+const videoCatalog = require('./videoCatalog')({ redis: events.redis });
+// The old automatic pipeline (YouTube search -> ytdl -> ffmpeg -> audio
+// cross-correlation -> frame checks) is OFF by default. Set MV_AUTO_MATCH=1 in
+// the environment to let it run as a fallback when the catalog has no row.
+const MV_AUTO_MATCH = process.env.MV_AUTO_MATCH === '1';
 // @distube/ytdl-core checks GitHub for its own updates on require by
 // default - harmless normally, but seen 403'ing in production (GitHub
 // rate-limiting the check itself) and adds noise/latency for something
@@ -99,7 +107,7 @@ const adminAuthLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests: true,
-    keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${req.params.slug}`,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
     message: { error: 'Too many failed admin attempts. Try again later.' }
 });
 
@@ -132,7 +140,6 @@ app.set('trust proxy', 1);
 app.use(express.json());
 
 const VOTER_COOKIE = 'crowddj_vid';
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseCookies(req) {
     const header = req.headers.cookie;
@@ -141,10 +148,7 @@ function parseCookies(req) {
     header.split(';').forEach(pair => {
         const idx = pair.indexOf('=');
         if (idx === -1) return;
-        const rawValue = pair.slice(idx + 1).trim();
-        let value;
-        try { value = decodeURIComponent(rawValue); } catch (e) { value = rawValue; } // malformed % sequences must not crash the request
-        out[pair.slice(0, idx).trim()] = value;
+        out[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
     });
     return out;
 }
@@ -162,9 +166,6 @@ function voterIdentityMiddleware(req, res, next) {
     const cookieName = VOTER_COOKIE;
     const cookies = parseCookies(req);
     let vid = cookies[cookieName];
-    // The cookie value ends up in queue data, logs and the admin dashboard, so
-    // anything that isn't a UUID we issued is thrown away and replaced.
-    if (!UUID_PATTERN.test(vid || '')) vid = null;
     // Because the cookie is path-scoped, a guest with no cookie for THIS event's
     // path may still be sending a cookie of the same name scoped to a different
     // event's path - the browser only sends the one matching the current path,
@@ -2251,6 +2252,7 @@ function mvMaybeUpgradeGuess(trackId, artistNamesRaw, title, durationMs) {
 }
 
 function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationMs, excludeVideoIds = new Set()) {
+    if (!MV_AUTO_MATCH) return; // catalog-only mode: no ytdl / ffmpeg / TensorFlow work at all
     if (!trackId || !title || !durationMs) return;
     if (musicVideoDenylist.has(trackId)) return; // item 8 - a denylisted track never enters the pipeline, full stop
     if (verifiedMusicVideoCache.has(trackId)) return; // already resolved (a match, or confirmed no-match)
@@ -2805,9 +2807,7 @@ async function getSpotifyToken() {
 setInterval(getSpotifyToken, 1000 * 60 * 50);
 
 // Public queue shape: NEVER includes "requesters" - keeps requester identity DJ-only.
-function buildSortedQueue(event, voterId) {
-    // upvoters/downvoters hold guests' private cookie IDs, so they are never
-    // sent to the public. Each guest just gets "upvoted: true/false" for themselves.
+function buildSortedQueue(event) {
     return event.activeQueue.map(t => ({
         id: t.id,
         title: t.title,
@@ -2817,13 +2817,9 @@ function buildSortedQueue(event, voterId) {
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
-        upvoted: !!voterId && (t.upvoters || []).includes(voterId)
+        upvoters: t.upvoters || [],
+        downvoters: t.downvoters || []
     })).sort((a, b) => (b.ups - b.downs) - (a.ups - a.downs));
-}
-
-// Public played-history: same entries minus requester names (DJ-only).
-function publicHistory(event) {
-    return (event.playedHistory || []).map(({ requesters, ...rest }) => rest);
 }
 
 // Admin queue shape: includes "requesters" so the DJ dashboard can show who added each song.
@@ -3118,10 +3114,10 @@ app.get('/e/:slug/admin/spotify-login', (req, res) => {
 // slug. Figures out which event a login belongs to from the `state` param.
 app.get('/admin/spotify-callback', async (req, res) => {
     const { code, state, error } = req.query;
-    if (error) return res.status(400).type('text/plain').send(`Spotify login failed: ${String(error)}`);
+    if (error) return res.status(400).send(`Spotify login failed: ${error}`);
     const slug = typeof state === 'string' ? state.split(':')[0] : null;
     const event = slug ? await events.getEvent(slug) : null;
-    if (typeof code !== 'string' || !event || typeof state !== 'string' || state !== event.spotify.pendingLoginState) {
+    if (!event || !state || state !== event.spotify.pendingLoginState) {
         return res.status(400).send('State mismatch - please restart the login from that event\'s admin dashboard.');
     }
     event.spotify.pendingLoginState = null;
@@ -3141,7 +3137,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
         });
         const data = await response.json();
         if (!data.refresh_token) {
-            return res.status(500).type('text/plain').send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
+            return res.status(500).send('Spotify did not return a refresh token: ' + (data.error_description || JSON.stringify(data)));
         }
         event.spotify.djRefreshToken = data.refresh_token;
         event.spotify.djAccessToken = data.access_token;
@@ -3157,7 +3153,7 @@ app.get('/admin/spotify-callback', async (req, res) => {
             </body></html>
         `);
     } catch (err) {
-        res.status(500).type('text/plain').send('Token exchange failed: ' + err.message);
+        res.status(500).send('Token exchange failed: ' + err.message);
     }
 });
 
@@ -3317,46 +3313,28 @@ const masterAuthLimiter = rateLimit({
 // one shared IP while still capping a scripted flood; if you regularly run
 // bigger venues (100+ phones on one WiFi) and see false-positive 429s in
 // the logs, raise these further rather than tighten them.
-// Two layers, so the number of phones in a room never matters:
-//  1) PER DEVICE - each phone is counted on its own (by its server-issued
-//     cookie), so 5 phones or 500 on the same WiFi never use up each other's
-//     allowance. A device that misbehaves only blocks itself.
-//  2) PER IP, a very high flood ceiling - only exists so someone who throws
-//     away their cookie on every request (a script) still gets stopped. It is
-//     far above what any real room produces. Raise it if you ever see it hit.
-function hasDeviceCookie(req) {
-    return UUID_PATTERN.test(parseCookies(req)[VOTER_COOKIE] || '');
-}
-function deviceKey(req) {
-    const who = hasDeviceCookie(req)
-        ? `dev:${parseCookies(req)[VOTER_COOKIE]}`
-        : `ip:${ipKeyGenerator(req.ip)}`;
-    return `${who}:${req.params.slug}`;
-}
-function ipKey(req) {
-    return `ip:${ipKeyGenerator(req.ip)}:${req.params.slug}`;
-}
-const TOO_MANY = { error: 'Too many requests - slow down and try again in a moment.' };
+const publicActionLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 90,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
+});
 
-// Search / request / vote / set-username (each can hit Spotify).
-const publicActionLimiter = [
-    rateLimit({ windowMs: 60 * 1000, limit: 3000, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey, message: TOO_MANY }),
-    rateLimit({
-        windowMs: 60 * 1000,
-        limit: (req) => (hasDeviceCookie(req) ? 40 : 600), // a phone with no cookie yet shares a looser IP bucket
-        standardHeaders: true, legacyHeaders: false, keyGenerator: deviceKey, message: TOO_MANY
-    })
-];
-
-// Cheap read-only polling (queue / now-playing / visuals), served from memory.
-const publicReadLimiter = [
-    rateLimit({ windowMs: 60 * 1000, limit: 30000, standardHeaders: true, legacyHeaders: false, keyGenerator: ipKey, message: TOO_MANY }),
-    rateLimit({
-        windowMs: 60 * 1000,
-        limit: (req) => (hasDeviceCookie(req) ? 150 : 3000),
-        standardHeaders: true, legacyHeaders: false, keyGenerator: deviceKey, message: TOO_MANY
-    })
-];
+// Looser limiter for cheap, read-only polling endpoints (queue/now-playing
+// state, served straight from the in-memory cache) - these are hit every
+// few seconds by every connected guest/kiosk/admin tab during normal use,
+// so this exists mainly to cap a scripted client hammering them, not to
+// throttle real usage. Same shared-IP caveat as above, hence the high ceiling.
+const publicReadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.params.slug}`,
+    message: { error: 'Too many requests from this network - slow down and try again in a moment.' }
+});
 app.get('/api/master/events', masterAuthLimiter, async (req, res) => {
     if (!verifyMasterPassword(req.headers['x-admin-password'])) {
         return res.status(401).json({ error: 'Unauthorized.' });
@@ -3395,6 +3373,123 @@ app.post('/api/master/users/:username/reset-password', masterAuthLimiter, async 
     const result = await events.resetUserPasswordByMaster(req.params.username);
     if (result.error) return res.status(statusForAccountError(result.error, 404)).json({ error: result.error });
     res.json({ success: true, newPassword: result.newPassword });
+});
+
+// --- Master: curated music-video catalog (Videos tab on /master) -----------
+// Server-wide, so it sits behind the master password only. Its failed-auth
+// limiter counts only 401s: a validation error (400) from a typo in a cell must
+// never lock the person editing out.
+const catalogAuthLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: (req, res) => res.statusCode !== 401,
+    message: { error: 'Too many failed attempts. Try again later.' }
+});
+function requireMaster(req, res, next) {
+    if (!verifyMasterPassword(req.headers['x-admin-password'])) return res.status(401).json({ error: 'Unauthorized.' });
+    next();
+}
+const catalogApi = express.Router();
+app.use('/api/master/catalog', catalogAuthLimiter, requireMaster, catalogApi);
+
+catalogApi.get('/rows', async (req, res) => {
+    try {
+        res.json({ rows: await videoCatalog.list(), autoMatchEnabled: MV_AUTO_MATCH });
+    } catch (e) {
+        res.status(500).json({ error: 'Could not load the catalog: ' + e.message });
+    }
+});
+
+// Create/update one row. Body = any of: id, song, artist, spotifyId, youtubeId
+// (links are accepted and reduced to IDs), startMs (number or "m:ss.s"),
+// enabled, familySafe, isrc, notes. `restore:true` + id re-creates a deleted row (undo).
+catalogApi.post('/row', async (req, res) => {
+    try {
+        const result = await videoCatalog.upsert(req.body || {});
+        if (result.errors) return res.status(400).json({ errors: result.errors });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: 'Could not save: ' + e.message });
+    }
+});
+
+catalogApi.post('/rows/bulk', async (req, res) => {
+    const rows = req.body && req.body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'rows must be a non-empty array.' });
+    if (rows.length > 500) return res.status(400).json({ error: 'Send at most 500 rows per request.' });
+    try {
+        res.json(await videoCatalog.upsertMany(rows));
+    } catch (e) {
+        res.status(500).json({ error: 'Could not save: ' + e.message });
+    }
+});
+
+catalogApi.delete('/row/:id', async (req, res) => {
+    try {
+        res.json({ success: true, ...(await videoCatalog.remove(req.params.id)) });
+    } catch (e) {
+        res.status(500).json({ error: 'Could not delete: ' + e.message });
+    }
+});
+
+// "Now Playing" helper: what a chosen event is playing right now.
+catalogApi.get('/now-playing', async (req, res) => {
+    const slug = String(req.query.slug || '');
+    if (!events.isValidSlug(slug)) return res.status(400).json({ error: 'Pick an event.' });
+    const ev = await events.getEvent(slug);
+    if (!ev) return res.status(404).json({ error: 'Event not found.' });
+    const np = ev.cachedNowPlaying;
+    if (!np || !np.trackId) return res.status(404).json({ error: 'Nothing is playing on that event right now.' });
+    res.json({ trackId: np.trackId, isrc: np.isrc || null, title: np.title, artist: np.artist, isPlaying: !!np.isPlaying, durationMs: np.durationMs || 0 });
+});
+
+// Spotify search using the server's own app credentials.
+catalogApi.get('/spotify-search', async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.json({ tracks: [] });
+    try {
+        if (!spotifyAccessToken) await getSpotifyToken();
+        const call = () => fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=8`, {
+            headers: { Authorization: `Bearer ${spotifyAccessToken}` }
+        });
+        let r = await call();
+        if (r.status === 401) { await getSpotifyToken(); r = await call(); }
+        if (!r.ok) return res.status(502).json({ error: `Spotify search failed (${r.status}).` });
+        const data = await r.json();
+        res.json({
+            tracks: (data.tracks?.items || []).map(t => ({
+                id: t.id,
+                name: t.name,
+                artist: (t.artists || []).map(a => a.name).join(', '),
+                album: t.album?.name || '',
+                isrc: t.external_ids?.isrc || null,
+                durationMs: t.duration_ms || 0
+            }))
+        });
+    } catch (e) {
+        res.status(502).json({ error: 'Spotify search failed: ' + e.message });
+    }
+});
+
+// OPTIONAL, manual only: one YouTube search.list (100 quota units) for one row.
+// Never called automatically.
+catalogApi.post('/suggest', async (req, res) => {
+    const { artist, song, durationMs } = req.body || {};
+    if (!song) return res.status(400).json({ error: 'The row needs a Song first.' });
+    if (!YOUTUBE_API_KEY) return res.status(400).json({ error: 'YOUTUBE_API_KEY is not set on the server.' });
+    if (!youtubeQuotaAvailable(100)) return res.status(429).json({ error: 'Daily YouTube quota budget is used up.', quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET });
+    const failuresBefore = youtubeFailureCount;
+    const results = await youtubeSearchVideos(`${artist || ''} ${song} official music video`.trim(), 8);
+    if (youtubeFailureCount !== failuresBefore) return res.status(502).json({ error: 'YouTube search failed - see server logs.', quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET });
+    const target = Number(durationMs) || 0;
+    const candidates = results.map(v => ({
+        videoId: v.videoId, title: v.title, channel: v.channelTitle, durationMs: v.durationMs,
+        durationDiffMs: (target && typeof v.durationMs === 'number') ? v.durationMs - target : null
+    })).sort((a, b) => Math.abs(a.durationDiffMs ?? 1e9) - Math.abs(b.durationDiffMs ?? 1e9));
+    res.json({ candidates, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET });
 });
 
 // Serves the master dashboard itself. The page is just a static shell behind
@@ -3840,8 +3935,8 @@ app.get('/e/:slug/data', publicReadLimiter, voterIdentityMiddleware, (req, res) 
         genreFilter: event.systemConfigs.genreFilter || [],
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.systemConfigs.guestSpotifyConnectEnabled,
-        queue: buildSortedQueue(event, req.serverVoterId),
-        history: publicHistory(event),
+        queue: buildSortedQueue(event),
+        history: event.playedHistory,
         // This guest's own block status (Blocked tab) - lets the guest page
         // grey out the search bar for just this one browser/device, instead
         // of only finding out when a request/vote gets rejected.
@@ -3866,8 +3961,8 @@ app.get('/e/:slug/kiosk-data', publicReadLimiter, voterIdentityMiddleware, (req,
         decadeFilter: event.systemConfigs.decadeFilter || [],
         spotifyConnectEnabled: event.kioskConfigs.spotifyConnectEnabled,
         displayOnlyMode: event.kioskConfigs.displayOnlyMode,
-        queue: buildSortedQueue(event, req.serverVoterId),
-        history: publicHistory(event),
+        queue: buildSortedQueue(event),
+        history: event.playedHistory,
         blocked: isVoterBlocked(event, req.serverVoterId)
     });
 });
@@ -4734,6 +4829,15 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
         },
         verificationQueue: { active: mvVerificationActiveCount, waiting: mvVerificationQueue.length, inFlightTotal: verificationInFlight.size }
     };
+    try {
+        out.catalog = {
+            autoMatchEnabled: MV_AUTO_MATCH,
+            ...(await videoCatalog.stats()),
+            thisTrack: np.trackId ? await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }) : null
+        };
+    } catch (e) {
+        out.catalog = { autoMatchEnabled: MV_AUTO_MATCH, error: e.message };
+    }
     if (req.query.run !== '1') return res.json(out);
     if (!np.trackId || !np.title || !np.artist || !np.durationMs) { out.run = [{ step: 'abort', why: 'no complete now-playing info to test with' }]; return res.json(out); }
 
@@ -5285,6 +5389,7 @@ async function syncNowPlayingForEvent(event) {
             connected: true,
             isPlaying: !!data.is_playing,
             trackId: item?.id || null,
+            isrc: item?.external_ids?.isrc || null,
             title: item?.name || null,
             artist: item ? (item.artists || []).map(a => a.name).join(', ') : null,
             artwork: item?.album?.images?.[0]?.url || null,
@@ -5548,9 +5653,45 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         return res.json({ ...emptyResponse, enabled: true, matched: false, reason: 'pattern_says_this_song_is_a_visuals_slot' });
     }
 
+    // --- Curated catalog: the primary source. Looked up on EVERY poll (it is an
+    // in-memory index, no Redis call) so an edit in the master grid applies to
+    // the song playing right now, not only to the next one.
+    let catalogLookup;
+    try {
+        catalogLookup = await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist });
+    } catch (e) {
+        catalogLookup = { status: 'error', error: e.message };
+    }
+    const failedHere = new Set(
+        [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
+    );
+    let catalogDecided = false;
+    if (catalogLookup.status === 'hit') {
+        const row = catalogLookup.row;
+        let blockedBy = null;
+        if (musicVideoDenylist.has(np.trackId)) blockedBy = 'denylist';
+        else if (vcfg.familyModeEnabled && !row.familySafe && !musicVideoAllowlist.has(np.trackId)) blockedBy = 'family_mode_catalog_row_not_marked_family_safe';
+        else if (failedHere.has(row.youtubeId)) blockedBy = 'catalog_video_failed_at_playback_on_this_event';
+        if (blockedBy) {
+            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0, blockedBy };
+        } else {
+            runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: true, videoId: row.youtubeId, introOffsetMs: row.startMs || 0, source: 'catalog', rowId: row.id };
+        }
+        catalogDecided = true;
+    } else if (!MV_AUTO_MATCH) {
+        // Catalog miss with the old pipeline switched off: ambient visuals.
+        runtime.cache = { trackId: np.trackId, searchedTrackId: np.trackId, matched: false, videoId: null, introOffsetMs: 0 };
+        catalogDecided = true;
+    } else if (runtime.cache.source === 'catalog') {
+        // The row that was playing was just deleted/disabled; let the old path run.
+        runtime.cache = { trackId: np.trackId, searchedTrackId: null, matched: false, videoId: null, introOffsetMs: 0 };
+    }
+
     // Check the verified cache fresh once per track (cached across the rest
     // of that song's polls) rather than re-checking every 3 seconds.
-    if (runtime.cache.searchedTrackId !== np.trackId) {
+    // (Old automatic pipeline - only reached when MV_AUTO_MATCH=1 and the
+    // catalog had no row for this song.)
+    if (!catalogDecided && runtime.cache.searchedTrackId !== np.trackId) {
         const excludeVideoIds = new Set(
             [...runtime.blacklist].filter(k => k.startsWith(np.trackId + '|')).map(k => k.split('|')[1])
         );
@@ -5653,16 +5794,24 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         else if (verificationInFlight.has(np.trackId)) mvReason = 'verification_running_now';
         else if (retry) mvReason = `verification_inconclusive_retrying (attempt ${retry.attempts}, next try in ${Math.max(0, Math.round((retry.notBefore - Date.now()) / 1000))}s) - check server logs for [MV-MATCH]/[MUSIC VIDEO] errors`;
         else mvReason = 'verification_waiting_to_start';
+        if (!MV_AUTO_MATCH && !runtime.cache.blockedBy) {
+            mvReason = catalogLookup.status === 'disabled' ? 'catalog_row_disabled'
+                : catalogLookup.status === 'no_video' ? 'catalog_row_has_no_youtube_video_yet'
+                : catalogLookup.status === 'error' ? `catalog_unavailable (${catalogLookup.error})`
+                : 'no_catalog_row';
+        }
     }
     // The offset is read fresh from the verified cache on every poll so a
     // measured offset (see mvMaybeUpgradeGuess) replaces a guessed one while
     // the video is already playing - the display applies introOffsetMs live.
     const vcNow = verifiedMusicVideoCache.get(np.trackId);
-    const offsetFromCache = !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
+    const fromCatalog = !!(runtime.cache.matched && runtime.cache.source === 'catalog');
+    const offsetFromCache = !fromCatalog && !!(runtime.cache.matched && vcNow && vcNow.videoId === runtime.cache.videoId);
     const mvOffsetNow = offsetFromCache ? (vcNow.introOffsetMs || 0) : (runtime.cache.introOffsetMs || 0);
     res.json({
-        offsetSource: !runtime.cache.matched ? 'none' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
+        offsetSource: !runtime.cache.matched ? 'none' : fromCatalog ? 'catalog (start time set by a person)' : (offsetFromCache && vcNow.guessed) ? 'guessed (video is longer than the song; extra length assumed to be an intro)' : (offsetFromCache && vcNow.verified) ? 'measured from audio' : 'exact length match (offset 0)',
         reason: mvReason,
+        catalog: { status: catalogLookup.status, via: catalogLookup.via || null, rowId: catalogLookup.row ? catalogLookup.row.id : null },
         detail: runtime.cache.matched ? undefined : verificationDiagCache.get(np.trackId),
         youtube: { apiKeySet: !!YOUTUBE_API_KEY, quotaUsedToday: youtubeQuotaUsedToday, quotaBudget: YOUTUBE_DAILY_QUOTA_BUDGET },
         enabled: true,
