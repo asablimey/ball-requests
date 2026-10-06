@@ -684,7 +684,7 @@
             tr.querySelector('.tick').classList.remove('on');
         }
         function vcMarkWarnings(tr, warnings) {
-            tr.querySelectorAll('[data-f="song"]').forEach(el => { el.classList.remove('dup'); if (el.title.startsWith('Needs')) el.title = ''; });
+            tr.querySelectorAll('[data-f="song"]').forEach(el => { el.classList.remove('dup'); if (el.title.startsWith('Fill in')) el.title = ''; });
             (warnings || []).forEach(w => {
                 if (w.field === 'spotifyId') return; // handled by vcRefreshDups
                 const el = tr.querySelector(`[data-f="${w.field}"]`);
@@ -750,6 +750,25 @@
             vcRefreshDups();
             vcCount();
             vcStatus('All changes saved');
+            if (row.youtubeId) vcCheckYoutube(tr, row.youtubeId);
+        }
+
+        // Asks YouTube whether this video can be played in the embedded player.
+        // A video whose owner disabled embedding saves fine but can NEVER play on the display.
+        async function vcCheckYoutube(tr, ytId) {
+            const r = await vcApi('GET', '/check-video?id=' + encodeURIComponent(ytId));
+            const el = tr.querySelector('[data-f="youtubeId"]');
+            if (!el || !r.ok) return;
+            const d = r.data || {};
+            if (d.problem) {
+                el.classList.add('bad'); el.title = d.problem;
+                vcToast('Video ' + ytId + ' will NOT play: ' + d.problem);
+            } else if (d.unknown) {
+                el.title = 'Could not check this video (' + (d.reason || 'unknown') + ').';
+            } else {
+                el.classList.remove('bad');
+                el.title = (d.title || '') + (d.channel ? ' - ' + d.channel : '') + (d.regionBlockedIn ? ' (blocked in: ' + d.regionBlockedIn.join(', ') + ')' : '');
+            }
         }
 
         /* ---------- add / delete ---------- */
