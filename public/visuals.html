@@ -1228,7 +1228,30 @@
             };
         }
 
+        // Reports what the YouTube player actually did (see player-event route in server.js).
+        // Add ?mvdebug=1 to this page's URL to also see it on screen.
+        function reportPlayerEvent(kind, detail, videoId, trackId) {
+            const vid = videoId || currentVideoId || pendingVideoId || '';
+            const tid = trackId || currentVideoTrackId || pendingTrackId || '';
+            if (/[?&]mvdebug=1/.test(location.search)) {
+                let el = document.getElementById('mv-debug');
+                if (!el) {
+                    el = document.createElement('div'); el.id = 'mv-debug';
+                    el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;background:rgba(0,0,0,.8);color:#0f0;font:12px monospace;padding:6px 10px;max-width:90vw;white-space:pre-wrap';
+                    document.body.appendChild(el);
+                }
+                el.textContent = `${new Date().toLocaleTimeString()} ${kind}: ${detail} (video ${vid})\n` + el.textContent.split('\n').slice(0, 4).join('\n');
+            }
+            try {
+                fetch(eventUrl('/api/music-video/player-event'), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trackId: tid, videoId: vid, kind, detail })
+                }).catch(() => {});
+            } catch (e) { /* diagnostics only */ }
+        }
+
         function handleSlotError(slot, code) {
+            reportPlayerEvent('youtube_error', 'code ' + code + (code === 101 || code === 150 ? ' = owner disabled embedding' : code === 100 ? ' = video removed/private' : code === 5 ? ' = HTML5 player error' : code === 2 ? ' = invalid video id' : ''));
             if (slot === activeSlot) {
                 // Already on screen and an error hits mid-play (code 5 and
                 // friends are often transient): reload the same video at the
@@ -1863,6 +1886,7 @@
             clearTimeout(mvLoadTimeout);
             mvLoadTimeout = setTimeout(() => {
                 if (!musicVideoActive || mvRevealed) return;
+                { let ps = 'n/a'; try { ps = players[activeSlot].yt.getPlayerState(); } catch (e) {} reportPlayerEvent('load_timeout', 'player ready=' + players[activeSlot].ready + ', state=' + ps + ' (-1 unstarted, 1 playing, 3 buffering, 5 cued)'); }
                 if (players[activeSlot].ready && !mvFromCatalog) {
                     reportVideoFailureAndStop();
                 } else {
