@@ -333,7 +333,7 @@
            visibility classes change, never their DOM position. The logo
            stays up, gently dimmed, for as long as any video is genuinely
            on screen; the song-info popup only shows itself in the first
-           and last MV_INFO_POPUP_WINDOW_SEC of each individual video (see
+           and last MV_INFO_POPUP_WINDOW_SEC (20s) of each individual video (see
            mvUpdateOverlay), and is otherwise invisible. */
         .mv-logo {
             position: absolute; right: 32px; bottom: 28px; z-index: 8;
@@ -1115,7 +1115,17 @@
         const MV_BIG_DRIFT_MS = 3000;
         // How long the song-info popup shows itself at the start and end of
         // each individual video (not the song) - see mvUpdateOverlay.
-        const MV_INFO_POPUP_WINDOW_SEC = 15;
+        const MV_INFO_POPUP_WINDOW_SEC = 20;
+        // Spotify crossfade handling: the server reports the new track the
+        // moment the crossfade begins, which is well before the new song is
+        // really "the" song. The video cut is held until the new song has
+        // been playing this long, and the popup flips to the new song's info
+        // this much BEFORE that cut.
+        const MV_SWITCH_AFTER_SONG_START_MS = 6000;
+        const MV_INFO_LEAD_BEFORE_SWITCH_MS = 1000;
+        // Only treat a track change as a natural (crossfaded) transition if the
+        // old song was this close to its end; a manual skip cuts straight away.
+        const MV_NATURAL_TRANSITION_WINDOW_MS = 20000;
         // Two settled checks in a row still this far out = the video can't
         // sync at all: blacklist it and fall back to ambient visuals.
         const MV_MAX_BIG_DRIFT_CHECKS = 2;
@@ -1949,9 +1959,10 @@
             }
             const nearStart = cur !== null && cur <= MV_INFO_POPUP_WINDOW_SEC;
             const nearEnd = cur !== null && dur > 0 && (dur - cur) <= MV_INFO_POPUP_WINDOW_SEC;
-            if (nearStart || nearEnd) {
-                document.getElementById('mv-info-title').innerText = mvTrackMeta.title || npLiveTitle;
-                document.getElementById('mv-info-artist').innerText = mvTrackMeta.artist || npLiveArtist;
+            const prev = (mvInfoPreview && Date.now() < mvInfoPreview.until) ? mvInfoPreview : null;
+            if (nearStart || nearEnd || prev) {
+                document.getElementById('mv-info-title').innerText = prev ? (prev.title || mvTrackMeta.title || npLiveTitle) : (mvTrackMeta.title || npLiveTitle);
+                document.getElementById('mv-info-artist').innerText = prev ? (prev.artist || mvTrackMeta.artist || npLiveArtist) : (mvTrackMeta.artist || npLiveArtist);
                 pop.classList.add('is-visible');
             } else {
                 pop.classList.remove('is-visible');
@@ -2377,6 +2388,43 @@
             }
         }
 
+        // ---- Crossfade hold: delays the video cut until the new song is
+        // MV_SWITCH_AFTER_SONG_START_MS in, and flips the popup's song info
+        // MV_INFO_LEAD_BEFORE_SWITCH_MS earlier. Returns true while holding
+        // (the poll must then leave everything about the old song untouched,
+        // so the old video, its sync clock and the parked standby stay as-is).
+        let mvInfoPreview = null;      // {trackId, title, artist, until}
+        let mvGatePollTimer = null, mvGateInfoTimer = null;
+        function mvClearGateTimers() {
+            clearTimeout(mvGatePollTimer); mvGatePollTimer = null;
+            clearTimeout(mvGateInfoTimer); mvGateInfoTimer = null;
+        }
+        function mvHoldForCrossfade(data, receivedAt) {
+            if (!mvRevealed || !data.trackId || !data.isPlaying || data.trackId === currentVideoTrackId ||
+                (pendingSlot && pendingTrackId === data.trackId)) { mvClearGateTimers(); return false; }
+            const rem = songRemainingMs();
+            if (rem === null || rem > MV_NATURAL_TRANSITION_WINDOW_MS) { mvClearGateTimers(); return false; }
+            const serverNow = Number.isFinite(data.serverNow) ? data.serverNow : receivedAt;
+            const age = Math.max(0, serverNow - (data.updatedAt || serverNow));
+            const posNow = (data.progressMs || 0) + age + (Date.now() - receivedAt);
+            if (posNow >= MV_SWITCH_AFTER_SONG_START_MS) { mvClearGateTimers(); return false; }
+
+            const infoAt = MV_SWITCH_AFTER_SONG_START_MS - MV_INFO_LEAD_BEFORE_SWITCH_MS;
+            const title = data.title || '', artist = data.artist || '';
+            const showInfo = () => {
+                if (mvInfoPreview && mvInfoPreview.trackId === data.trackId) return;
+                mvInfoPreview = { trackId: data.trackId, title, artist, until: Date.now() + MV_INFO_POPUP_WINDOW_SEC * 1000 };
+            };
+            clearTimeout(mvGateInfoTimer); mvGateInfoTimer = null;
+            if (posNow >= infoAt) showInfo();
+            else mvGateInfoTimer = setTimeout(showInfo, infoAt - posNow);
+
+            // Wake up exactly when the cut is due instead of waiting for the next 1s poll.
+            clearTimeout(mvGatePollTimer);
+            mvGatePollTimer = setTimeout(pollMusicVideo, MV_SWITCH_AFTER_SONG_START_MS - posNow + 40);
+            return true;
+        }
+
         async function pollMusicVideo() {
             try {
                 const res = await fetch(eventUrl('/api/music-video') + '?d=1');
@@ -2429,6 +2477,8 @@
                         mvExpectedSwitch = null;              // the old song is genuinely still going: our prediction was wrong
                     }
                 }
+                if (mvHoldForCrossfade(data, receivedAt)) return;
+                if (mvInfoPreview && mvInfoPreview.trackId !== data.trackId) mvInfoPreview = null;
                 mvLastPoll = data;
                 mvLastPollAt = receivedAt;
                 if (data.clock) updateSongClock(data.clock, receivedAt);
