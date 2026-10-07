@@ -1129,6 +1129,10 @@
         // Only treat a track change as a natural (crossfaded) transition if the
         // old song was this close to its end; a manual skip cuts straight away.
         const MV_NATURAL_TRANSITION_WINDOW_MS = 20000;
+        // Your Spotify crossfade (10-12s). Used only to work out when the video is
+        // going to be cut, so the end-of-video song info can start a full
+        // MV_INFO_POPUP_WINDOW_SEC before that cut.
+        const MV_ASSUMED_CROSSFADE_MS = 11000;
         // Two settled checks in a row still this far out = the video can't
         // sync at all: blacklist it and fall back to ambient visuals.
         const MV_MAX_BIG_DRIFT_CHECKS = 2;
@@ -1961,7 +1965,13 @@
                 try { dur = st.yt.getDuration(); } catch (e) { /* not ready yet */ }
             }
             const nearStart = cur !== null && cur <= MV_INFO_POPUP_WINDOW_SEC;
-            const nearEnd = cur !== null && dur > 0 && (dur - cur) <= MV_INFO_POPUP_WINDOW_SEC;
+            // End side. The video is cut at (song end - crossfade + switch delay), which is
+            // usually well before the YouTube file itself ends (outros, longer uploads), so
+            // the song clock decides, with the video's own end as a fallback.
+            const cutLeadMs = Math.max(0, MV_ASSUMED_CROSSFADE_MS - MV_SWITCH_AFTER_SONG_START_MS);
+            const songRem = songRemainingMs();
+            const nearSongEnd = songRem !== null && songRem <= MV_INFO_POPUP_WINDOW_SEC * 1000 + cutLeadMs;
+            const nearEnd = nearSongEnd || (cur !== null && dur > 0 && (dur - cur) <= MV_INFO_POPUP_WINDOW_SEC);
             const prev = (mvInfoPreview && Date.now() < mvInfoPreview.until) ? mvInfoPreview : null;
             if (nearStart || nearEnd || prev) {
                 document.getElementById('mv-info-title').innerText = prev ? (prev.title || mvTrackMeta.title || npLiveTitle) : (mvTrackMeta.title || npLiveTitle);
