@@ -2341,6 +2341,11 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
 // before this feature existed pick up the defaults instead of crashing on
 // undefined.
 const MUSIC_VIDEO_OFFSET_DEFAULT_MS = 600;
+// How long the song title/artist popup stays up at the start and end of each
+// music video, in seconds. Set in Admin -> Settings -> Content -> Music Videos.
+const MUSIC_VIDEO_INFO_SECONDS_DEFAULT = 30;
+const MUSIC_VIDEO_INFO_SECONDS_MIN = 5;
+const MUSIC_VIDEO_INFO_SECONDS_MAX = 120;
 const MUSIC_VIDEO_OFFSET_MIN_MS = -5000;
 const MUSIC_VIDEO_OFFSET_MAX_MS = 5000;
 function ensureVisualsConfigs(event) {
@@ -2355,6 +2360,9 @@ function ensureVisualsConfigs(event) {
     // visual-display.html, which is the only place this is applied.
     if (typeof v.musicVideoOffsetMs !== 'number' || !Number.isFinite(v.musicVideoOffsetMs)) {
         v.musicVideoOffsetMs = MUSIC_VIDEO_OFFSET_DEFAULT_MS;
+    }
+    if (typeof v.musicVideoInfoSeconds !== 'number' || !Number.isFinite(v.musicVideoInfoSeconds)) {
+        v.musicVideoInfoSeconds = MUSIC_VIDEO_INFO_SECONDS_DEFAULT;
     }
     return v;
 }
@@ -4829,6 +4837,16 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     res.json({ success: true, offsetMs: clamped });
 });
 
+// How many seconds the song info popup shows at each end of a music video.
+app.post('/e/:slug/api/admin/visuals/music-video-info-seconds', (req, res) => {
+    const parsed = Number((req.body || {}).seconds);
+    if (!Number.isFinite(parsed)) return res.status(400).json({ error: 'seconds must be a number.' });
+    const clamped = Math.max(MUSIC_VIDEO_INFO_SECONDS_MIN, Math.min(MUSIC_VIDEO_INFO_SECONDS_MAX, Math.round(parsed)));
+    ensureVisualsConfigs(req.event).musicVideoInfoSeconds = clamped;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, seconds: clamped });
+});
+
 // Item 6 (manual admin fallback): lets an admin directly correct a cached
 // match's introOffsetMs without going through family mode - covers the rare
 // case where verification never found a usable reference audio (an obscure
@@ -5674,7 +5692,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     if (req.query.d === '1') ensureMusicVideoRuntime(event).displayLastPolledAt = Date.now();
     const vcfg = ensureVisualsConfigs(event);
-    const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
+    const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds };
 
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
@@ -5752,7 +5770,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 updatedAt: np.progressCapturedAt || np.updatedAt,
                 serverNow: Date.now(),
                 subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
-                videoOffsetMs: vcfg.musicVideoOffsetMs
+                videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds
             });
         }
         return res.json({ ...emptyResponse, enabled: true, reason: 'spotify_reports_not_playing' });
@@ -5977,7 +5995,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         updatedAt: np.progressCapturedAt || np.updatedAt,
         serverNow: Date.now(),
         subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
-        videoOffsetMs: vcfg.musicVideoOffsetMs
+        videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds
     });
 });
 
