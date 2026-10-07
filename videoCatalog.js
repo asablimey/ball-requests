@@ -265,11 +265,19 @@ module.exports = function createVideoCatalog({ redis }) {
         return 'r_' + Date.now().toString(36) + idCounter.toString(36).padStart(3, '0') + Math.random().toString(36).slice(2, 5);
     }
 
-    function pickBest(list) {
-        // Prefer a row that is enabled and has a video, then the newest edit.
+    function pickBest(list, familyMode) {
+        // A row that is enabled and has a video always beats one that does not.
+        // Among those, when a song has two videos (a suggestive one and a
+        // family-friendly one) the choice follows Family mode: ON prefers the row
+        // marked Suggestive = NO, OFF prefers the other one. Then the newest edit.
+        const want = familyMode ? (r => r.nsfw === 'no' ? 1 : 0) : (r => r.nsfw === 'no' ? 0 : 1);
         return [...list].sort((a, b) => {
             const sa = (a.enabled && a.youtubeId) ? 1 : 0, sb = (b.enabled && b.youtubeId) ? 1 : 0;
             if (sa !== sb) return sb - sa;
+            if (sa) {
+                const wa = want(a), wb = want(b);
+                if (wa !== wb) return wb - wa;
+            }
             return (b.updatedAt || 0) - (a.updatedAt || 0);
         })[0];
     }
@@ -281,7 +289,10 @@ module.exports = function createVideoCatalog({ redis }) {
     // blank. The first tier holding a usable row wins; a row a person switched
     // OFF stops the search; a row with no YouTube ID yet does not block a
     // looser match that has one.
-    async function lookup(np) {
+    // opts.familyMode: when a song has both a suggestive and a family-friendly
+    // video, pick the family-friendly one (see pickBest).
+    async function lookup(np, opts) {
+        const familyMode = !!(opts && opts.familyMode);
         const st = await ensureLoaded();
         const n = np || {};
         const tiers = [['spotify', st.bySpotify.get(n.trackId) || []],
@@ -296,7 +307,7 @@ module.exports = function createVideoCatalog({ redis }) {
         let noVideo = null;
         for (const [via, list] of tiers) {
             if (!list.length) continue;
-            const row = pickBest(list);
+            const row = pickBest(list, familyMode);
             if (!row.enabled) return { status: 'disabled', via, row };
             if (!row.youtubeId) { noVideo = noVideo || { status: 'no_video', via, row }; continue; }
             return { status: 'hit', via, row };
