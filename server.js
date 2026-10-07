@@ -4887,7 +4887,7 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
         out.catalog = {
             autoMatchEnabled: MV_AUTO_MATCH,
             ...(await videoCatalog.stats()),
-            thisTrack: np.trackId ? await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }) : null
+            thisTrack: np.trackId ? await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }, { familyMode: !!vcfg.familyModeEnabled }) : null
         };
     } catch (e) {
         out.catalog = { autoMatchEnabled: MV_AUTO_MATCH, error: e.message };
@@ -5652,7 +5652,7 @@ async function mvBuildClockAndNext(event, vcfg, runtime, np) {
         }
         if (!allowed) { next.known = true; return { clock, next }; }
 
-        const lookup = await videoCatalog.lookup({ trackId: up.id, title: up.title, artist: up.artist });
+        const lookup = await videoCatalog.lookup({ trackId: up.id, title: up.title, artist: up.artist }, { familyMode: !!vcfg.familyModeEnabled });
         if (lookup.status === 'hit') {
             const row = lookup.row;
             const ytCheck = await youtubeCheckVideo(row.youtubeId);
@@ -5791,7 +5791,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // the song playing right now, not only to the next one.
     let catalogLookup;
     try {
-        catalogLookup = await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist });
+        catalogLookup = await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }, { familyMode: !!vcfg.familyModeEnabled });
     } catch (e) {
         catalogLookup = { status: 'error', error: e.message };
     }
