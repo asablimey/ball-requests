@@ -345,17 +345,20 @@
         .mv-info-pop {
             position: absolute; left: 40px; bottom: 26px; z-index: 8;
             max-width: 60%; pointer-events: none; opacity: 0;
-            transition: opacity 0.6s ease; text-shadow: 0 2px 12px rgba(0,0,0,0.85);
+            transition: opacity 0.6s ease; background: none; box-shadow: none;
         }
         .mv-info-pop.is-visible { opacity: 1; }
         .mv-info-title {
             font-family: 'Khula', sans-serif; font-weight: 700; color: #fff;
             font-size: clamp(1.3rem, 2.6vh, 1.9rem); line-height: 1.15;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            /* tight shadow only: a big soft one gets clipped by overflow:hidden and shows as a grey box */
+            text-shadow: 0 1px 3px rgba(0,0,0,0.6); padding: 0 4px 4px 0;
         }
         .mv-info-artist {
-            color: #d8d8d8; font-size: clamp(0.85rem, 1.6vh, 1.05rem); margin-top: 4px;
+            color: #d8d8d8; font-size: clamp(0.85rem, 1.6vh, 1.05rem); margin-top: 0;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.6); padding: 0 4px 4px 0;
         }
     </style>
 </head>
