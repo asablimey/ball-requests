@@ -333,7 +333,7 @@
            visibility classes change, never their DOM position. The logo
            stays up, gently dimmed, for as long as any video is genuinely
            on screen; the song-info popup only shows itself in the first
-           and last MV_INFO_POPUP_WINDOW_SEC (20s) of each individual video (see
+           and last MV_INFO_POPUP_WINDOW_SEC (default 30s, admin setting) of each individual video (see
            mvUpdateOverlay), and is otherwise invisible. */
         .mv-logo {
             position: absolute; right: 32px; bottom: 28px; z-index: 8;
@@ -1118,7 +1118,8 @@
         const MV_BIG_DRIFT_MS = 3000;
         // How long the song-info popup shows itself at the start and end of
         // each individual video (not the song) - see mvUpdateOverlay.
-        const MV_INFO_POPUP_WINDOW_SEC = 20;
+        // Set from Admin -> Settings -> Content -> Music Videos (sent with every poll); 30 until the first poll arrives.
+        let MV_INFO_POPUP_WINDOW_SEC = 30;
         // Spotify crossfade handling: the server reports the new track the
         // moment the crossfade begins, which is well before the new song is
         // really "the" song. The video cut is held until the new song has
@@ -2489,6 +2490,9 @@
                         if (mvIsStaleReading(data)) return;   // old song's final reading, delivered late
                         mvExpectedSwitch = null;              // the old song is genuinely still going: our prediction was wrong
                     }
+                }
+                if (typeof data.infoPopupSeconds === 'number' && Number.isFinite(data.infoPopupSeconds) && data.infoPopupSeconds > 0) {
+                    MV_INFO_POPUP_WINDOW_SEC = data.infoPopupSeconds;
                 }
                 if (mvHoldForCrossfade(data, receivedAt)) return;
                 if (mvInfoPreview && mvInfoPreview.trackId !== data.trackId) mvInfoPreview = null;
