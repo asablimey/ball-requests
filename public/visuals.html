@@ -278,14 +278,14 @@
            overflows, centered by the translate below. */
         .video-cover-fit {
             position: absolute; top: 50%; left: 50%;
-            /* PERFORMANCE: the player is laid out at a small FIXED size (1280x720,
+            /* PERFORMANCE: the player is laid out at a small FIXED size (1920x1080,
                see MV_RENDER_W/H in the script) and scaled up with a transform to
                cover the screen. YouTube picks the stream quality from the player's
                layout size, so this keeps it at about 720p instead of 1440p/4K on a
                big display (the player is also ~28% taller than the screen to crop
                the top/bottom), which is far lighter on the CPU. --mv-scale is set
                from the window size by mvFitVideoScale(); the look is unchanged. */
-            width: 1280px; height: 720px;
+            width: 1920px; height: 1080px;
             transform: translate(-50%, -50%) scale(var(--mv-scale, 1.5));
         }
         /* top/height below are expressed against (100% - reveal) rather
@@ -1094,9 +1094,9 @@
         let mvLastReadingChangedAt = 0;
         let mvSampleCount = 0;
         const MV_SAMPLE_INTERVAL_MS = 50;
-        // Fixed layout size of the video player (see .video-cover-fit). Raise to
-        // 1920x1080 for a sharper picture at a higher CPU cost; keep 16:9.
-        const MV_RENDER_W = 1280, MV_RENDER_H = 720;
+        // Fixed layout size of the video player (see .video-cover-fit). 1920x1080 = sharp; drop to
+        // 1280x720 if playback gets laggy (lighter on the CPU, softer picture); keep 16:9.
+        const MV_RENDER_W = 1920, MV_RENDER_H = 1080;
         const MV_CAPTION_REVEAL_SCREEN_PX = 70; // on-screen size of the revealed caption strip
         function mvFitVideoScale() {
             const s = Math.max(window.innerWidth / MV_RENDER_W, window.innerHeight / MV_RENDER_H);
@@ -1242,7 +1242,7 @@
             st.currentRate = null; st.holdingEnd = false; st.playIssuedAt = null; st.graceUntil = 0;
             document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             try {
-                st.yt.loadVideoById({ videoId: nx.videoId, startSeconds: startSec, suggestedQuality: 'hd720' });
+                st.yt.loadVideoById({ videoId: nx.videoId, startSeconds: startSec, suggestedQuality: 'hd1080' });
                 mvSetRate(slot, 1);
                 applySubtitlesSetting(slot);
             } catch (e) { standby = null; }
@@ -2296,7 +2296,7 @@
             st.seekIssuedAt = Date.now();
             st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
-            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000, suggestedQuality: 'hd720' });
+            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000, suggestedQuality: 'hd1080' });
             mvSetRate(slot, 1);
             if (mvClock && !mvClock.isPlaying) st.yt.pauseVideo();
             applySubtitlesSetting(slot);
