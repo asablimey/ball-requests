@@ -5,12 +5,14 @@
     <script>CrowdTheme.use("crowddj_theme_guest");</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/assets/cuelistr-icon.svg">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Khula:wght@600&display=swap">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <title>CrowdDJ</title>
+    <title>Cuelistr</title>
     <style>
         :root {
             --spotify-green: #1DB954;
@@ -1092,7 +1094,7 @@
                 <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
             </button>
             <div class="header-title-block">
-                <h1 id="event-name-header">crowdDJ</h1>
+                <h1 id="event-name-header">Cuelistr</h1>
                 <p id="venue-name-subtitle" class="venue-subtitle" style="display: none;"></p>
             </div>
             <div class="credits-container">
@@ -1788,9 +1790,9 @@
         // and disconnectSpotify-adjacent resets) can't drift out of sync.
         function renderNoVenueState() {
             const nameHeader = document.getElementById('event-name-header');
-            if (nameHeader && nameHeader.innerText !== 'crowdDJ') {
-                nameHeader.innerText = 'crowdDJ';
-                document.title = 'crowdDJ';
+            if (nameHeader && nameHeader.innerText !== 'Cuelistr') {
+                nameHeader.innerText = 'Cuelistr';
+                document.title = 'Cuelistr';
             }
             const venueSubtitle = document.getElementById('venue-name-subtitle');
             if (venueSubtitle) {
@@ -1854,7 +1856,7 @@
                 if (sidebarPlaylistItem) sidebarPlaylistItem.style.display = spotifyEnabled ? '' : 'none';
 
                 const nameHeader = document.getElementById('event-name-header');
-                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'crowdDJ';
+                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Cuelistr';
                 if (nameHeader.innerText !== newName) {
                     nameHeader.innerText = newName;
                     document.title = newName;
