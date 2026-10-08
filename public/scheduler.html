@@ -5,8 +5,10 @@
     <script>(function(){var s=location.pathname.split("/")[2]||"";CrowdTheme.use("crowddj_theme_admin_"+s);CrowdTheme.follow("admin",s);})();</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/assets/cuelistr-icon.svg">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
-    <title>Music Scheduler</title>
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+    <title>Cuelistr Scheduler</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Playfair+Display:wght@700&family=Poppins:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -855,7 +857,7 @@
                 <div id="playlist-list"></div>
                 <div class="add-playlist-form">
                     <select id="new-item-type" onchange="onNewItemTypeChange()">
-                        <option value="crowddj">crowdDJ Music</option>
+                        <option value="crowddj">Cuelistr Music</option>
                         <option value="karaoke">Karaoke</option>
                         <option value="ambient">Ambient Visuals</option>
                         <option value="musicvideo">Music Videos</option>
@@ -1288,13 +1290,13 @@
 
         const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const FULL_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        // Blocks are colored by lane type, not per-playlist - every crowdDJ
+        // Blocks are colored by lane type, not per-playlist - every Cuelistr
         // block is green, every karaoke block is blue, every Music Videos
         // block is orange, so the timetable reads as "what kind of thing is
         // playing" at a glance rather than needing to check each block's
         // label.
         const LANE_TYPES = {
-            crowddj: { label: 'crowdDJ Music', color: '#1DB954' },
+            crowddj: { label: 'Cuelistr Music', color: '#1DB954' },
             karaoke: { label: 'Karaoke', color: '#5B8DEF' },
             ambient: { label: 'Ambient Visuals', color: '#B15CDE' },
             musicvideo: { label: 'Music Videos', color: '#FF8C00' }
@@ -1303,9 +1305,9 @@
         const LANE_LABEL_WIDTH = 108;
         // No placeholder lanes left - Ambient Visuals and Music Videos both
         // used to be placeholders here and are now real, data-backed lanes
-        // like crowdDJ/Karaoke.
+        // like Cuelistr/Karaoke.
         const PLACEHOLDER_LANES = [];
-        // Which overlap/collision GROUP a rule belongs to. crowdDJ and
+        // Which overlap/collision GROUP a rule belongs to. Cuelistr and
         // Karaoke share one physical output (the venue's speakers) and so
         // are checked as a single "music" group - two music blocks can
         // never overlap regardless of which of those two lanes either is
@@ -1484,7 +1486,7 @@
 
         // ---------- Physical collision bounds (drag/resize/drop can't cross these) ----------
         // Sorted [start,end) minute ranges occupied on one day by every
-        // OTHER rule in the SAME lane group - crowdDJ and Karaoke share the
+        // OTHER rule in the SAME lane group - Cuelistr and Karaoke share the
         // same speakers so a music block being dragged has to treat the
         // other music lane's blocks as solid too, not just its own lane's.
         // Ambient blocks only collide with other ambient blocks.
@@ -1637,7 +1639,7 @@
                      ondragstart="onChipDragStart(event, '${escapeHtml(p.id)}')">
                     <span class="chip-swatch" style="background:${playlistColor(p.id)}"></span>
                     <span class="chip-label">${escapeHtml(p.label)}</span>
-                    <span class="chip-type">${p.type === 'karaoke' ? 'Karaoke' : 'crowdDJ'}</span>
+                    <span class="chip-type">${p.type === 'karaoke' ? 'Karaoke' : 'Cuelistr'}</span>
                     <button class="chip-remove" onclick="removePlaylist('${escapeHtml(p.id)}')" title="Remove">&times;</button>
                 </div>
             `));
@@ -1838,7 +1840,7 @@
         }
 
         // Builds all 7 day boxes, each with its own hour ruler and 4 real,
-        // data-backed lanes: crowdDJ Music, Karaoke, Ambient Visuals, and
+        // data-backed lanes: Cuelistr Music, Karaoke, Ambient Visuals, and
         // Music Videos. This rebuilds everything - including during a
         // drag/resize - rather than patching individual block positions;
         // schedules are small (tens of rules at most) so that's cheap
@@ -1900,7 +1902,7 @@
             // Blocks are appended as real elements (not innerHTML strings)
             // so their drag/resize listeners can be attached directly. Each
             // block only ever goes into the track matching its playlist's
-            // type, so a crowdDJ rule can never land in the Karaoke lane
+            // type, so a Cuelistr rule can never land in the Karaoke lane
             // even if the underlying data got edited some other way.
             DAY_NAMES.forEach((_, dayIdx) => {
                 rules.filter(r => r.days.includes(dayIdx)).forEach(rule => {
@@ -2250,7 +2252,7 @@
             document.getElementById('modal-block-name').value = rule.name || '';
 
             // Only offer playlists of this block's own type - reassigning a
-            // Karaoke block to a crowdDJ playlist (or vice versa) would move
+            // Karaoke block to a Cuelistr playlist (or vice versa) would move
             // it to a different lane out from under the admin, so that
             // switch isn't offered here at all.
             const laneType = playlistType(rule.playlistId);
