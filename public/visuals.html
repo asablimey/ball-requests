@@ -278,9 +278,15 @@
            overflows, centered by the translate below. */
         .video-cover-fit {
             position: absolute; top: 50%; left: 50%;
-            width: 100vw; height: 56.25vw; /* 16:9 at full viewport width */
-            min-width: 177.78vh; min-height: 100vh; /* 16:9 at full viewport height */
-            transform: translate(-50%, -50%);
+            /* PERFORMANCE: the player is laid out at a small FIXED size (1280x720,
+               see MV_RENDER_W/H in the script) and scaled up with a transform to
+               cover the screen. YouTube picks the stream quality from the player's
+               layout size, so this keeps it at about 720p instead of 1440p/4K on a
+               big display (the player is also ~28% taller than the screen to crop
+               the top/bottom), which is far lighter on the CPU. --mv-scale is set
+               from the window size by mvFitVideoScale(); the look is unchanged. */
+            width: 1280px; height: 720px;
+            transform: translate(-50%, -50%) scale(var(--mv-scale, 1.5));
         }
         /* top/height below are expressed against (100% - reveal) rather
            than .video-cover-fit's raw 100%, because that box is now taller
@@ -1088,6 +1094,20 @@
         let mvLastReadingChangedAt = 0;
         let mvSampleCount = 0;
         const MV_SAMPLE_INTERVAL_MS = 50;
+        // Fixed layout size of the video player (see .video-cover-fit). Raise to
+        // 1920x1080 for a sharper picture at a higher CPU cost; keep 16:9.
+        const MV_RENDER_W = 1280, MV_RENDER_H = 720;
+        const MV_CAPTION_REVEAL_SCREEN_PX = 70; // on-screen size of the revealed caption strip
+        function mvFitVideoScale() {
+            const s = Math.max(window.innerWidth / MV_RENDER_W, window.innerHeight / MV_RENDER_H);
+            document.querySelectorAll('.video-frame').forEach(el => {
+                el.style.setProperty('--mv-scale', s);
+                // keep the caption strip the same size ON SCREEN after scaling
+                el.style.setProperty('--mv-caption-reveal', (MV_CAPTION_REVEAL_SCREEN_PX / s) + 'px');
+            });
+        }
+        window.addEventListener('resize', mvFitVideoScale);
+        mvFitVideoScale();
         const MV_CHECK_EVERY_N_SAMPLES = 16; // decisions every ~800 ms - infrequent on purpose, see below
         const MV_NUDGE_START_MS = 60;     // start speed-nudging beyond this drift - tightened from 300ms;
                                            // this is where the correction loop is allowed to settle now
@@ -1222,7 +1242,7 @@
             st.currentRate = null; st.holdingEnd = false; st.playIssuedAt = null; st.graceUntil = 0;
             document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
             try {
-                st.yt.loadVideoById({ videoId: nx.videoId, startSeconds: startSec });
+                st.yt.loadVideoById({ videoId: nx.videoId, startSeconds: startSec, suggestedQuality: 'hd720' });
                 mvSetRate(slot, 1);
                 applySubtitlesSetting(slot);
             } catch (e) { standby = null; }
@@ -2276,7 +2296,7 @@
             st.seekIssuedAt = Date.now();
             st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
-            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000 });
+            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000, suggestedQuality: 'hd720' });
             mvSetRate(slot, 1);
             if (mvClock && !mvClock.isPlaying) st.yt.pauseVideo();
             applySubtitlesSetting(slot);
@@ -2415,6 +2435,7 @@
         }
         function mvHoldForCrossfade(data, receivedAt) {
             if (!mvRevealed || !data.trackId || !data.isPlaying || data.trackId === currentVideoTrackId ||
+                visualsForceQueue || data.override || mvExpectedSwitch ||
                 (pendingSlot && pendingTrackId === data.trackId)) { mvClearGateTimers(); return false; }
             const rem = songRemainingMs();
             if (rem === null || rem > MV_NATURAL_TRANSITION_WINDOW_MS) { mvClearGateTimers(); return false; }
@@ -2461,6 +2482,15 @@
                 if (typeof data.videoOffsetMs === 'number' && Number.isFinite(data.videoOffsetMs)) {
                     mvVideoLeadMs = data.videoOffsetMs;
                 }
+                if (typeof data.infoPopupSeconds === 'number' && Number.isFinite(data.infoPopupSeconds) && data.infoPopupSeconds > 0) {
+                    MV_INFO_POPUP_WINDOW_SEC = data.infoPopupSeconds;
+                }
+                // Crossfade hold. MUST come before anything below reads this poll's
+                // start offset / clock: while we wait for the new song to be 6s in, the
+                // OLD video is still on screen and must keep syncing to the OLD song's
+                // clock AND the OLD song's start time. Applying the new song's start
+                // time here used to yank the old video to the wrong spot.
+                if (mvHoldForCrossfade(data, receivedAt)) return;
                 // Per-video cold-open offset - see mvIntroOffsetMs above.
                 // Starts at 0 and picks up the real number a few seconds
                 // into a new video once server-side detection resolves.
@@ -2491,10 +2521,6 @@
                         mvExpectedSwitch = null;              // the old song is genuinely still going: our prediction was wrong
                     }
                 }
-                if (typeof data.infoPopupSeconds === 'number' && Number.isFinite(data.infoPopupSeconds) && data.infoPopupSeconds > 0) {
-                    MV_INFO_POPUP_WINDOW_SEC = data.infoPopupSeconds;
-                }
-                if (mvHoldForCrossfade(data, receivedAt)) return;
                 if (mvInfoPreview && mvInfoPreview.trackId !== data.trackId) mvInfoPreview = null;
                 mvLastPoll = data;
                 mvLastPollAt = receivedAt;
