@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/assets/cuelistr-icon.svg">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
-    <title>Master Admin</title>
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+    <title>Cuelistr Master</title>
 
     <style>
         :root {
@@ -177,6 +179,7 @@
         table.vc th.rn { cursor: pointer; color: #202124; }
         table.vc td { border-right: 1px solid #e1e3e6; border-bottom: 1px solid #e1e3e6; padding: 0; background: #fff; }
         table.vc td.c-onoff, table.vc td.c-nsfw { width: 110px; }
+        table.vc td.c-kind { width: 120px; }
         table.vc td.nsfw-clean input { background: #e6f4ea; color: #137333; font-weight: 700; }
         table.vc td.nsfw-explicit input { background: #fce8e6; color: #c5221f; font-weight: 700; }
         table.vc td.nsfw-unset input { background: #fff7e0; }
@@ -327,7 +330,7 @@
             <div class="vc-wrap">
                 <table class="vc">
                     <thead>
-                        <tr class="heads"><th class="rn" data-k="_num" onclick="vcSort('_num')" title="Catalog number. Click to sort by it.">#</th><th data-k="song" onclick="vcSort('song')">Title</th><th data-k="artist" onclick="vcSort('artist')">Artist</th><th data-k="spotifyId" onclick="vcSort('spotifyId')">Spotify link/ID</th><th data-k="youtubeId" onclick="vcSort('youtubeId')">Youtube Link/ID</th><th data-k="startMs" onclick="vcSort('startMs')">Start time</th><th data-k="enabled" onclick="vcSort('enabled')">Video ON/OFF</th><th data-k="nsfw" onclick="vcSort('nsfw')" title="Is the video suggestive in any way? YES = blocked in Family mode. NO = plays in Family mode. Blank = not checked yet (treated as suggestive).">Suggestive? YES/NO</th><th data-k="isrc" onclick="vcSort('isrc')">ISRC</th><th data-k="notes" onclick="vcSort('notes')">Notes</th><th class="nosort"></th></tr>
+                        <tr class="heads"><th class="rn" data-k="_num" onclick="vcSort('_num')" title="Catalog number. Click to sort by it.">#</th><th data-k="song" onclick="vcSort('song')">Title</th><th data-k="artist" onclick="vcSort('artist')">Artist</th><th data-k="spotifyId" onclick="vcSort('spotifyId')">Spotify link/ID</th><th data-k="youtubeId" onclick="vcSort('youtubeId')">Youtube Link/ID</th><th data-k="startMs" onclick="vcSort('startMs')">Start time</th><th data-k="enabled" onclick="vcSort('enabled')">Video ON/OFF</th><th data-k="nsfw" onclick="vcSort('nsfw')" title="Is the video suggestive in any way? YES = blocked in Family mode. NO = plays in Family mode. Blank = not checked yet (treated as suggestive).">Suggestive? YES/NO</th><th data-k="isrc" onclick="vcSort('isrc')">ISRC</th><th data-k="notes" onclick="vcSort('notes')">Notes</th><th data-k="kind" onclick="vcSort('kind')" title="What kind of video this is. If a song has several videos, Music video is preferred over Visualizer, then Lyric video, then Audio.">Video type</th><th class="nosort"></th></tr>
                     </thead>
                     <tbody id="vc-body"></tbody>
                 </table>
@@ -336,11 +339,12 @@
     </div>
 
     <datalist id="vc-dl-onoff"><option value="ON"><option value="OFF"></datalist>
+    <datalist id="vc-dl-kind"><option value="Music video"><option value="Visualizer"><option value="Lyric video"><option value="Audio"></datalist>
     <datalist id="vc-dl-nsfw"><option value="NO"><option value="YES"></datalist>
     <div class="vc-modal" id="vc-paste-modal">
         <div class="vc-modal-card">
             <h2 style="margin:0 0 6px;font-size:1.1rem">Paste rows from a spreadsheet</h2>
-            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Title, Artist, Spotify link/ID, Youtube Link/ID, Start time, Video ON/OFF, Suggestive? YES/NO (YES = the video is suggestive), ISRC, Notes. A header row is skipped. Spotify link/ID and ISRC can be left blank. Rows with a Spotify ID already in the catalog update that row.</p>
+            <p class="vc-help" style="margin-bottom:10px">Columns in this order: Title, Artist, Spotify link/ID, Youtube Link/ID, Start time, Video ON/OFF, Suggestive? YES/NO (YES = the video is suggestive), ISRC, Notes, Video type (Music video, Visualizer, Lyric video or Audio; optional). A header row is skipped. Spotify link/ID and ISRC can be left blank. Rows with a Spotify ID already in the catalog update that row.</p>
             <textarea id="vc-paste-text" placeholder="Paste here"></textarea>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
                 <button class="btn btn-admin" onclick="document.getElementById('vc-paste-modal').classList.remove('show')">Cancel</button>
@@ -534,7 +538,7 @@
     </script>
     <script>
         /* ===================== Videos tab (curated catalog) ===================== */
-        const VC_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'enabled', 'nsfw', 'isrc', 'notes'];
+        const VC_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'enabled', 'nsfw', 'isrc', 'notes', 'kind'];
         const VC_TEXT_FIELDS = ['song', 'artist', 'spotifyId', 'youtubeId', 'startMs', 'isrc', 'notes'];
         const VC_RENDER_CAP = 600;
         let vcRows = [];            // saved rows, as the server has them
@@ -663,6 +667,7 @@
             return [r.song, r.artist, r.spotifyId, r.youtubeId, r.isrc, r.notes].join(' ').toLowerCase().includes(q);
         }
 
+        function vcShowKind(v) { return v === 'video' ? 'Music video' : v === 'visualizer' ? 'Visualizer' : v === 'lyric' ? 'Lyric video' : v === 'audio' ? 'Audio' : String(v == null ? '' : v); }
         function vcShowOnOff(v) { return typeof v === 'boolean' ? (v ? 'ON' : 'OFF') : String(v == null ? '' : v); }
         function vcShowNsfw(v) { return v === 'yes' ? 'YES' : v === 'no' ? 'NO' : String(v == null ? '' : v); }
         // Colour the cell so the state reads at a glance: green NO, red YES (suggestive), amber not set.
@@ -706,6 +711,7 @@
                 ${txt('nsfw', vcShowNsfw(r.nsfw), 'c-nsfw ' + (r._raw ? '' : vcNsfwClass(r.nsfw)), 'not set', 'vc-dl-nsfw')}
                 ${txt('isrc', r.isrc || '', 'c-isrc')}
                 ${txt('notes', r.notes || '', 'c-notes')}
+                ${txt('kind', vcShowKind(r.kind), 'c-kind', 'not set', 'vc-dl-kind')}
                 <td class="c-act"><span class="tick">✓</span>
                     <button class="act-btn" data-act="preview" title="Preview, and mark the start time">▶</button>
                     <button class="act-btn" data-act="spotify" title="Search Spotify to fill this row">🔍</button>
@@ -780,6 +786,7 @@
                 if (f === 'startMs') el.value = vcFmtStart(row.startMs);
                 else if (f === 'enabled') el.value = vcShowOnOff(!!row.enabled);
                 else if (f === 'nsfw') { el.value = vcShowNsfw(row.nsfw); vcTintNsfw(tr, row.nsfw); }
+                else if (f === 'kind') el.value = vcShowKind(row.kind);
                 else el.value = row[f] || '';
             });
         }
@@ -1011,7 +1018,7 @@
             youtube: 'youtubeId', youtubeid: 'youtubeId', youtubelinkid: 'youtubeId',
             songstartsat: 'startMs', startsat: 'startMs', start: 'startMs', startms: 'startMs', starttime: 'startMs',
             enabled: 'enabled', videoonoff: 'enabled', videoon: 'enabled', nsfw: 'nsfw', nsfwyesno: 'nsfw', suggestive: 'nsfw', suggestiveyesno: 'nsfw', content: 'nsfw', cleanexplicit: 'nsfw', explicit: 'nsfw',
-            isrc: 'isrc', notes: 'notes' };
+            isrc: 'isrc', notes: 'notes', videotype: 'kind', type: 'kind', kind: 'kind' };
         function vcImportCsv(input) {
             const file = input.files && input.files[0];
             input.value = '';
@@ -1035,10 +1042,10 @@
         }
         function vcExportCsv() {
             const esc = v => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-            const head = ['id', 'Title', 'Artist', 'Spotify link/ID', 'Youtube Link/ID', 'Start time', 'Video ON/OFF', 'NSFW YES/NO', 'ISRC', 'Notes'];
+            const head = ['id', 'Title', 'Artist', 'Spotify link/ID', 'Youtube Link/ID', 'Start time', 'Video ON/OFF', 'NSFW YES/NO', 'ISRC', 'Notes', 'Video type'];
             const lines = [head.join(',')];
             vcRows.slice().sort(vcCompare).forEach(r => lines.push([r.id, r.song, r.artist, r.spotifyId, r.youtubeId, vcFmtStart(r.startMs),
-                r.enabled ? 'ON' : 'OFF', r.nsfw === 'yes' ? 'YES' : r.nsfw === 'no' ? 'NO' : '', r.isrc, r.notes].map(esc).join(',')));
+                r.enabled ? 'ON' : 'OFF', r.nsfw === 'yes' ? 'YES' : r.nsfw === 'no' ? 'NO' : '', r.isrc, r.notes, vcShowKind(r.kind)].map(esc).join(',')));
             const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -1084,7 +1091,7 @@
             vcClosePanel();
             const el = document.createElement('tr');
             el.className = 'panel';
-            el.innerHTML = `<td colspan="11">${html}</td>`;
+            el.innerHTML = `<td colspan="12">${html}</td>`;
             tr.after(el);
             vcPanel = { tr, el, kind, player: null, timer: null };
             return el;
