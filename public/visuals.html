@@ -1370,7 +1370,7 @@
             mvPendingMeta = { title: sb.title, artist: sb.artist };
             try {
                 st.playIssuedAt = Date.now();
-                st.yt.seekTo(target + mvPlayLatencyMs / 1000, true);
+                st.yt.seekTo(mvStartSecWithLatency(mvPlayLatencyMs), true);
                 st.yt.playVideo();
             } catch (e) { return false; }
             warm = { slot, trackId, at: Date.now(), lastSeek: Date.now(), seeks: 0, cold: !mvRevealed };
@@ -1430,7 +1430,7 @@
             if (Date.now() - w.lastSeek > 450 && w.seeks < 3) {
                 w.seeks++; w.lastSeek = Date.now();
                 st.playIssuedAt = Date.now();
-                try { st.yt.seekTo(mvTargetSec() + mvPlayLatencyMs / 1000, true); } catch (e) { /* ignore */ }
+                try { st.yt.seekTo(mvStartSecWithLatency(mvPlayLatencyMs), true); } catch (e) { /* ignore */ }
             }
         }
 
@@ -1445,6 +1445,9 @@
             const endAt = songClock.base + songClock.durationMs;
             const now = Date.now();
             if (standby && standby.status === 'parked' && standby.afterTrackId === songClock.trackId && !pendingSlot) {
+                // A next video with a NEGATIVE start time has to wait until its moment; the normal
+                // track-change path (mvHoldForCrossfade) handles that, not this early cut.
+                if ((standby.startMs || 0) + mvVideoLeadMs < 0) return;
                 if (now >= endAt - mvPlayLatencyMs) {
                     const sb = standby;
                     const from = songClock.trackId;
@@ -1939,6 +1942,20 @@
             return Math.max(0, (posMs + mvVideoLeadMs + mvIntroOffsetMs) / 1000);
         }
 
+        // Same as mvTargetSec() but NOT clamped at 0: negative while a video whose
+        // start time is negative (e.g. -0:05 = "begin 5s after the song starts") is
+        // still waiting for its moment. Only used to time loads and cut-overs.
+        function mvTargetSecRaw() {
+            if (!mvClock) return 0;
+            const posMs = mvClock.isPlaying ? (Date.now() - mvClock.base) : mvClock.pausedPosMs;
+            return (posMs + mvVideoLeadMs + mvIntroOffsetMs) / 1000;
+        }
+        // Where to tell a player to start so that it LANDS on the right frame once the
+        // load/seek has taken latencyMs to resume. Never below 0 (a video can't start before its beginning).
+        function mvStartSecWithLatency(latencyMs) {
+            return Math.max(0, mvTargetSecRaw() + latencyMs / 1000);
+        }
+
         function mvSampleReading() {
             const st = players[activeSlot];
             if (!st.ready) return;
@@ -2298,7 +2315,7 @@
             st.seekIssuedAt = Date.now();
             st.lastSeekAt = st.seekIssuedAt;
             if (slot === activeSlot) mvLastCorrectionAt = st.seekIssuedAt;
-            st.yt.loadVideoById({ videoId, startSeconds: mvTargetSec() + mvSeekLatencyMs / 1000, suggestedQuality: 'hd1080' });
+            st.yt.loadVideoById({ videoId, startSeconds: mvStartSecWithLatency(mvSeekLatencyMs), suggestedQuality: 'hd1080' });
             mvSetRate(slot, 1);
             if (mvClock && !mvClock.isPlaying) st.yt.pauseVideo();
             applySubtitlesSetting(slot);
@@ -2435,18 +2452,34 @@
             clearTimeout(mvGatePollTimer); mvGatePollTimer = null;
             clearTimeout(mvGateInfoTimer); mvGateInfoTimer = null;
         }
+        // Song position (ms) at which a video with a NEGATIVE start time has to be loaded
+        // so it begins on time (0 for ordinary start times, or when this song has no video).
+        function mvNegativeStartReleaseMs(data) {
+            if (!(data.enabled && data.matched && data.videoId)) return 0;
+            const off = Number(data.introOffsetMs);
+            if (!Number.isFinite(off) || off >= 0) return 0;
+            const lead = (typeof data.videoOffsetMs === 'number' && Number.isFinite(data.videoOffsetMs)) ? data.videoOffsetMs : mvVideoLeadMs;
+            return Math.max(0, -(off + lead) - mvSeekLatencyMs);
+        }
+        function mvSongPosNowMs(data, receivedAt) {
+            const serverNow = Number.isFinite(data.serverNow) ? data.serverNow : receivedAt;
+            const age = Math.max(0, serverNow - (data.updatedAt || serverNow));
+            return (data.progressMs || 0) + age + (Date.now() - receivedAt);
+        }
         function mvHoldForCrossfade(data, receivedAt) {
             if (!mvRevealed || !data.trackId || !data.isPlaying || data.trackId === currentVideoTrackId ||
                 visualsForceQueue || data.override || mvExpectedSwitch ||
                 (pendingSlot && pendingTrackId === data.trackId)) { mvClearGateTimers(); return false; }
             const rem = songRemainingMs();
-            if (rem === null || rem > MV_NATURAL_TRANSITION_WINDOW_MS) { mvClearGateTimers(); return false; }
-            const serverNow = Number.isFinite(data.serverNow) ? data.serverNow : receivedAt;
-            const age = Math.max(0, serverNow - (data.updatedAt || serverNow));
-            const posNow = (data.progressMs || 0) + age + (Date.now() - receivedAt);
-            if (posNow >= MV_SWITCH_AFTER_SONG_START_MS) { mvClearGateTimers(); return false; }
+            const natural = rem !== null && rem <= MV_NATURAL_TRANSITION_WINDOW_MS;
+            // When to cut: 6s into a crossfaded song, or later if this video's start time is
+            // negative (it should begin N seconds AFTER the song starts). A manual skip has no 6s wait.
+            const releaseMs = Math.max(natural ? MV_SWITCH_AFTER_SONG_START_MS : 0, mvNegativeStartReleaseMs(data));
+            if (releaseMs <= 0) { mvClearGateTimers(); return false; }
+            const posNow = mvSongPosNowMs(data, receivedAt);
+            if (posNow >= releaseMs) { mvClearGateTimers(); return false; }
 
-            const infoAt = MV_SWITCH_AFTER_SONG_START_MS - MV_INFO_LEAD_BEFORE_SWITCH_MS;
+            const infoAt = Math.max(0, releaseMs - MV_INFO_LEAD_BEFORE_SWITCH_MS);
             const title = data.title || '', artist = data.artist || '';
             const showInfo = () => {
                 if (mvInfoPreview && mvInfoPreview.trackId === data.trackId) return;
@@ -2458,7 +2491,7 @@
 
             // Wake up exactly when the cut is due instead of waiting for the next 1s poll.
             clearTimeout(mvGatePollTimer);
-            mvGatePollTimer = setTimeout(pollMusicVideo, MV_SWITCH_AFTER_SONG_START_MS - posNow + 40);
+            mvGatePollTimer = setTimeout(pollMusicVideo, releaseMs - posNow + 40);
             return true;
         }
 
@@ -2537,7 +2570,15 @@
                     const inProgressForThisTrack = musicVideoActive &&
                         (currentVideoTrackId === data.trackId || pendingTrackId === data.trackId);
                     if (!inProgressForThisTrack) {
-                        startMusicVideo(data.videoId, data.trackId);
+                        // Negative start time (e.g. -0:05): nothing to show yet, so the queue /
+                        // ambient screen carries on until the video's moment arrives.
+                        const waitMs = mvNegativeStartReleaseMs(data) - mvSongPosNowMs(data, receivedAt);
+                        if (data.isPlaying && waitMs > 0) {
+                            clearTimeout(mvGatePollTimer);
+                            mvGatePollTimer = setTimeout(pollMusicVideo, waitMs + 40);
+                        } else {
+                            startMusicVideo(data.videoId, data.trackId);
+                        }
                     }
                 } else if (musicVideoActive) {
                     // "No match" is only allowed to end a video that's
