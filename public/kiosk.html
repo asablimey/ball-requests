@@ -5,11 +5,13 @@
     <script>(function(){var s=location.pathname.split("/")[2]||"";CrowdTheme.use("crowddj_theme_kiosk_"+s);CrowdTheme.follow("kiosk",s);})();</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/assets/cuelistr-icon.svg">
     <link rel="icon" type="image/png" href="/assets/favicon.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Khula:wght@600&display=swap">
-    <title>Kiosk</title>
+    <title>Cuelistr Kiosk</title>
     <style>
         :root {
             --spotify-green: #1DB954;
@@ -692,7 +694,7 @@
 
     <div class="container">
         <div class="header">
-            <h1 id="event-name-header">crowdDJ</h1>
+            <h1 id="event-name-header">Cuelistr</h1>
             <div class="credits-container">
                 <div class="top-pill-row">
                     <button id="connect-spotify-btn" class="pill-btn connect-spotify-btn" onclick="handleSpotifyConnectClick()">
@@ -850,7 +852,7 @@
                 if (spotifyBtn) spotifyBtn.style.display = data.spotifyConnectEnabled === false ? 'none' : '';
 
                 const nameHeader = document.getElementById('event-name-header');
-                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'crowdDJ';
+                const newName = (data.eventName && data.eventName.trim() !== '') ? data.eventName.trim() : 'Cuelistr';
                 if (nameHeader.innerText !== newName) {
                     nameHeader.innerText = newName;
                     // Tab title stays "Kiosk" here (unlike the guest page) so it's
