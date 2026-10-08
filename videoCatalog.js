@@ -21,6 +21,7 @@
 const CATALOG_KEY = 'video-catalog:rows';
 const CACHE_TTL_MS = 120 * 1000;      // safety net only; writes invalidate immediately
 const MAX_START_MS = 10 * 60 * 1000;  // an intro longer than 10 minutes is a typo
+const MIN_START_MS = -2 * 60 * 1000;  // negative = the video starts this long AFTER the song starts (e.g. -0:05)
 const MAX_ROWS = 20000;
 
 // ---------- parsing / normalising -------------------------------------------
@@ -57,16 +58,20 @@ function parseIsrc(input) {
 function parseStartMs(input) {
     if (input === null || input === undefined || input === '') return 0;
     if (typeof input === 'number') {
-        return Number.isFinite(input) && input >= 0 && input <= MAX_START_MS ? Math.round(input) : null;
+        return Number.isFinite(input) && input >= MIN_START_MS && input <= MAX_START_MS ? Math.round(input) : null;
     }
     const s = String(input).trim();
     if (!s) return 0;
-    if (!/^\d+(\.\d+)?(:\d+(\.\d+)?){0,2}$/.test(s)) return null;
-    const parts = s.split(':').map(Number);
+    // A leading minus (or the typographic "\u2212") means the video begins AFTER the song has started.
+    const m = /^([-\u2212]?)(.*)$/.exec(s);
+    const neg = m[1] !== '';
+    const body = m[2].trim();
+    if (!/^\d+(\.\d+)?(:\d+(\.\d+)?){0,2}$/.test(body)) return null;
+    const parts = body.split(':').map(Number);
     let seconds = 0;
     for (const p of parts) seconds = seconds * 60 + p;
-    const ms = Math.round(seconds * 1000);
-    return ms >= 0 && ms <= MAX_START_MS ? ms : null;
+    const ms = Math.round(seconds * 1000) * (neg ? -1 : 1);
+    return ms >= MIN_START_MS && ms <= MAX_START_MS ? (ms === 0 ? 0 : ms) : null;
 }
 
 // "Video ON/OFF" column. Returns true/false, `fallback` for blank, null if unrecognised.
@@ -77,6 +82,19 @@ function parseOnOff(input, fallback) {
     if (s === '') return fallback;
     if (['on', 'true', 'yes', 'y', '1', 'x', '✓'].includes(s)) return true;
     if (['off', 'false', 'no', 'n', '0'].includes(s)) return false;
+    return null;
+}
+
+// "Video type" column: what kind of video this row is. When a song has several
+// usable videos, Music video is preferred over Visualizer, then Lyric video, then Audio.
+// Returns 'video' | 'visualizer' | 'lyric' | 'audio' | '' (blank), or null if unrecognised.
+function parseKind(input) {
+    const s = String(input == null ? '' : input).trim().toLowerCase().replace(/[^a-z]/g, '');
+    if (!s) return '';
+    if (['video', 'musicvideo', 'officialvideo', 'officialmusicvideo', 'mv', 'official'].includes(s)) return 'video';
+    if (['visualizer', 'visualiser', 'viz', 'officialvisualizer', 'officialvisualiser'].includes(s)) return 'visualizer';
+    if (['lyric', 'lyrics', 'lyricvideo'].includes(s)) return 'lyric';
+    if (['audio', 'officialaudio', 'topic'].includes(s)) return 'audio';
     return null;
 }
 
@@ -160,6 +178,7 @@ function normalizeInput(input, existing) {
         startMs: base.startMs || 0,
         enabled: base.enabled !== false,
         nsfw: base.nsfw === 'yes' || base.nsfw === 'no' ? base.nsfw : '',
+        kind: ['video', 'visualizer', 'lyric', 'audio'].includes(base.kind) ? base.kind : '',
         isrc: base.isrc || '',
         notes: has('notes') ? clampStr(src.notes, 500) : (base.notes || '')
     };
@@ -175,7 +194,7 @@ function normalizeInput(input, existing) {
     }
     if (has('startMs')) {
         const v = parseStartMs(src.startMs);
-        if (v === null) errors.startMs = 'Use seconds (12.5) or m:ss (1:02.5), 0 to 10:00.';
+        if (v === null) errors.startMs = 'Use seconds (12.5) or m:ss (1:02.5), 0 to 10:00. A minus (-0:05) makes the video start that long after the song starts.';
         else row.startMs = v;
     }
     if (has('isrc')) {
@@ -192,6 +211,11 @@ function normalizeInput(input, existing) {
         const v = parseNsfw(src.nsfw);
         if (v === null) errors.nsfw = 'Use YES (suggestive) or NO (or leave blank).';
         else row.nsfw = v;
+    }
+    if (has('kind')) {
+        const v = parseKind(src.kind);
+        if (v === null) errors.kind = 'Use Music video, Visualizer, Lyric video or Audio (or leave blank).';
+        else row.kind = v;
     }
     return { row, errors };
 }
@@ -265,11 +289,14 @@ module.exports = function createVideoCatalog({ redis }) {
         return 'r_' + Date.now().toString(36) + idCounter.toString(36).padStart(3, '0') + Math.random().toString(36).slice(2, 5);
     }
 
+    // Lower = preferred. Blank (unlabelled, e.g. older rows) sits between a real music video and a visualizer.
+    const KIND_RANK = { video: 0, '': 1, visualizer: 2, lyric: 3, audio: 4 };
     function pickBest(list, familyMode) {
         // A row that is enabled and has a video always beats one that does not.
-        // Among those, when a song has two videos (a suggestive one and a
-        // family-friendly one) the choice follows Family mode: ON prefers the row
-        // marked Suggestive = NO, OFF prefers the other one. Then the newest edit.
+        // Among usable rows the order is:
+        //   1. Family mode: ON prefers Suggestive = NO, OFF prefers the other one.
+        //   2. Video type: Music video, then (blank), Visualizer, Lyric video, Audio.
+        //   3. The newest edit.
         const want = familyMode ? (r => r.nsfw === 'no' ? 1 : 0) : (r => r.nsfw === 'no' ? 0 : 1);
         return [...list].sort((a, b) => {
             const sa = (a.enabled && a.youtubeId) ? 1 : 0, sb = (b.enabled && b.youtubeId) ? 1 : 0;
@@ -277,6 +304,10 @@ module.exports = function createVideoCatalog({ redis }) {
             if (sa) {
                 const wa = want(a), wb = want(b);
                 if (wa !== wb) return wb - wa;
+            }
+            if (sa) {
+                const ka = KIND_RANK[a.kind || ''], kb = KIND_RANK[b.kind || ''];
+                if (ka !== kb) return ka - kb;
             }
             return (b.updatedAt || 0) - (a.updatedAt || 0);
         })[0];
@@ -405,5 +436,5 @@ module.exports = function createVideoCatalog({ redis }) {
     }
 
     return { lookup, list, stats, upsert, upsertMany, remove, invalidate,
-             parse: { parseYouTubeId, parseSpotifyId, parseIsrc, parseStartMs, titleKey, coreTitle, artistKeys } };
+             parse: { parseKind, parseYouTubeId, parseSpotifyId, parseIsrc, parseStartMs, titleKey, coreTitle, artistKeys } };
 };
