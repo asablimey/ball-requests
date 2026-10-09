@@ -5551,12 +5551,28 @@ const SCHEDULER_FAST_POLL_MS = 1000;
 const nowPlayingLastSyncedAt = new Map();
 
 let isSyncingAllEvents = false;
+let syncAllStartedAt = 0;
+const noSpotifyLoginLoggedAt = new Map();
 async function syncAllLoadedEvents() {
-    if (isSyncingAllEvents) return;
+    if (isSyncingAllEvents) {
+        // A tick that never finishes (e.g. a Spotify request that hangs) used to freeze
+        // every later poll forever. Give up on it after a minute and carry on.
+        if (Date.now() - syncAllStartedAt < 60000) return;
+        console.error('[SYNC] Previous now-playing tick was stuck for over 60s - resetting.');
+    }
     isSyncingAllEvents = true;
+    syncAllStartedAt = Date.now();
     try {
         const loaded = events.getLoadedEvents();
         const connected = loaded.filter(e => e.spotify.djRefreshToken);
+        // Say so (every 5 minutes) when an event is skipped for having no saved Spotify
+        // login - otherwise now-playing just silently never updates.
+        loaded.filter(e => !e.spotify.djRefreshToken).forEach(e => {
+            if (Date.now() - (noSpotifyLoginLoggedAt.get(e.slug) || 0) > 300000) {
+                noSpotifyLoginLoggedAt.set(e.slug, Date.now());
+                console.log(`[SPOTIFY SYNC] (${e.slug}) No saved Spotify login for this event - now playing is not being read. Connect Spotify in Admin -> Settings.`);
+            }
+        });
         // Now-playing sync only matters (and only works) for events with
         // Spotify connected. The scheduler tick, though, runs for every
         // loaded event - even one with no Spotify connection yet still has
@@ -5595,7 +5611,14 @@ setInterval(syncAllLoadedEvents, SCHEDULER_FAST_POLL_MS);
 // the live "Now Playing" bar. Only ever exposes playback state, nothing about
 // the connected account itself.
 app.get('/e/:slug/api/now-playing', publicReadLimiter, (req, res) => {
-    res.json(req.event.cachedNowPlaying);
+    // spotifyLinked / lastPolledAt / serverNow are diagnostics: they show whether this
+    // event has a saved Spotify login and whether the background sync is actually running.
+    res.json({
+        ...req.event.cachedNowPlaying,
+        spotifyLinked: !!(req.event.spotify && req.event.spotify.djRefreshToken),
+        lastPolledAt: nowPlayingLastSyncedAt.get(req.event.slug) || null,
+        serverNow: Date.now()
+    });
 });
 
 // Public (no admin auth) - whatever eventually renders the Ambient Visuals
