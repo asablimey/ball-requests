@@ -2859,6 +2859,7 @@ function buildSortedQueue(event) {
         artist: t.artist,
         artwork: t.artwork,
         explicit: t.explicit,
+        year: t.year || null,
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
@@ -2875,6 +2876,7 @@ function buildSortedQueueForAdmin(event) {
         artist: t.artist,
         artwork: t.artwork,
         explicit: t.explicit,
+        year: t.year || null,
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
@@ -2951,6 +2953,7 @@ function markTrackPlayedByIndex(event, trackIndex) {
         artist: track.artist,
         artwork: track.artwork,
         explicit: track.explicit,
+        year: track.year || null,
         duration: track.duration,
         requesters: track.requesters || []
     });
@@ -3650,6 +3653,7 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms),
+                year: releaseYear,
                 _releaseYear: releaseYear,
                 _primaryArtistId: track.artists?.[0]?.id || null,
                 _albumName: track.album?.name || ''
@@ -3796,6 +3800,7 @@ function buildRequestHandler(isKiosk) {
                 durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below - `duration` above is already formatted for display
             };
             releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
+            verifiedTrack.year = releaseYear;
             primaryArtistId = t.artists?.[0]?.id || null;
         } catch (err) {
             return res.status(500).json({ error: "Could not verify track with Spotify." });
@@ -3872,6 +3877,7 @@ function buildRequestHandler(isKiosk) {
                 artist: verifiedTrack.artist,
                 artwork: verifiedTrack.artwork,
                 explicit: verifiedTrack.explicit,
+                year: verifiedTrack.year || null,
                 duration: verifiedTrack.duration,
                 upvoters: [],
                 downvoters: [],
@@ -5150,6 +5156,7 @@ app.get('/e/:slug/api/admin/blocklist-search', async (req, res) => {
             name: t.name,
             artist: (t.artists || []).map(a => a.name).join(', '),
             artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null,
             blocked: isTrackBlocked(event, t.id)
         }));
 
@@ -5195,6 +5202,7 @@ app.get('/e/:slug/api/admin/search', async (req, res) => {
             name: track.name,
             artist: (track.artists || []).map(a => a.name).join(', '),
             artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            year: parseInt((track.album?.release_date || '').slice(0, 4), 10) || null,
             explicit: track.explicit || false,
             duration: formatDuration(track.duration_ms)
         }));
@@ -5235,7 +5243,8 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
         artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
         explicit: t.explicit || false,
         duration: formatDuration(t.duration_ms || 0),
-        durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below
+        durationMs: t.duration_ms || 0, // raw ms, for the music-video eager verification trigger below
+        year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null
     };
     const requesterName = (typeof label === 'string' && label.trim() !== '') ? label.trim().slice(0, 30) : 'DJ Added';
 
@@ -5250,6 +5259,7 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
             artist: verifiedTrack.artist,
             artwork: verifiedTrack.artwork,
             explicit: verifiedTrack.explicit,
+            year: verifiedTrack.year || null,
             duration: verifiedTrack.duration,
             upvoters: [],
             downvoters: [],
