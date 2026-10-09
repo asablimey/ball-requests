@@ -616,7 +616,7 @@ function findActiveRuleAmong(candidateRules, event, now) {
     return null;
 }
 
-// Music-lane rules only (crowdDJ/Karaoke) - this is what actually drives
+// Music-lane rules only (Cuelistr/Karaoke) - this is what actually drives
 // playlist switching, volume, and requests-open/closed, so an Ambient
 // Visuals block (laneType 'ambient') or a Music Videos block (laneType
 // 'musicvideo') must never be returned here even though they live in the
@@ -2575,7 +2575,7 @@ function findOverlappingRulePair(rules) {
     return null;
 }
 
-// crowdDJ and Karaoke share one physical output (the venue's speakers), so
+// Cuelistr and Karaoke share one physical output (the venue's speakers), so
 // they're checked as a single "music" group - two music blocks can never
 // overlap regardless of which of those two lanes either one is in (mirrors
 // the existing "share the lane's blocks as solid" behavior). Ambient Visuals
@@ -5440,7 +5440,8 @@ async function syncNowPlayingForEvent(event) {
                 title: t.name,
                 artist: (t.artists || []).map(a => a.name).join(', '),
                 artwork: t.album?.images?.[0]?.url || null,
-                durationMs: t.duration_ms || 0
+                durationMs: t.duration_ms || 0,
+                year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null
             }));
 
             // Item 1: a track can reach Spotify's own queue without ever
@@ -5465,6 +5466,7 @@ async function syncNowPlayingForEvent(event) {
             title: item?.name || null,
             artist: item ? (item.artists || []).map(a => a.name).join(', ') : null,
             artwork: item?.album?.images?.[0]?.url || null,
+            year: parseInt((item?.album?.release_date || '').slice(0, 4), 10) || null,
             progressMs: data.progress_ms || 0,
             durationMs: item?.duration_ms || 0,
             updatedAt: Date.now(),
@@ -5649,7 +5651,7 @@ async function mvBuildClockAndNext(event, vcfg, runtime, np) {
     };
     const up = Array.isArray(np.upcoming) ? np.upcoming[0] : null;
     if (!up || !up.id) return { clock, next: null };
-    const next = { trackId: up.id, title: up.title || '', artist: up.artist || '', durationMs: up.durationMs || 0, videoId: null, startMs: 0, known: false };
+    const next = { trackId: up.id, title: up.title || '', artist: up.artist || '', durationMs: up.durationMs || 0, year: up.year || null, videoId: null, startMs: 0, known: false };
     try {
         const forceVideos = !!vcfg.musicVideosEnabled;
         let allowed = true;
@@ -5982,7 +5984,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
-        title: np.title, artist: np.artist,
+        title: np.title, artist: np.artist, year: np.year || null,
         introOffsetMs: mvOffsetNow,
         source: runtime.cache.source || null,
         trackId: np.trackId,
