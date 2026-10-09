@@ -1178,8 +1178,8 @@
         let mvNextInfo = null;         // {trackId, videoId, startMs, title, artist, durationMs, known}
         let mvLastPoll = null;         // last /api/music-video reply
         let mvLastPollAt = 0;
-        let mvTrackMeta = { title: '', artist: '' };     // title/artist of the song whose video is on screen
-        let mvPendingMeta = { title: '', artist: '' };   // same, for the video in the (slower) pending handoff
+        let mvTrackMeta = { title: '', artist: '', year: null };     // title/artist of the song whose video is on screen
+        let mvPendingMeta = { title: '', artist: '', year: null };   // same, for the video in the (slower) pending handoff
         let mvPlayLatencyMs = 120;     // learned: how long playVideo() takes to start moving frames
         let mvExpectedSwitch = null;   // {from, to, at}: we switched on our own prediction; ignore stale polls for `from`
         let standby = null;            // the parked next video: {slot, trackId, videoId, afterTrackId, startSec, status, ...}
@@ -1239,7 +1239,7 @@
             standby = {
                 slot, trackId: nx.trackId, videoId: nx.videoId, afterTrackId: songClock ? songClock.trackId : null,
                 startSec, startMs: nx.startMs || 0, status: 'loading', since: Date.now(), tries: (standby && standby.trackId === nx.trackId ? standby.tries : 0),
-                title: nx.title || '', artist: nx.artist || '', durationMs: nx.durationMs || 0, parkedSec: null, lastSeekAt: 0
+                title: nx.title || '', artist: nx.artist || '', year: nx.year || null, durationMs: nx.durationMs || 0, parkedSec: null, lastSeekAt: 0
             };
             st.currentRate = null; st.holdingEnd = false; st.playIssuedAt = null; st.graceUntil = 0;
             document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
@@ -1317,7 +1317,7 @@
             standby = null;
             activeSlot = newSlot;
             currentVideoTrackId = sb.trackId; currentVideoId = sb.videoId;
-            mvTrackMeta = { title: sb.title, artist: sb.artist };
+            mvTrackMeta = { title: sb.title, artist: sb.artist, year: sb.year || null };
             mvNextInfo = null;
             mvFromCatalog = true;
             mvIntroOffsetMs = sb.startMs || 0; // this video's own start point, until the first real reading confirms it
@@ -1367,7 +1367,7 @@
             const st = players[sb.slot];
             const slot = sb.slot;
             standby = null;
-            mvPendingMeta = { title: sb.title, artist: sb.artist };
+            mvPendingMeta = { title: sb.title, artist: sb.artist, year: sb.year || null };
             try {
                 st.playIssuedAt = Date.now();
                 st.yt.seekTo(mvStartSecWithLatency(mvPlayLatencyMs), true);
@@ -1389,7 +1389,7 @@
                 document.getElementById(`video-loading-cover-${slot}`).classList.remove('is-hidden', 'is-hidden-instant');
                 activeSlot = slot;
                 currentVideoTrackId = trackId; currentVideoId = videoId;
-                mvTrackMeta = { title: sb.title, artist: sb.artist };
+                mvTrackMeta = { title: sb.title, artist: sb.artist, year: sb.year || null };
                 mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null; mvRevealReadySince = null;
                 clearTimeout(mvLoadTimeout);
                 mvLoadTimeout = setTimeout(() => {
@@ -2015,7 +2015,9 @@
             const prev = (mvInfoPreview && Date.now() < mvInfoPreview.until) ? mvInfoPreview : null;
             if (nearStart || nearEnd || prev) {
                 document.getElementById('mv-info-title').innerText = prev ? (prev.title || mvTrackMeta.title || npLiveTitle) : (mvTrackMeta.title || npLiveTitle);
-                document.getElementById('mv-info-artist').innerText = prev ? (prev.artist || mvTrackMeta.artist || npLiveArtist) : (mvTrackMeta.artist || npLiveArtist);
+                const artistText = prev ? (prev.artist || mvTrackMeta.artist || npLiveArtist) : (mvTrackMeta.artist || npLiveArtist);
+                const yearText = prev ? prev.year : mvTrackMeta.year; // release year, shown like: Calvin Harris (2011)
+                document.getElementById('mv-info-artist').innerText = (artistText && yearText) ? `${artistText} (${yearText})` : artistText;
                 pop.classList.add('is-visible');
             } else {
                 pop.classList.remove('is-visible');
@@ -2297,7 +2299,7 @@
             // read whichever slot activeSlot points to, so drift correction
             // picks the new one up automatically from the next tick.
             players[newSlot].holdingEnd = false;
-            mvTrackMeta = { title: mvPendingMeta.title, artist: mvPendingMeta.artist };
+            mvTrackMeta = { title: mvPendingMeta.title, artist: mvPendingMeta.artist, year: mvPendingMeta.year || null };
             mvLastCorrectionAt = Date.now();
             mvConsecutiveBigDrifts = 0;
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
@@ -2342,7 +2344,7 @@
                 // visuals between two music videos.
                 const slot = otherSlot(activeSlot);
                 pendingSlot = slot; pendingVideoId = videoId; pendingTrackId = trackId; pendingReadySince = null;
-                mvPendingMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '' };
+                mvPendingMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '', year: (mvLastPoll && mvLastPoll.year) || null };
                 loadIntoSlot(slot, videoId);
                 clearTimeout(pendingLoadTimeout);
                 pendingLoadTimeout = setTimeout(() => {
@@ -2368,7 +2370,7 @@
             // below) reveals it once confirmed in sync (item 6).
             currentVideoTrackId = trackId;
             currentVideoId = videoId;
-            mvTrackMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '' };
+            mvTrackMeta = { title: (mvLastPoll && mvLastPoll.title) || '', artist: (mvLastPoll && mvLastPoll.artist) || '', year: (mvLastPoll && mvLastPoll.year) || null };
             mvFlaggedBad = false; mvErrorRetries = 0; mvSoftMissSince = null;
             mvRevealReadySince = null;
             loadIntoSlot(activeSlot, videoId);
@@ -2480,10 +2482,10 @@
             if (posNow >= releaseMs) { mvClearGateTimers(); return false; }
 
             const infoAt = Math.max(0, releaseMs - MV_INFO_LEAD_BEFORE_SWITCH_MS);
-            const title = data.title || '', artist = data.artist || '';
+            const title = data.title || '', artist = data.artist || '', year = data.year || null;
             const showInfo = () => {
                 if (mvInfoPreview && mvInfoPreview.trackId === data.trackId) return;
-                mvInfoPreview = { trackId: data.trackId, title, artist, until: Date.now() + MV_INFO_POPUP_WINDOW_SEC * 1000 };
+                mvInfoPreview = { trackId: data.trackId, title, artist, year, until: Date.now() + MV_INFO_POPUP_WINDOW_SEC * 1000 };
             };
             clearTimeout(mvGateInfoTimer); mvGateInfoTimer = null;
             if (posNow >= infoAt) showInfo();
@@ -2561,7 +2563,7 @@
                 mvLastPollAt = receivedAt;
                 if (data.clock) updateSongClock(data.clock, receivedAt);
                 mvNextInfo = data.next && data.next.trackId ? data.next : null;
-                if (data.trackId && data.trackId === currentVideoTrackId && data.title) mvTrackMeta = { title: data.title, artist: data.artist || '' };
+                if (data.trackId && data.trackId === currentVideoTrackId && data.title) mvTrackMeta = { title: data.title, artist: data.artist || '', year: data.year || null };
 
                 if (data.enabled && data.matched && data.videoId) {
                     // Always fold the newest reading into the sync clock first.
