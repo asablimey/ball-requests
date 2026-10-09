@@ -1619,6 +1619,7 @@
                 labelEl.innerText = count === 1 ? 'CREDIT' : 'CREDITS';
             }
         }
+        function artistWithYear(artist, year) { return year ? `${artist} (${year})` : artist; } // e.g. Calvin Harris (2011)
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
             return String(str)
@@ -2033,7 +2034,7 @@
                                     <p class="song-title">${escapeHtml(song.title)}</p>
                                     ${song.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                 </div>
-                                <p class="song-artist">${escapeHtml(song.artist)}</p>
+                                <p class="song-artist">${escapeHtml(artistWithYear(song.artist, song.year))}</p>
                             </div>
                         </div>
                         <div class="actions">
@@ -2059,7 +2060,7 @@
                             <div class="title-wrapper">
                                 <p class="song-title">${escapeHtml(t.title)}</p>
                             </div>
-                            <p class="song-artist">${escapeHtml(t.artist)}</p>
+                            <p class="song-artist">${escapeHtml(artistWithYear(t.artist, t.year))}</p>
                         </div>
                     </div>
                 </div>
@@ -2132,7 +2133,7 @@
                                         <p class="song-title">${escapeHtml(track.name)}</p>
                                         ${track.explicit ? '<span class="explicit-badge">E</span>' : ''}
                                     </div>
-                                    <p class="song-artist">${escapeHtml(track.artist)}</p>
+                                    <p class="song-artist">${escapeHtml(artistWithYear(track.artist, track.year))}</p>
                                 </div>
                             </div>
                             <div class="actions">
