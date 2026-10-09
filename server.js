@@ -5380,6 +5380,7 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
 //   2. Cache the current track/progress so the "Now Playing" bar on all three
 //      pages can poll a cheap local endpoint instead of every browser hitting
 //      Spotify's API directly every few seconds.
+const spotifyErrLoggedAt = new Map();
 const spotifyAccountCache = new Map(); // slug -> { name, at } (diagnostics only)
 async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
@@ -5455,7 +5456,25 @@ async function syncNowPlayingForEvent(event) {
             event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off', spotifyStatus: res.status, spotifyAccount: spotifyAccount.name };
             return;
         }
-        if (!res.ok) return; // leave the last known cache in place on a transient error
+        if (!res.ok) {
+            // Leave the last known playback in place on a transient error, but SAY what Spotify
+            // answered. This used to return silently, which hid rate limits (429), an expired
+            // or revoked login (401), and a missing permission or non-Premium account (403).
+            let errText = '';
+            try { errText = (await res.text()).slice(0, 200); } catch (e) { /* ignore */ }
+            const retryAfter = res.headers && res.headers.get ? res.headers.get('retry-after') : null;
+            const prevNp = event.cachedNowPlaying || {};
+            event.cachedNowPlaying = { ...prevNp, spotifyStatus: res.status, spotifyError: errText || null, retryAfterSec: retryAfter ? Number(retryAfter) : null, spotifyErrorAt: Date.now() };
+            if (Date.now() - (spotifyErrLoggedAt.get(event.slug) || 0) > 60000) {
+                spotifyErrLoggedAt.set(event.slug, Date.now());
+                console.error(`[SPOTIFY SYNC] (${event.slug}) Spotify answered /me/player with HTTP ${res.status}${retryAfter ? ' (retry after ' + retryAfter + 's)' : ''}: ${errText}`);
+            }
+            return;
+        }
+        if (event.cachedNowPlaying && event.cachedNowPlaying.spotifyStatus) {
+            const { spotifyStatus, spotifyError, retryAfterSec, spotifyErrorAt, ...cleaned } = event.cachedNowPlaying;
+            event.cachedNowPlaying = cleaned; // Spotify is answering normally again
+        }
         const data = await res.json();
         const item = data?.item;
 
