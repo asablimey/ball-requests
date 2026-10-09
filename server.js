@@ -616,7 +616,7 @@ function findActiveRuleAmong(candidateRules, event, now) {
     return null;
 }
 
-// Music-lane rules only (crowdDJ/Karaoke) - this is what actually drives
+// Music-lane rules only (Cuelistr/Karaoke) - this is what actually drives
 // playlist switching, volume, and requests-open/closed, so an Ambient
 // Visuals block (laneType 'ambient') or a Music Videos block (laneType
 // 'musicvideo') must never be returned here even though they live in the
@@ -2341,6 +2341,11 @@ function triggerMusicVideoVerification(trackId, artistNamesRaw, title, durationM
 // before this feature existed pick up the defaults instead of crashing on
 // undefined.
 const MUSIC_VIDEO_OFFSET_DEFAULT_MS = 600;
+// How long the song title/artist popup stays up at the start and end of each
+// music video, in seconds. Set in Admin -> Settings -> Content -> Music Videos.
+const MUSIC_VIDEO_INFO_SECONDS_DEFAULT = 30;
+const MUSIC_VIDEO_INFO_SECONDS_MIN = 5;
+const MUSIC_VIDEO_INFO_SECONDS_MAX = 120;
 const MUSIC_VIDEO_OFFSET_MIN_MS = -5000;
 const MUSIC_VIDEO_OFFSET_MAX_MS = 5000;
 function ensureVisualsConfigs(event) {
@@ -2355,6 +2360,9 @@ function ensureVisualsConfigs(event) {
     // visual-display.html, which is the only place this is applied.
     if (typeof v.musicVideoOffsetMs !== 'number' || !Number.isFinite(v.musicVideoOffsetMs)) {
         v.musicVideoOffsetMs = MUSIC_VIDEO_OFFSET_DEFAULT_MS;
+    }
+    if (typeof v.musicVideoInfoSeconds !== 'number' || !Number.isFinite(v.musicVideoInfoSeconds)) {
+        v.musicVideoInfoSeconds = MUSIC_VIDEO_INFO_SECONDS_DEFAULT;
     }
     return v;
 }
@@ -2567,7 +2575,7 @@ function findOverlappingRulePair(rules) {
     return null;
 }
 
-// crowdDJ and Karaoke share one physical output (the venue's speakers), so
+// Cuelistr and Karaoke share one physical output (the venue's speakers), so
 // they're checked as a single "music" group - two music blocks can never
 // overlap regardless of which of those two lanes either one is in (mirrors
 // the existing "share the lane's blocks as solid" behavior). Ambient Visuals
@@ -2851,6 +2859,7 @@ function buildSortedQueue(event) {
         artist: t.artist,
         artwork: t.artwork,
         explicit: t.explicit,
+        year: t.year || null,
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
@@ -2867,6 +2876,7 @@ function buildSortedQueueForAdmin(event) {
         artist: t.artist,
         artwork: t.artwork,
         explicit: t.explicit,
+        year: t.year || null,
         duration: t.duration,
         ups: t.upvoters?.length || 0,
         downs: t.downvoters?.length || 0,
@@ -2943,6 +2953,7 @@ function markTrackPlayedByIndex(event, trackIndex) {
         artist: track.artist,
         artwork: track.artwork,
         explicit: track.explicit,
+        year: track.year || null,
         duration: track.duration,
         requesters: track.requesters || []
     });
@@ -3642,6 +3653,7 @@ app.get('/e/:slug/api/search', publicActionLimiter, async (req, res) => {
                 artwork: track.album?.images[0]?.url || 'https://picsum.photos/48',
                 explicit: track.explicit || false,
                 duration: formatDuration(track.duration_ms),
+                year: releaseYear,
                 _releaseYear: releaseYear,
                 _primaryArtistId: track.artists?.[0]?.id || null,
                 _albumName: track.album?.name || ''
@@ -3788,6 +3800,7 @@ function buildRequestHandler(isKiosk) {
                 durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below - `duration` above is already formatted for display
             };
             releaseYear = parseInt((t.album?.release_date || '').slice(0, 4), 10) || null;
+            verifiedTrack.year = releaseYear;
             primaryArtistId = t.artists?.[0]?.id || null;
         } catch (err) {
             return res.status(500).json({ error: "Could not verify track with Spotify." });
@@ -3864,6 +3877,7 @@ function buildRequestHandler(isKiosk) {
                 artist: verifiedTrack.artist,
                 artwork: verifiedTrack.artwork,
                 explicit: verifiedTrack.explicit,
+                year: verifiedTrack.year || null,
                 duration: verifiedTrack.duration,
                 upvoters: [],
                 downvoters: [],
@@ -4829,6 +4843,16 @@ app.post('/e/:slug/api/admin/visuals/music-video-offset', (req, res) => {
     res.json({ success: true, offsetMs: clamped });
 });
 
+// How many seconds the song info popup shows at each end of a music video.
+app.post('/e/:slug/api/admin/visuals/music-video-info-seconds', (req, res) => {
+    const parsed = Number((req.body || {}).seconds);
+    if (!Number.isFinite(parsed)) return res.status(400).json({ error: 'seconds must be a number.' });
+    const clamped = Math.max(MUSIC_VIDEO_INFO_SECONDS_MIN, Math.min(MUSIC_VIDEO_INFO_SECONDS_MAX, Math.round(parsed)));
+    ensureVisualsConfigs(req.event).musicVideoInfoSeconds = clamped;
+    events.scheduleSave(req.event.slug);
+    res.json({ success: true, seconds: clamped });
+});
+
 // Item 6 (manual admin fallback): lets an admin directly correct a cached
 // match's introOffsetMs without going through family mode - covers the rare
 // case where verification never found a usable reference audio (an obscure
@@ -4887,7 +4911,7 @@ app.get('/e/:slug/api/admin/visuals/music-video-debug', async (req, res) => {
         out.catalog = {
             autoMatchEnabled: MV_AUTO_MATCH,
             ...(await videoCatalog.stats()),
-            thisTrack: np.trackId ? await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }) : null
+            thisTrack: np.trackId ? await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }, { familyMode: !!vcfg.familyModeEnabled }) : null
         };
     } catch (e) {
         out.catalog = { autoMatchEnabled: MV_AUTO_MATCH, error: e.message };
@@ -5132,6 +5156,7 @@ app.get('/e/:slug/api/admin/blocklist-search', async (req, res) => {
             name: t.name,
             artist: (t.artists || []).map(a => a.name).join(', '),
             artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null,
             blocked: isTrackBlocked(event, t.id)
         }));
 
@@ -5177,6 +5202,7 @@ app.get('/e/:slug/api/admin/search', async (req, res) => {
             name: track.name,
             artist: (track.artists || []).map(a => a.name).join(', '),
             artwork: track.album?.images?.[0]?.url || 'https://picsum.photos/48',
+            year: parseInt((track.album?.release_date || '').slice(0, 4), 10) || null,
             explicit: track.explicit || false,
             duration: formatDuration(track.duration_ms)
         }));
@@ -5217,7 +5243,8 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
         artwork: t.album?.images?.[0]?.url || 'https://picsum.photos/48',
         explicit: t.explicit || false,
         duration: formatDuration(t.duration_ms || 0),
-        durationMs: t.duration_ms || 0 // raw ms, for the music-video eager verification trigger below
+        durationMs: t.duration_ms || 0, // raw ms, for the music-video eager verification trigger below
+        year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null
     };
     const requesterName = (typeof label === 'string' && label.trim() !== '') ? label.trim().slice(0, 30) : 'DJ Added';
 
@@ -5232,6 +5259,7 @@ app.post('/e/:slug/api/admin/add-track', async (req, res) => {
             artist: verifiedTrack.artist,
             artwork: verifiedTrack.artwork,
             explicit: verifiedTrack.explicit,
+            year: verifiedTrack.year || null,
             duration: verifiedTrack.duration,
             upvoters: [],
             downvoters: [],
@@ -5352,6 +5380,7 @@ app.post('/e/:slug/api/admin/reorder', (req, res) => {
 //   2. Cache the current track/progress so the "Now Playing" bar on all three
 //      pages can poll a cheap local endpoint instead of every browser hitting
 //      Spotify's API directly every few seconds.
+const spotifyAccountCache = new Map(); // slug -> { name, at } (diagnostics only)
 async function syncNowPlayingForEvent(event) {
     const token = await getDjAccessToken(event);
     if (!token) {
@@ -5407,7 +5436,23 @@ async function syncNowPlayingForEvent(event) {
             })
         ]);
         if (res.status === 204 || res.status === 404) {
-            event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off' };
+            // Spotify says this account has no active player. Record WHY it looks that way
+            // (status code + which Spotify account the site is connected to) so the
+            // /api/now-playing page can show it - the usual cause is that music is playing
+            // on a different Spotify account, or in a private session, than the linked one.
+            let spotifyAccount = spotifyAccountCache.get(event.slug) || null;
+            if (!spotifyAccount || Date.now() - spotifyAccount.at > 120000) {
+                let name = null;
+                try {
+                    const meRes = await fetch('https://api.spotify.com/v1/me', { headers: { 'Authorization': `Bearer ${token}` } });
+                    if (meRes.ok) { const me = await meRes.json(); name = me.display_name || me.id || null; }
+                    else name = 'could not read account (HTTP ' + meRes.status + ')';
+                } catch (e) { name = 'could not read account (' + e.message + ')'; }
+                spotifyAccount = { name, at: Date.now() };
+                spotifyAccountCache.set(event.slug, spotifyAccount);
+                console.log(`[SPOTIFY SYNC] (${event.slug}) Spotify returned ${res.status} for /me/player (no active player). Linked account: ${name}`);
+            }
+            event.cachedNowPlaying = { connected: true, isPlaying: false, trackId: null, title: null, artist: null, artwork: null, progressMs: 0, durationMs: 0, updatedAt: Date.now(), upcoming: [], deviceName: null, volumePercent: null, shuffleState: false, repeatState: 'off', spotifyStatus: res.status, spotifyAccount: spotifyAccount.name };
             return;
         }
         if (!res.ok) return; // leave the last known cache in place on a transient error
@@ -5422,7 +5467,8 @@ async function syncNowPlayingForEvent(event) {
                 title: t.name,
                 artist: (t.artists || []).map(a => a.name).join(', '),
                 artwork: t.album?.images?.[0]?.url || null,
-                durationMs: t.duration_ms || 0
+                durationMs: t.duration_ms || 0,
+                year: parseInt((t.album?.release_date || '').slice(0, 4), 10) || null
             }));
 
             // Item 1: a track can reach Spotify's own queue without ever
@@ -5447,6 +5493,7 @@ async function syncNowPlayingForEvent(event) {
             title: item?.name || null,
             artist: item ? (item.artists || []).map(a => a.name).join(', ') : null,
             artwork: item?.album?.images?.[0]?.url || null,
+            year: parseInt((item?.album?.release_date || '').slice(0, 4), 10) || null,
             progressMs: data.progress_ms || 0,
             durationMs: item?.duration_ms || 0,
             updatedAt: Date.now(),
@@ -5631,7 +5678,7 @@ async function mvBuildClockAndNext(event, vcfg, runtime, np) {
     };
     const up = Array.isArray(np.upcoming) ? np.upcoming[0] : null;
     if (!up || !up.id) return { clock, next: null };
-    const next = { trackId: up.id, title: up.title || '', artist: up.artist || '', durationMs: up.durationMs || 0, videoId: null, startMs: 0, known: false };
+    const next = { trackId: up.id, title: up.title || '', artist: up.artist || '', durationMs: up.durationMs || 0, year: up.year || null, videoId: null, startMs: 0, known: false };
     try {
         const forceVideos = !!vcfg.musicVideosEnabled;
         let allowed = true;
@@ -5652,7 +5699,7 @@ async function mvBuildClockAndNext(event, vcfg, runtime, np) {
         }
         if (!allowed) { next.known = true; return { clock, next }; }
 
-        const lookup = await videoCatalog.lookup({ trackId: up.id, title: up.title, artist: up.artist });
+        const lookup = await videoCatalog.lookup({ trackId: up.id, title: up.title, artist: up.artist }, { familyMode: !!vcfg.familyModeEnabled });
         if (lookup.status === 'hit') {
             const row = lookup.row;
             const ytCheck = await youtubeCheckVideo(row.youtubeId);
@@ -5674,7 +5721,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     const event = req.event;
     if (req.query.d === '1') ensureMusicVideoRuntime(event).displayLastPolledAt = Date.now();
     const vcfg = ensureVisualsConfigs(event);
-    const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs };
+    const emptyResponse = { enabled: false, matched: false, videoId: null, introOffsetMs: 0, trackId: (event.cachedNowPlaying && event.cachedNowPlaying.trackId) || null, progressMs: 0, durationMs: 0, isPlaying: false, updatedAt: Date.now(), subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled, videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds };
 
     // Mute / Show Queue from Admin -> Settings -> Content win over videos:
     // returning nothing makes the display drop the video, after which its
@@ -5752,7 +5799,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
                 updatedAt: np.progressCapturedAt || np.updatedAt,
                 serverNow: Date.now(),
                 subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
-                videoOffsetMs: vcfg.musicVideoOffsetMs
+                videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds
             });
         }
         return res.json({ ...emptyResponse, enabled: true, reason: 'spotify_reports_not_playing' });
@@ -5791,7 +5838,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
     // the song playing right now, not only to the next one.
     let catalogLookup;
     try {
-        catalogLookup = await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist });
+        catalogLookup = await videoCatalog.lookup({ trackId: np.trackId, isrc: np.isrc, title: np.title, artist: np.artist }, { familyMode: !!vcfg.familyModeEnabled });
     } catch (e) {
         catalogLookup = { status: 'error', error: e.message };
     }
@@ -5964,7 +6011,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         enabled: true,
         matched: runtime.cache.matched,
         videoId: runtime.cache.videoId,
-        title: np.title, artist: np.artist,
+        title: np.title, artist: np.artist, year: np.year || null,
         introOffsetMs: mvOffsetNow,
         source: runtime.cache.source || null,
         trackId: np.trackId,
@@ -5977,7 +6024,7 @@ app.get('/e/:slug/api/music-video', publicReadLimiter, async (req, res) => {
         updatedAt: np.progressCapturedAt || np.updatedAt,
         serverNow: Date.now(),
         subtitlesEnabled: !!vcfg.musicVideoSubtitlesEnabled,
-        videoOffsetMs: vcfg.musicVideoOffsetMs
+        videoOffsetMs: vcfg.musicVideoOffsetMs, infoPopupSeconds: vcfg.musicVideoInfoSeconds
     });
 });
 
